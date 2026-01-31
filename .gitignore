@@ -1,0 +1,11 @@
+venv/
+venve/
+__pycache__/
+*.log
+*.log.*
+config.yaml
+data/*
+!data/.gitkeep
+!data/daily_wife/.gitkeep
+unusable/
+.DS_Store
