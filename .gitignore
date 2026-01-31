@@ -6,6 +6,5 @@ __pycache__/
 config.yaml
 data/*
 !data/.gitkeep
-!data/daily_wife/.gitkeep
 unusable/
 .DS_Store
