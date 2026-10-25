@@ -23,7 +23,7 @@ import pytz
 import yaml
 from botpy import logging
 from openai import OpenAI
-from core.config import load_config, root_path
+from core.config import content_path, load_config, root_path
 from core.style import current, join, placeholders, render, t
 from modules.ai import context, memory
 from modules.ai.store import ChatStore
@@ -33,7 +33,7 @@ _log = logging.get_logger()
 
 # DeepSeek discontinued "deepseek-chat" on 2026-07-24; V4.1 Flash is "deepseek-flash".
 DEFAULT_MODEL = "deepseek-flash"
-CHAT_PROMPTS_FILE = root_path("prompts", "chat.yaml")
+CHAT_PROMPTS_FILE = content_path("prompts", "chat.yaml")
 # What each line of prompts/chat.yaml may fill in, besides {name} (the style's name).
 PROMPT_FIELDS = {
     "group_rules": {"member"},
@@ -120,7 +120,7 @@ class AIChatModule:
     def _load_qa_prompt(self):
         """Load the server-QA system prompt from its dedicated prompt file."""
         default_prompt = "你是一个专业的Minecraft服务器管理助手，擅长回答有关服务器配置、管理和故障排除的问题。请提供准确、专业的回答。"
-        prompt_path = root_path("prompts", "server_qa_prompt.yaml")
+        prompt_path = content_path("prompts", "server_qa_prompt.yaml")
         try:
             if os.path.exists(prompt_path):
                 with open(prompt_path, 'r', encoding='utf-8') as f:

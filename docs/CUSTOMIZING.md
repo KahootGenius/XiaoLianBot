@@ -17,6 +17,32 @@ Changing how the bot talks means editing YAML, and you can keep several characte
 | `prompts/chat.yaml` | AI chat's rules around the persona: group chat, summaries, memory notes (see "Changing how AI chat remembers") |
 | `config.yaml` | `style:` and `group_styles:` pick the styles; `manager.rules_text` overrides the rule text in `/群规` |
 
+## Private versions: `local/`
+
+Anything in `styles/` or `prompts/` can have a private version that never goes to GitHub. Put it in
+`local/` under the same path, and the bot uses it instead of the shared one:
+
+| Shared (on GitHub) | Your private version |
+|---|---|
+| `styles/小莲.yaml` | `local/styles/小莲.yaml` |
+| `styles/桃子.yaml`, or a style only you have | `local/styles/桃子.yaml` |
+| `prompts/teams.yaml` | `local/prompts/teams.yaml` |
+| `prompts/achievements.yaml` | `local/prompts/achievements.yaml` |
+| `prompts/chat.yaml`, `prompts/server_qa_prompt.yaml` | `local/prompts/…` |
+
+- **A private `小莲.yaml` only needs the lines you change.** Every line it leaves out, or writes
+  with a mistake, comes from the shared `styles/小莲.yaml`. Other styles fall back to your private
+  wording.
+- **A private `teams.yaml` or `achievements.yaml` replaces the shared one completely,** so start from
+  a copy of it.
+- **Restart the bot after changing anything in `local/`.** Check a private style with
+  `python -m core.style check 小莲`. A mistake in a private rules file stops the bot at startup and
+  names the problem.
+- **The tests always check the shared files,** so collaborators' changes are tested the same way on
+  every machine.
+- **`local/` is in `.gitignore`.** Copy it to the server yourself, together with `config.yaml` and
+  `data/` (see [DEPLOY.md](DEPLOY.md), step 7).
+
 ## How styles work
 
 - **A style only needs the lines it changes.** Keep the same nesting as `小莲.yaml` and write what

@@ -24,12 +24,13 @@ import string
 import sys
 import yaml
 from botpy import logging
-from core.config import root_path
+from core.config import LOCAL_DIR, root_path, use_local
 
 
 _log = logging.get_logger()
 
 STYLES_DIR = root_path("styles")
+LOCAL_STYLES_DIR = os.path.join(LOCAL_DIR, "styles")
 DEFAULT_STYLE = "小莲"
 
 
@@ -103,7 +104,7 @@ class Style:
         if self.base is None:
             raise KeyError(f"styles/{DEFAULT_STYLE}.yaml 缺少 {key}")
         # Fall back to the default's wording, still speaking as this style.
-        fallback = self.base.own(key)
+        fallback = self.base.lookup(key)
         if isinstance(fallback, list):
             fallback = random.choice(fallback)
         if fallback is None:
@@ -122,8 +123,12 @@ def _read_yaml(path):
 class StyleBook:
     """All style files, plus which style each group uses."""
 
-    def __init__(self, directory=STYLES_DIR):
+    def __init__(self, directory=STYLES_DIR, local_directory=None):
         self.directory = directory
+        # Private styles (local/styles/) win over shared ones with the same name. A private
+        # 小莲.yaml only needs the lines it changes: the rest come from the shared one.
+        self.local_directory = local_directory or (LOCAL_STYLES_DIR if use_local() else None)
+        self.shared_base = None
         self.default_name = DEFAULT_STYLE
         self.styles = {}
         self.groups = {}        # group_openid -> style name, from config.yaml's group_styles
@@ -151,19 +156,30 @@ class StyleBook:
 
     def reload(self):
         """Re-read every file in styles/. Returns {style: [problems]} for the ones with problems."""
-        base = Style(DEFAULT_STYLE, _read_yaml(os.path.join(self.directory, f"{DEFAULT_STYLE}.yaml")))
-        styles = {DEFAULT_STYLE: base}
+        base = self.shared_base = Style(DEFAULT_STYLE,
+                                        _read_yaml(os.path.join(self.directory, f"{DEFAULT_STYLE}.yaml")))
+        files = {}          # style name -> path; private files replace shared ones
+        for folder in (self.directory, self.local_directory):
+            if folder and os.path.isdir(folder):
+                for file in sorted(os.listdir(folder)):
+                    stem, ext = os.path.splitext(file)
+                    if ext in (".yaml", ".yml") and not stem.startswith("_") and (folder != self.directory
+                                                                                  or stem != DEFAULT_STYLE):
+                        files[stem] = os.path.join(folder, file)
         broken = {}
-        for file in sorted(os.listdir(self.directory)):
-            stem, ext = os.path.splitext(file)
-            if ext not in (".yaml", ".yml") or stem == DEFAULT_STYLE or stem.startswith("_"):
-                continue
+        if DEFAULT_STYLE in files:
             try:
-                styles[stem] = Style(stem, _read_yaml(os.path.join(self.directory, file)), base=base)
+                base = Style(DEFAULT_STYLE, _read_yaml(files.pop(DEFAULT_STYLE)), base=self.shared_base)
+            except Exception as e:
+                broken[DEFAULT_STYLE] = [f"local/styles/{DEFAULT_STYLE}.yaml 读不了，改用共享的版本：{e}"]
+        styles = {DEFAULT_STYLE: base}
+        for stem, path in files.items():
+            try:
+                styles[stem] = Style(stem, _read_yaml(path), base=base)
             except Exception as e:
                 broken[stem] = [f"文件读不了：{e}"]
         self.styles = styles
-        problems = {name: self.check(name) for name in styles if name != DEFAULT_STYLE}
+        problems = {name: self.check(name) for name in styles}
         problems = {name: found for name, found in problems.items() if found}
         problems.update(broken)
         for name, found in problems.items():
@@ -190,8 +206,10 @@ class StyleBook:
             _current.reset(token)
 
     def check(self, name):
-        """Problems in one style file, judged against the default. Written for the file's editor."""
-        style, base = self.styles[name], self.styles[DEFAULT_STYLE]
+        """Problems in one style file, judged against the shared default. Written for the file's editor."""
+        style, base = self.styles[name], self.shared_base
+        if style is base:
+            return []
         problems = []
         for key, value in _leaves(style.data):
             if key == "name":
@@ -217,8 +235,8 @@ class StyleBook:
 
     def missing(self, name):
         """Keys the style leaves to the default -- not a problem, just not customised yet."""
-        style, base = self.styles[name], self.styles[DEFAULT_STYLE]
-        return [key for key, _ in _leaves(base.data) if style.own(key) is None]
+        style, base = self.styles[name], self.shared_base
+        return [] if style is base else [key for key, _ in _leaves(base.data) if style.own(key) is None]
 
 
 _current = contextvars.ContextVar("style", default=None)
@@ -256,5 +274,5 @@ if __name__ == "__main__":
     found = STYLES.check(name)
     print("\n".join(found) if found else f"{name}.yaml 没有问题。")
     left = STYLES.missing(name)
-    if left and name != DEFAULT_STYLE:
+    if left:
         print(f"另有 {len(left)} 句没写，会沿用{DEFAULT_STYLE}的说法，例如：{'、'.join(left[:5])}")

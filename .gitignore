@@ -9,3 +9,9 @@ data/*
 !data/.gitkeep
 unusable/
 .DS_Store
+
+# Private versions of shared files (styles, prompts) that override the repo copies.
+local/
+
+# Archives made to move config.yaml and data/ to a server: they contain secrets.
+*.tgz

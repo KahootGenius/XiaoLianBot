@@ -154,7 +154,9 @@ prompts/achievements.yaml  the badges: add or change them without code
 prompts/teams.yaml      the team game: statuses and captain actions, without code
 prompts/chat.yaml       AI chat's rules around the persona: group chat, summary, memory notes
 assets/quotes/          发癫 quote data
-docs/                   privacy policy, self-test report, command reference, customizing guide
+deploy/                 systemd service and update script for a Linux server
+docs/                   privacy policy, self-test report, command reference, customizing guide,
+                        server guide (DEPLOY.md)
 tests/                  unit tests and simulated month-long runs
 ```
 
@@ -203,6 +205,12 @@ The bot only sees messages while it's online, so a machine that sleeps or switch
 some. The 5-day notice protects members from wrongful removal: anyone wrongly reminded just has to
 post. Still, an always-on host, such as a small Linux server, is better than a laptop.
 
+[docs/DEPLOY.md](docs/DEPLOY.md) sets one up step by step:
+- a systemd service ([deploy/xiaolian.service](deploy/xiaolian.service)) that starts the bot at boot
+  and restarts it after a crash
+- [deploy/update.sh](deploy/update.sh), which updates it with one command: pull from GitHub, run
+  the tests, restart, and roll back if the tests fail
+
 ## Tests
 
 ```bash
@@ -213,7 +221,8 @@ The tests cover:
 - the 有效发言 classifier, with real QQ markup
 - the 25/30-day rule, including leave, late reminders and newcomers
 - styles:
-  - every key the code asks for exists, and the default reproduces the original text
+  - every key the code asks for exists, every placeholder in the default is one the code fills,
+    and the default reproduces the original text
   - partial styles fall back to 小莲, and broken lines are caught
   - per-group styles come from `config.yaml` only
 - the team game: game nights with grabs, actions, referees, the daily reset and restarts, plus
@@ -228,6 +237,7 @@ The tests cover:
 [docs/CUSTOMIZING.md](docs/CUSTOMIZING.md) covers:
 - **writing a style:** copy `styles/_示例.yaml`, change the lines you want, and let the rest fall
   back to 小莲
+- **private versions** of styles and rules in `local/`, which never goes to GitHub
 - **choosing styles per group** in `config.yaml`, and checking a file with
   `python -m core.style check 名字`
 - **renaming commands**

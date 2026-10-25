@@ -8,11 +8,11 @@ to TeamsModule.
 from dataclasses import dataclass
 from datetime import time as dtime
 import yaml
-from core.config import root_path
+from core.config import content_path
 from core.style import placeholders
 
 
-RULES_FILE = root_path("prompts", "teams.yaml")
+RULES_FILE = content_path("prompts", "teams.yaml")
 # In `by`, the captain of the target's team.
 CAPTAIN = "队长"
 # Effects an action can name with `effect:`. Actions with `set:` have the effect "set".

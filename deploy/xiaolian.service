@@ -1,0 +1,39 @@
+# systemd service for the bot: starts it at boot and restarts it if it stops.
+# Install (see docs/DEPLOY.md):
+#   sudo cp /home/xiaolian/XiaoLianBot/deploy/xiaolian.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now xiaolian
+# If you used a different user or folder, change User, Group and the four paths below.
+
+[Unit]
+Description=XiaoLian QQ bot
+Wants=network-online.target
+After=network-online.target
+# A bot that keeps dying at startup (a typo in config.yaml or a rules file) is
+# given up on after 5 tries in 5 minutes instead of logging in to QQ forever.
+# Fix the file, then: sudo systemctl reset-failed xiaolian && sudo systemctl start xiaolian
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=xiaolian
+Group=xiaolian
+WorkingDirectory=/home/xiaolian/XiaoLianBot
+ExecStart=/home/xiaolian/XiaoLianBot/.venv/bin/python main.py
+Restart=always
+RestartSec=10
+# Print logs straight away instead of buffering them (journalctl -u xiaolian).
+Environment=PYTHONUNBUFFERED=1
+# Stopping is safe at any moment: SQLite keeps a journal and teams.json is
+# replaced atomically, so there's no need to wait for a graceful shutdown.
+TimeoutStopSec=20
+
+# Hardening: the bot may only write inside its own folder (data/, botpy.log).
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/xiaolian/XiaoLianBot
+
+[Install]
+WantedBy=multi-user.target

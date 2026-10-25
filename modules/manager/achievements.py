@@ -8,10 +8,10 @@ COUNTERS and counter_increments.
 from dataclasses import dataclass
 from typing import Optional
 import yaml
-from core.config import root_path
+from core.config import content_path
 
 
-BADGES_FILE = root_path("prompts", "achievements.yaml")
+BADGES_FILE = content_path("prompts", "achievements.yaml")
 COMEBACK_DAYS = 20
 
 # What each valid message can add to. Badges in achievements.yaml count these.

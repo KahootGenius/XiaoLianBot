@@ -1,3 +1,4 @@
+import ast
 import glob
 import os
 import re
@@ -25,6 +26,27 @@ class DefaultStyleTest(unittest.TestCase):
         self.assertEqual(missing, [])
         for prefix in prefixes:     # keys built at runtime, like f"manager.modes.{mode}"
             self.assertIsInstance(base.own(prefix), dict, prefix)
+
+    def test_every_placeholder_is_filled_where_the_line_is_used(self):
+        """A {placeholder} in the default style that the t() call doesn't pass would fail mid-reply."""
+        base = STYLES.styles[DEFAULT_STYLE]
+        problems = []
+        for path in glob.glob(root_path("modules", "**", "*.py"), recursive=True) + [root_path("main.py")]:
+            with open(path, encoding="utf-8") as f:
+                tree = ast.parse(f.read())
+            for node in ast.walk(tree):
+                if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "t"
+                        and node.args and isinstance(node.args[0], ast.Constant)):
+                    continue
+                if any(k.arg is None for k in node.keywords):       # t(key, **fields): can't tell from here
+                    continue
+                line = base.own(node.args[0].value)
+                given = {k.arg for k in node.keywords} | {"name"}
+                for variant in line if isinstance(line, list) else [line] if line is not None else []:
+                    missing = placeholders(str(variant)) - given
+                    if missing:
+                        problems.append(f"{os.path.basename(path)}:{node.lineno} {node.args[0].value}: {sorted(missing)}")
+        self.assertEqual(problems, [])
 
     def test_every_line_has_valid_placeholders(self):
         for key, value in style._leaves(STYLES.styles[DEFAULT_STYLE].data):
@@ -100,6 +122,33 @@ manager:
         self.assertEqual(self.book.for_group("G3").file_name, "桃子")        # no 葡萄.yaml: default
         self.book.configure({"style": "葡萄", "group_styles": ["G1"]})       # both wrong: ignored
         self.assertEqual(self.book.for_group("G1").file_name, DEFAULT_STYLE)
+
+
+class PrivateStyleTest(unittest.TestCase):
+    """local/styles/ holds private versions that never go to GitHub."""
+
+    def test_a_private_default_changes_only_its_own_lines(self):
+        shared, private = tempfile.mkdtemp(), tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, shared)
+        self.addCleanup(shutil.rmtree, private)
+        shutil.copy(root_path("styles", f"{DEFAULT_STYLE}.yaml"), shared)
+        with open(os.path.join(shared, "桃子.yaml"), "w", encoding="utf-8") as f:
+            f.write("name: 桃子\ncommon:\n  error: 桃子出错了\n")
+        with open(os.path.join(private, f"{DEFAULT_STYLE}.yaml"), "w", encoding="utf-8") as f:
+            f.write('common:\n  not_admin: 只有管理员可以哦\n  someone: "{oops}"\n')
+        with open(os.path.join(private, "桃子.yaml"), "w", encoding="utf-8") as f:
+            f.write("name: 桃子\ncommon:\n  not_admin: 私人桃子\n")
+        book = StyleBook(directory=shared, local_directory=private)
+        book.configure({"group_styles": {"P": "桃子"}})
+        with book.scope("G"):
+            self.assertEqual(t("common.not_admin"), "只有管理员可以哦")              # the private line
+            self.assertEqual(t("common.date", month=1, day=2), "1月2日")             # the rest: shared
+            self.assertEqual(t("common.someone"), "某位群友")                        # broken: shared
+        with book.scope("P"):                         # the private 桃子 replaced the shared one
+            self.assertEqual(t("common.not_admin"), "私人桃子")
+            self.assertIn("出错了", t("common.error", command="/x", error="e"))
+            self.assertNotIn("桃子出错了", t("common.error", command="/x", error="e"))
+        self.assertIn("{oops}", "\n".join(book.check(DEFAULT_STYLE)))
 
 
 class NoStyleCommandInChatTest(ManagerTestCase):
