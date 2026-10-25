@@ -62,7 +62,10 @@ class TeamsModule:
         if self.enabled:
             self.rules = load_rules(rules_path, reserved)
             self.roster = Roster(data_path, self.rules)
-        self.fixed = {"/队伍": self.cmd_teams, "/解散队伍": self.cmd_disband, "/清空队伍": self.cmd_clear}
+        self.fixed = {}         # "/队伍" -> handler; the words can be renamed in teams.yaml
+        if self.enabled:
+            handlers = {"teams": self.cmd_teams, "disband": self.cmd_disband, "clear": self.cmd_clear}
+            self.fixed = {f"/{word}": handlers[key] for key, word in self.rules.commands.items()}
 
     @property
     def enabled(self):
@@ -119,7 +122,12 @@ class TeamsModule:
         """The 【组队游戏】 part of /帮助, listing the actions in teams.yaml."""
         grab = " ".join(f"/{a.name}" for a in self.rules.actions if a.effect == "grab")
         others = " ".join(f"/{a.name}" for a in self.rules.actions if a.effect != "grab")
-        return t("games.teams.help", grab=grab, actions=others, reset=self.rules.reset_time.strftime("%H:%M"))
+        return t("games.teams.help", grab=grab, actions=others, reset=self.rules.reset_time.strftime("%H:%M"),
+                 **self._fixed_words())
+
+    def _fixed_words(self):
+        """{teams}, {disband}, {clear}: the built-in commands as this group types them, e.g. "/队伍"."""
+        return {key: f"/{word}" for key, word in self.rules.commands.items()}
 
     # ------------------------------------------------------------------ commands
 
@@ -303,12 +311,12 @@ class TeamsModule:
         admin = self.is_admin(group, actor, message.role)
         named = [(openid, name) for openid, name in self._targets(message) if openid != actor]
         if named and not admin:
-            await self._reply(message, t("games.teams.disband_others"))
+            await self._reply(message, t("games.teams.disband_others", **self._fixed_words()))
             return
         if not named:
             if actor not in teams.teams:
                 key = ("disband_usage" if admin else "no_own_team" if actor in self.captains else "disband_denied")
-                await self._reply(message, t(f"games.teams.{key}"))
+                await self._reply(message, t(f"games.teams.{key}", **self._fixed_words()))
                 return
             named = [(actor, teams.teams[actor].name)]
         lines = []

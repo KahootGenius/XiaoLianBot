@@ -95,6 +95,9 @@ manager:
   # "tag" = QQ's mention tag (real @). Test with @小莲 /艾特测试 first.
   mention_format: text
   store_snippets: true    # keep the first 30 characters of each member's latest valid message
+  # Welcome someone the first time they speak (QQ doesn't tell official bots
+  # when someone joins). Wording: manager.greet in the style file.
+  greet_newcomers: true
   # rules_text: |          # shown by /群规; defaults to the group's current rule
   #   连续30天无有效发言……
 

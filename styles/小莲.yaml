@@ -127,6 +127,14 @@ manager:
   # @ 提醒里每个人的写法（config.yaml 的 mention_format 为 text 时使用）
   mention_text: "@{member}"
 
+  # 第一次在群里说话时的欢迎（manager.greet_newcomers 可以关掉）。{member}：昵称
+  # new：已经统计满 30 天，没见过的人基本都是新人；first_words：统计不满 30 天，可能是一直没说话的老成员
+  greet:
+    new:
+      - "欢迎新朋友 {member}～我是{name}，这个群的小管家。发 @我 /帮助 看看我能做什么，@我 /群规 看看群里的规矩哦！"
+    first_words:
+      - "第一次见到 {member} 说话～欢迎欢迎！发 @我 /帮助 看看我能做什么。"
+
   # 被提醒之后又有了有效发言
   welcome_back:
     - "看到你啦～提醒解除，{name}记下了！"
@@ -411,12 +419,13 @@ games:
   # 组队游戏。玩法、状态、队长的每个操作和操作成功后说的话，都在 prompts/teams.yaml 里
   teams:
     # /帮助 里的【组队游戏】一段。{grab} 是抓人的指令，{actions} 是队长的其他操作，{reset} 是每天清空的时间
+    # {teams}、{disband}、{clear}：查看、解散、清空队伍的指令（可在 prompts/teams.yaml 的 commands 里改名）
     help: |-
       【组队游戏】每天 {reset} 清空队伍
-      /队伍 查看今天的队伍
-      队长：{grab} @某人 抓人进队 · /解散队伍
+      {teams} 查看今天的队伍
+      队长：{grab} @某人 抓人进队 · {disband}
       队长对自己的队员：{actions}（都要 @ 对象）
-      管理员（裁判）：对任何队员都能用以上操作 · /解散队伍 @队长 · /清空队伍
+      管理员（裁判）：对任何队员都能用以上操作 · {disband} @队长 · {clear}
     title: "🏳️ 今日队伍 · {date}"
     team: "【{captain}】{count} 人：{members}"
     tagged: "{member}（{statuses}）"        # 没有图标的状态
@@ -442,9 +451,9 @@ games:
     disbanded: "{captain} 的队伍解散了，{count} 人恢复自由。"
     no_team: "{member} 今天没有带队伍。"
     no_own_team: 你今天还没有队伍哦。
-    disband_usage: "要解散哪支队伍？请 @ 那位队长：/解散队伍 @队长"
-    disband_denied: "只有队长能解散自己的队伍；管理员可以用 /解散队伍 @队长。"
-    disband_others: "解散别人的队伍要管理员来哦；解散自己的队伍直接发 /解散队伍 就好。"
+    disband_usage: "要解散哪支队伍？请 @ 那位队长：{disband} @队长"
+    disband_denied: "只有队长能解散自己的队伍；管理员可以用 {disband} @队长。"
+    disband_others: "解散别人的队伍要管理员来哦；解散自己的队伍直接发 {disband} 就好。"
     cleared: "已清空本群的 {count} 支队伍，大家都恢复自由啦。"
     cleared_none: 本群现在没有队伍。
 

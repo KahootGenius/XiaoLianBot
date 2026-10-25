@@ -18,8 +18,10 @@ CAPTAIN = "队长"
 # Effects an action can name with `effect:`. Actions with `set:` have the effect "set".
 EFFECTS = ("grab", "kick")
 EFFECT_HELP = "grab（把人抓进队）、kick（移出队伍）"
-# Built into the game, so actions can't take these names.
-FIXED_COMMANDS = ("队伍", "解散队伍", "清空队伍")
+# The game's built-in commands and their default words. teams.yaml may rename
+# them under `commands:`; actions can't take these words.
+FIXED_COMMANDS = {"teams": "队伍", "disband": "解散队伍", "clear": "清空队伍"}
+FIXED_HELP = "teams（查看队伍）、disband（解散队伍）、clear（清空队伍）"
 # What an action's `say` line may use; {name} is the style's name.
 SAY_FIELDS = ("actor", "members", "count", "captain", "action", "name")
 
@@ -43,6 +45,7 @@ class Rules:
     actions: tuple
     max_members: int = 0    # per team, not counting the captain; 0 = no limit
     reset_time: dtime = dtime(5, 0)
+    commands: dict = None   # built-in command -> its word, see FIXED_COMMANDS
 
     def column_of(self, status):
         return next(column for column, statuses in self.columns.items() if status in statuses)
@@ -126,6 +129,22 @@ def load_rules(path=RULES_FILE, reserved=()):
     entries = data.get("actions") or []
     if not isinstance(entries, list):
         raise ValueError("teams.yaml 的 actions 要写成列表，每个操作以「- name:」开头")
+    raw = data.get("commands") or {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"teams.yaml 的 commands 要写成「内置指令: 名字」，可用的有：{FIXED_HELP}")
+    commands = dict(FIXED_COMMANDS)
+    for key, word in raw.items():
+        if key not in FIXED_COMMANDS:
+            raise ValueError(f"teams.yaml 的 commands 里没有「{key}」这个内置指令，可用的有：{FIXED_HELP}")
+        commands[key] = _word(word, f"teams.yaml 的 commands.{key}")
+    fixed = {word: key for key, word in commands.items()}
+    if len(fixed) < len(commands):
+        raise ValueError("teams.yaml 的 commands 里有两个内置指令用了同一个名字")
+    for word in fixed:
+        clash = next((r for r in reserved if f"/{word}".startswith(r)), None)
+        if clash:
+            raise ValueError(f"teams.yaml 的 commands：/{word} 会被机器人已有的指令 {clash} 抢先接住，换个名字吧")
+
     actions, taken = [], {}
     for i, entry in enumerate(entries, 1):
         where = f"teams.yaml 第 {i} 个操作"
@@ -135,7 +154,7 @@ def load_rules(path=RULES_FILE, reserved=()):
         where = f"{where}（{name}）"
         words = [name] + [_word(alias, where) for alias in _names(entry.get("aliases"))]
         for word in words:
-            if word in FIXED_COMMANDS:
+            if word in fixed:
                 raise ValueError(f"{where}：/{word} 是组队游戏的内置指令，换个名字吧")
             if word in taken:
                 raise ValueError(f"{where}：/{word} 和「{taken[word]}」重复了")
@@ -201,4 +220,4 @@ def load_rules(path=RULES_FILE, reserved=()):
     except (TypeError, ValueError):
         raise ValueError("teams.yaml 的 reset_time 要写成 \"05:00\" 这样的时间")
     return Rules(columns=columns, icons=icons, actions=tuple(actions), max_members=max_members,
-                 reset_time=reset_time)
+                 reset_time=reset_time, commands=commands)

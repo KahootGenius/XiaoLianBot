@@ -1,0 +1,31 @@
+# systemd service for the Cloudflare quick tunnel that lets other admins open
+# the member table. It starts at boot and restarts if it stops.
+# Install (see docs/DEPLOY.md, "The member table for other admins"):
+#   sudo cp /home/xiaolian/XiaoLianBot/deploy/xiaolian-tunnel.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now xiaolian-tunnel
+# A quick tunnel gets a new address every time it starts. To print the current
+# link, token included: sudo /home/xiaolian/XiaoLianBot/deploy/tunnel-link.sh
+
+[Unit]
+Description=Cloudflare tunnel to the XiaoLian member table
+Wants=network-online.target
+After=network-online.target xiaolian.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/cloudflared tunnel --no-autoupdate --url http://127.0.0.1:8765
+Restart=always
+RestartSec=10
+
+# It only forwards traffic, so it runs as a throwaway user that can write
+# nowhere except its own state folder.
+DynamicUser=true
+StateDirectory=xiaolian-tunnel
+Environment=HOME=/var/lib/xiaolian-tunnel
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

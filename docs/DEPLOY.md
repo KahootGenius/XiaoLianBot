@@ -165,7 +165,7 @@ The bot now starts at boot and restarts itself 10 seconds after any crash. Watch
 journalctl -u xiaolian -f
 ```
 
-Look for `机器人「邪恶水蜜桃」启动成功`, then the `[Manager]`, `[Teams]` and `[AIChat]` lines.
+Look for `机器人「小蓮女神」启动成功`, then the `[Manager]`, `[Teams]` and `[AIChat]` lines.
 Ctrl-C stops watching; the bot keeps running. Finally, @ the bot in QQ with `/管理状态`.
 
 ## Everyday use
@@ -213,8 +213,40 @@ The page stays on `127.0.0.1:8765` on the server, so nobody can reach it directl
   ssh -L 8765:127.0.0.1:8765 root@SERVER_IP
   ```
   Then browse to `http://127.0.0.1:8765/?token=…` on your computer while that login stays open.
-- **For other admins:** run the Cloudflare tunnel on the server, as you did on your computer.
-  Install `cloudflared` from Cloudflare's package repository for Ubuntu.
+- **For other admins:** a Cloudflare quick tunnel gives the page a public `https://…trycloudflare.com`
+  address. Visitors still need the token, so strangers get "403".
+
+### The member table for other admins
+
+On the server, install `cloudflared` once. `dpkg --print-architecture` says `amd64` or `arm64`;
+use that in the file name:
+
+```bash
+curl -fL -o /tmp/cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb && sudo dpkg -i /tmp/cloudflared.deb
+```
+
+Run the tunnel as a service, so it starts at boot and comes back if it stops. Stop any tunnel you
+started by hand first (Ctrl-C in its terminal).
+
+```bash
+sudo cp /home/xiaolian/XiaoLianBot/deploy/xiaolian-tunnel.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now xiaolian-tunnel
+```
+
+Print the link to share, with the token already in it:
+
+```bash
+sudo /home/xiaolian/XiaoLianBot/deploy/tunnel-link.sh
+```
+
+Send it to admins privately, never in the main group.
+
+**The address changes whenever the tunnel restarts:** after a reboot, a crash, or
+`sudo systemctl restart xiaolian-tunnel`. Run `tunnel-link.sh` again and send the new link. The
+old link stops working at once. Restarting the bot or running `update.sh` doesn't change it.
+
+To switch the public page off: `sudo systemctl disable --now xiaolian-tunnel`.
 
 ## Backups
 

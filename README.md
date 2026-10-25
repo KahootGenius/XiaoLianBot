@@ -18,6 +18,9 @@ don't have to:
 - **Reads every message** in the managed group and judges 有效发言. Discussion, questions, answers,
   links and files count. Stickers, check-ins, 复读, 接龙 and chatting with the bot don't.
   The judgement is rule-based and deliberately lenient. Every threshold is in `config.yaml`.
+- **Newcomers are welcomed** the first time they speak. QQ doesn't tell official bots when
+  someone joins, so the first message is the earliest sign. During the first 30 days of counting,
+  the greeting is worded so it also fits an old member who simply hadn't spoken yet.
 - **Day 25:** one combined @ reminder. **Day 30**, and at least 5 days after the reminder: removal.
   If the bot was offline on someone's day 25, their removal waits until they've had the full notice.
 - **Three modes**, switchable from chat with `/管理模式`:
@@ -154,7 +157,7 @@ prompts/achievements.yaml  the badges: add or change them without code
 prompts/teams.yaml      the team game: statuses and captain actions, without code
 prompts/chat.yaml       AI chat's rules around the persona: group chat, summary, memory notes
 assets/quotes/          发癫 quote data
-deploy/                 systemd service and update script for a Linux server
+deploy/                 systemd services (bot, tunnel), update script and tunnel-link finder
 docs/                   privacy policy, self-test report, command reference, customizing guide,
                         server guide (DEPLOY.md)
 tests/                  unit tests and simulated month-long runs
@@ -210,6 +213,8 @@ post. Still, an always-on host, such as a small Linux server, is better than a l
   and restarts it after a crash
 - [deploy/update.sh](deploy/update.sh), which updates it with one command: pull from GitHub, run
   the tests, restart, and roll back if the tests fail
+- a tunnel service ([deploy/xiaolian-tunnel.service](deploy/xiaolian-tunnel.service)) for other
+  admins, and [deploy/tunnel-link.sh](deploy/tunnel-link.sh) to print its current link
 
 ## Tests
 

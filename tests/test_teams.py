@@ -230,6 +230,23 @@ class SetupTest(TeamGameTestCase):
         self.assertIn("05:00", block)
 
 
+class RenamedCommandsTest(TeamGameTestCase):
+    async def test_built_in_commands_can_be_renamed(self):
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder)
+        rules = os.path.join(folder, "teams.yaml")
+        with open(rules, "w", encoding="utf-8") as f:
+            f.write(shipped_rules().replace("teams: 队伍", "teams: 看队").replace("disband: 解散队伍", "disband: 散队")
+                    .replace("clear: 清空队伍", "clear: 清场"))
+        self.make(rules_path=rules)
+        await self.say("CA", "/抓 @M1")
+        self.assertIn("【阿队】1 人：小一", await self.say("M1", "/看队"))
+        self.assertIsNone(await self.say("M1", "/队伍"))                      # the old word passes through
+        self.assertIn("/散队 @队长", await self.say("ADMIN", "/散队"))
+        self.assertEqual(await self.say("ADMIN", "/清场"), "已清空本群的 1 支队伍，大家都恢复自由啦。")
+        self.assertIn("/看队 查看今天的队伍", self.teams.help_block())
+
+
 class RulesFileTest(unittest.TestCase):
     """Mistakes in teams.yaml stop the bot at startup with a message its editor can act on."""
 
@@ -273,6 +290,9 @@ class RulesFileTest(unittest.TestCase):
         self.assertRefused(self.GOOD.replace("by: [队长, 小队长]", "by: [队长, 军师]"), "「军师」")
         self.assertRefused(self.GOOD.replace("aliases: [阵亡]", "aliases: [复活]"), "/复活", "重复")
         self.assertRefused(self.GOOD.replace("aliases: [阵亡]", "aliases: [队伍]"), "内置指令")
+        self.assertRefused(self.GOOD.replace("clear: 清空队伍", "clear: 阵亡"), "/阵亡", "内置指令")
+        self.assertRefused(self.GOOD.replace("clear: 清空队伍", "clear: 队伍"), "同一个名字")
+        self.assertRefused(self.GOOD.replace("clear: 清空队伍", "wipe: 清空队伍"), "「wipe」")
         self.assertRefused(self.GOOD.replace("{actor} 抓到了", "{who} 抓到了"), "{who}")
         self.assertRefused(self.GOOD.replace("effect: grab", "set: 小队长"), "effect: grab")
         self.assertRefused(self.GOOD.replace('reset_time: "05:00"', "reset_time: 早上五点"), "reset_time")

@@ -108,6 +108,7 @@ The sections of `小莲.yaml`:
 | `manager.help_block`, `manager.admin_help` | The group-management part of `/帮助`, and `/管理帮助` |
 | `manager.modes`, `manager.mode_hints` | What the three modes are called and how each is explained |
 | `manager.kinds` | Why a message did or didn't count, as shown by `/成员表`, `/成员` and the web table |
+| `manager.greet` | The welcome on someone's first message: `new` once the bot has counted for 30 days, `first_words` before that |
 | `manager.remind`, `welcome_back`, `achievement`, `removal_notice` | The day-25 @ reminder, "reminder cancelled", badge congratulations, the anonymous removal note |
 | `manager.rules`, `manager.ids` | `/群规`, plus `/我的ID` and `/群ID` |
 | `manager.status` | `/我的状态`: every line, every status, and the closing comments |
@@ -264,7 +265,9 @@ actions:
   Without `say`, the bot uses the style's generic `games.teams.done` line.
 - **Command words must be free.** An action can't share a name with:
   - another action
-  - `/队伍`, `/解散队伍` or `/清空队伍`
+  - the built-in `/队伍`, `/解散队伍` and `/清空队伍`, which you can rename under `commands:`
+    (`teams`, `disband`, `clear`); the style's lines show them through `{teams}`, `{disband}`
+    and `{clear}`
   - any other bot command. The check is by prefix: `/成员复活` would be answered by `/成员` first.
 
 For example, to add an injured state, put 受伤 in the 生死 column (`生死: [存活, 受伤, 死亡]`), then add:

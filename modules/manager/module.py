@@ -52,6 +52,7 @@ class ManagerSettings:
     mention_format: str = "text"
     rules_text: str = ""            # empty: the style's manager.rules.default_text
     store_snippets: bool = True
+    greet_newcomers: bool = True    # welcome someone the first time they speak
     announce_achievements: bool = True
     announcements_per_hour: int = 3
     digest_enabled: bool = True
@@ -68,7 +69,8 @@ class ManagerSettings:
         s.report_group = str(cfg.get("report_group") or "")
         s.admins = {str(a) for a in cfg.get("admins") or []}
         for key in ("mode", "check_time", "max_leave_days", "self_service_leave", "max_removals_per_day",
-                    "breaker_ratio", "announce_removals", "mention_format", "rules_text", "store_snippets"):
+                    "breaker_ratio", "announce_removals", "mention_format", "rules_text", "store_snippets",
+                    "greet_newcomers"):
             if cfg.get(key) is not None:
                 setattr(s, key, cfg[key])
         s.mode = MODE_ALIASES.get(str(s.mode), "dry_run")
@@ -306,6 +308,8 @@ class ManagerModule:
         recent.remember(member, judgement, ts)
         self.store.touch_member(group, member, message.nickname, message.role, message.is_bot, ts)
 
+        if before is None or before["last_message_at"] is None:
+            await self._greet(message, before, group_row, ts)
         if before is not None and before["status"] != "active":
             # Removed or left earlier, and talking again: they rejoined.
             self.store.mark_rejoined(group, member, ts)
@@ -313,6 +317,26 @@ class ManagerModule:
             before = self.store.member(group, member)
         if judgement.valid:
             await self._on_valid(message, judgement, before, group_row, now)
+
+    async def _greet(self, message, before, group_row, ts):
+        """Welcome someone the first time they speak.
+
+        QQ sends official bots no "member joined" event, so a first message is
+        the earliest sign of a newcomer. Until the bot has seen every message
+        for remove_day days, an old member who simply hadn't spoken yet looks
+        the same, so the greeting then uses wording that fits both.
+        """
+        tracking_start = group_row["tracking_start"]
+        # Without every-message access, "first message" only means "first @ to the bot".
+        if not self.settings.greet_newcomers or tracking_start is None:
+            return
+        if self.is_admin(message.group_openid, message.member_openid, message.role):
+            return
+        window = self.settings.policy.remove_day * DAY
+        joined = before["joined_at"] if before is not None else None
+        new = ts - joined < window if joined is not None else ts - tracking_start >= window
+        key = "manager.greet.new" if new else "manager.greet.first_words"
+        await self._reply(message, t(key, member=self._name(message.nickname)))
 
     async def _on_valid(self, message, judgement, before, group_row, now):
         group, member = message.group_openid, message.member_openid

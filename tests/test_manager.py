@@ -341,3 +341,34 @@ class SchedulerTest(ManagerTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GreetingTest(ManagerTestCase):
+    """QQ tells official bots nothing when someone joins, so newcomers are welcomed on their first message."""
+
+    def greetings(self):
+        return [t for t in self.gw.texts(GROUP) if "第一次见到" in t or "欢迎新朋友" in t]
+
+    async def test_first_message_is_welcomed_once(self):
+        self.make(FakeGateway())
+        await self.post("A", "大家好")
+        self.assertEqual(self.greetings(), ["第一次见到 小A 说话～欢迎欢迎！发 @我 /帮助 看看我能做什么。"])
+        await self.post("A", "今天天气不错")
+        self.assertEqual(len(self.greetings()), 1)
+
+    async def test_after_a_full_month_strangers_are_newcomers(self):
+        self.make(FakeGateway())
+        await self.post("A", "大家好")
+        self.at(31, 12)
+        await self.post("B", "我是新来的")
+        self.assertTrue(self.greetings()[-1].startswith("欢迎新朋友 小B～我是小莲"))
+
+    async def test_no_welcome_for_admins_without_full_access_or_when_off(self):
+        self.make(FakeGateway())
+        await self.post("C", "@机器人 你好", event_type="GROUP_AT_MESSAGE_CREATE", mentions_bot=True)
+        self.assertEqual(self.greetings(), [])          # @-messages alone: everyone's first message looks new
+        await self.post("ADMIN", "测试一下")
+        self.assertEqual(self.greetings(), [])
+        self.make(FakeGateway(), greet_newcomers=False)
+        await self.post("A", "大家好")
+        self.assertEqual(self.greetings(), [])
