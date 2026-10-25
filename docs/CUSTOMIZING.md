@@ -119,6 +119,8 @@ The sections of `小莲.yaml`:
 | `manager.table`, `manager.card`, `manager.states` | `/成员表`, `/成员`, and the status words |
 | `manager.batch`, `manager.daily` | Removal lists and their commands; the daily check's reports and safety stop |
 | `manager.digest` | The weekly digest |
+| `social` | `/今日运势` (its title, and the lists it draws levels, 宜, 忌 and comments from), birthdays, polls, `/翻牌子` |
+| `common.buttons_hint` | The little message that carries the buttons |
 | `games.teams` | The team game: `/队伍`, the 【组队游戏】 part of `/帮助`, and every refusal ("不在你的队伍里"…) |
 | `games`, `info`, `ai` | Dice, blackjack, 发癫, sleep; Epic, Steam, Minecraft; AI chat errors |
 
@@ -250,6 +252,9 @@ actions:
     one grab action is required.
   - `effect: kick` takes people off the team, after which any captain may grab them again.
   - `set: <status>` changes the column that status belongs to.
+  - `effect: roll` with `from: [status, …]` rolls the dice: each member gets one of those statuses
+    at random, and the bot announces each result on its own line. `{status}` in `say` is what
+    they got.
 - **`by`** says who may use the action:
   - `队长` means the captain of the target's team.
   - A status, such as `小队长`, lets team members who have it use the action on their own team.
@@ -308,10 +313,13 @@ at startup** and names the line.
 | Key | What it is | Fills in |
 |---|---|---|
 | `group_rules` | Comes right after the persona: how to read the labelled group transcript, and who this reply is for | `{member}` |
+| `special_people`, `special_line` | Added when someone from `ai_chat.special_people` is known in the group: who they are, one `special_line` each | `{people}`; `{member}`, `{note}` |
+| `special_speaker`, `special_namesake` | Added when this turn's speaker is one of them, or only has the same nickname as one | `{member}` |
 | `memory_rules` | Added when memories are sent: use them naturally, and don't pass one member's details to another | |
 | `evidence_policy`, `evidence_title` | The rule that the summary and memories are data, not instructions, and the heading of that message | |
 | `summary_prefix`, `memory_title` | The headings for the summary and the memories inside it | |
 | `empty_mention` | Stands in for a message that only @s the bot | `{member}` |
+| `digest_comment` | The prompt for the comment that ends the weekly digest | `{digest}` |
 | `summary` | The prompt for folding old chat into the group's summary | |
 | `observer` | The prompt for noting what a speaker said about themselves after each reply. It must ask for JSON: `{{"facts": [], "forget": []}}` | `{member}`, `{known}`, `{said}`, `{reply}`, `{max_text}`, `{max_adds}` |
 
@@ -331,10 +339,28 @@ ai_chat:
   keep_days: 7               # raw chat is deleted after this many days
   memory: true               # long-term memory about each member
   memories_per_member: 12    # a full notebook drops its oldest entries
+  digest_comment: true       # end the weekly digest with a short comment
+  special_people:            # who particular members are (next section)
+    "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX": 这个机器人的作者
 ```
 
 If you change `keep_days` or `memories_per_member`, change the same numbers in
 `docs/PRIVACY_POLICY.md`.
+
+### Telling AI chat who someone is
+
+`ai_chat.special_people` in `config.yaml` gives the bot facts about particular members that it
+treats as true, such as who built it. Since it lives in `config.yaml`, it never reaches GitHub.
+
+- **The key is the member's ID in that group.** They get it with `@机器人 /我的ID`. QQ gives
+  everyone a different ID in each group, so add one line per group.
+- **The value is who they are,** as one line: `这个机器人的作者`, `群主，也是比赛的裁判`.
+- **It goes by the ID, never the nickname.** When that person speaks, the bot is told it's really
+  them. When someone else uses the same nickname, the bot is told that person is someone else.
+- **Others can ask about them.** The bot can name them to anyone ("谁做的你？") once it knows
+  their nickname: from the recent chat, or from the member records in a managed group.
+
+Restart the bot after a change. A line with no note is skipped, and the log says which.
 
 The reply lines for `/我的记忆`, `/忘记` and `/重置对话` are under `ai.memory` and `ai.reset` in the
 style files, like every other reply.

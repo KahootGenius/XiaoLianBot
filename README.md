@@ -93,6 +93,9 @@ seekchat (`Desktop/ai`):
 - **She remembers people.** After each reply, another cheap call notes what the speaker said about
   themselves: their plans, situation and likes. She keeps at most 12 short entries per member per
   group. Members see theirs with `/我的记忆` and delete them with `/忘记 序号` or `/忘记 全部`.
+- **She knows who's who.** `ai_chat.special_people` in `config.yaml` tells her facts about
+  particular members, such as who built her. She recognises them by their ID, so someone who copies
+  their nickname can't pass for them.
 - **Nobody can plant instructions through memory.**
   - Summary and memories travel in a separate message marked as data, not instructions.
   - Only facts members state about themselves are kept, and nothing that looks like a phone number,
@@ -124,7 +127,23 @@ For the group's games, where a few captains pick teams:
   - every captain action: its command, who may use it, who it applies to, and what the bot says
   - team size and reset time
 
-  Adding a status such as 受伤 or an action such as /复活 takes a few lines and no code.
+  Adding a status such as 受伤 or an action such as /复活 takes a few lines and no code. An
+  action can also roll the dice (`effect: roll`) for a random status or position.
+
+### 🎲 Social
+- **`/今日运势`:** one fortune per member per day. Every word, including the lists it draws
+  from, is in the style file, so each style themes it its own way.
+- **Birthdays:** members opt in with `/生日 10-25`. On the day, her reply to their first message
+  wishes them a happy birthday. `/本月生日` lists the month's birthdays.
+- **Polls:** `/投票 问题 选项1 选项2 …`, then `/投 A`; `/结束投票` closes it. There's one open poll
+  per group, results show who voted for what, and polls close themselves after 7 days.
+- **`/翻牌子`:** a joke lucky draw among the week's active members, weighted by how much they
+  posted; once a day each. @ a few people to draw among them instead.
+- **The weekly digest** ends with a short in-character comment written by DeepSeek from the
+  digest's numbers.
+- **Buttons:** `/帮助`, `/今日运势`, `/我的状态`, the team list and polls offer tap-to-send buttons.
+  QQ shows them only once Tencent switches custom buttons on for the bot; until then replies
+  are plain text.
 
 ### Inherited from Castorice
 Epic and Steam free-game pushes, Minecraft server status, blackjack, dice, 发癫 quotes, and
@@ -157,7 +176,7 @@ prompts/achievements.yaml  the badges: add or change them without code
 prompts/teams.yaml      the team game: statuses and captain actions, without code
 prompts/chat.yaml       AI chat's rules around the persona: group chat, summary, memory notes
 assets/quotes/          发癫 quote data
-deploy/                 systemd services (bot, tunnel), update script and tunnel-link finder
+deploy/                 systemd services (bot, tunnel), update script, tunnel link and fixed address
 docs/                   privacy policy, self-test report, command reference, customizing guide,
                         server guide (DEPLOY.md)
 tests/                  unit tests and simulated month-long runs
@@ -215,6 +234,8 @@ post. Still, an always-on host, such as a small Linux server, is better than a l
   the tests, restart, and roll back if the tests fail
 - a tunnel service ([deploy/xiaolian-tunnel.service](deploy/xiaolian-tunnel.service)) for other
   admins, and [deploy/tunnel-link.sh](deploy/tunnel-link.sh) to print its current link
+- [deploy/tunnel-fixed.sh](deploy/tunnel-fixed.sh), which gives that link a fixed address on your
+  own domain, so it stops changing
 
 ## Tests
 

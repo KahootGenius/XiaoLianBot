@@ -1,6 +1,6 @@
 import unittest
 from aiohttp.test_utils import TestClient, TestServer
-from modules.manager.dashboard import Dashboard
+from modules.manager.dashboard import Dashboard, _log as dashboard_log
 from tests.test_manager import ADMIN_GROUP, GROUP, STICKER, FakeGateway, ManagerTestCase
 
 
@@ -65,6 +65,14 @@ class MemberTableTest(ManagerTestCase):
 
     async def test_refuses_to_listen_publicly_without_a_token(self):
         self.assertIsNone(await Dashboard(self.mgr, host="0.0.0.0", token="").start())
+
+    async def test_the_startup_log_leaves_the_token_out(self):
+        dashboard = Dashboard(self.mgr, port=0, token="secret-token")
+        with self.assertLogs(dashboard_log, "INFO") as logged:
+            url = await dashboard.start()
+        self.addAsyncCleanup(dashboard.runner.cleanup)
+        self.assertTrue(url.endswith("?token=secret-token"))         # the caller still gets the link
+        self.assertNotIn("secret-token", "\n".join(logged.output))
 
     async def test_tunnels_need_a_token(self):
         """A tunnel connects from 127.0.0.1 too; its host name and headers give it away."""

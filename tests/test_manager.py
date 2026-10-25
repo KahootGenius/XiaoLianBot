@@ -39,10 +39,13 @@ class FakeGateway:
         self.member_list, self.remove = member_list, remove
         self.members = {m["member_openid"]: m for m in members}
         self.sent = []          # (group, content, reply_to)
+        self.buttons = []       # (group, rows of (label, command)) sent under replies
         self.removed = []       # (group, [openids])
 
-    async def send(self, group, content, reply_to=None):
+    async def send(self, group, content, reply_to=None, buttons=None):
         self.sent.append((group, content, reply_to))
+        if buttons:
+            self.buttons.append((group, buttons))
 
     async def probe(self, group):
         return {"member_list": self.member_list, "remove": self.remove}

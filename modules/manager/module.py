@@ -135,6 +135,7 @@ class ManagerModule:
         self.recent = {}           # group -> classifier.RecentMessages
         self.announced = {}        # group -> timestamps of recent achievement announcements
         self.forget_hooks = []     # f(group, member), called by /删除数据 so other modules forget too
+        self.digest_commenter = None   # async f(digest text) -> a closing comment or None (AI chat)
         self.task = None
         self.commands = self._build_commands()
 
@@ -253,10 +254,12 @@ class ManagerModule:
         for chunk in self._split(text):
             await self.gw.send(group, chunk)
 
-    async def _reply(self, message, text):
+    async def _reply(self, message, text, buttons=None):
         try:
-            for chunk in self._split(text):
-                await self.gw.send(message.group_openid, chunk, reply_to=message.id)
+            chunks = self._split(text)
+            for i, chunk in enumerate(chunks):
+                await self.gw.send(message.group_openid, chunk, reply_to=message.id,
+                                   buttons=buttons if i == len(chunks) - 1 else None)
         except Exception as e:
             _log.error(f"[Manager] 回复失败: {e}")
 
@@ -494,7 +497,8 @@ class ManagerModule:
         status, comment = self._status_line(verdict, snap, now)
         lines.append(t("manager.status.line", status=status))
         lines.append(comment)
-        await self._reply(message, "\n".join(lines))
+        await self._reply(message, "\n".join(lines),
+                          buttons=[[("排行", "/排行"), ("成就", "/成就"), ("今日运势", "/今日运势")]])
 
     def _status_line(self, verdict, snap, now):
         def state(key, **kwargs):
@@ -996,7 +1000,7 @@ class ManagerModule:
         await self._reply(message, summary)
 
     async def cmd_digest_now(self, message, group, args):
-        await self._reply(message, self.build_digest(group))
+        await self._reply(message, await self.digest_with_comment(group))
 
     async def cmd_mention_test(self, message, group, args):
         mention = f'<qqbot-at-user id="{message.member_openid}" />'
@@ -1192,6 +1196,19 @@ class ManagerModule:
 
     # ------------------------------------------------------------------ weekly digest
 
+    async def digest_with_comment(self, group):
+        """The weekly digest, ending with AI chat's comment on it when there is one."""
+        text = self.build_digest(group)
+        if self.digest_commenter is not None:
+            comment = await self.digest_commenter(text)
+            if comment:
+                text = f"{text}\n\n{t('manager.digest.comment', comment=comment)}"
+        return text
+
+    def active_members(self, group, since_ts):
+        """[(member_openid, nickname, n valid messages)] since `since_ts`, or None for a group it doesn't manage."""
+        return self.store.valid_counts(group, since_ts) if self.manages(group) else None
+
     def build_digest(self, group):
         now = self.clock()
         ts = int(now.timestamp())
@@ -1317,7 +1334,7 @@ class ManagerModule:
                 and self.store.get_kv(f"digest:{group}") != week):
             self.store.set_kv(f"digest:{group}", week)
             try:
-                await self._send(group, self.build_digest(group))
+                await self._send(group, await self.digest_with_comment(group))
             except Exception as e:
                 _log.error(f"[Manager] 发送每周小报出错: {e}")
 

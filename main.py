@@ -11,6 +11,8 @@ from modules.ai.deepseek import DeepSeekModule
 from modules.fun.blackjack import BlackjackModule
 from modules.fun.crazy_talk import CrazyTalkModule
 from modules.fun.dice import DiceModule
+from modules.fun import social
+from modules.fun.social import SocialModule
 from modules.fun.sleep import SleepModule
 from modules.fun.teams import TeamsModule
 from modules.info.epic_games import EpicGamesModule
@@ -49,21 +51,28 @@ class MyClient(botpy.Client):
         self.deepseek_module = DeepSeekModule(self.api)
         self.crazy_talk_module = CrazyTalkModule(self.api)
         # One gateway for every module that replies through it, so reply sequence numbers never collide.
-        self.gateway = QQGateway(self.api)
+        self.gateway = QQGateway(self.api, buttons=config.get("buttons", True))
         self.manager_module = ManagerModule(self.gateway, config, styles=STYLES)
-        self.ai_chat_module = AIChatModule(self.gateway, config, is_admin=self.manager_module.is_admin)
-        reserved = (HelpModule.TRIGGERS + CASTORICE_COMMANDS + ai_chat.COMMANDS
+        self.ai_chat_module = AIChatModule(self.gateway, config, is_admin=self.manager_module.is_admin,
+                                           nickname_of=self.manager_module.known_nickname)
+        if self.ai_chat_module.enabled:
+            self.manager_module.digest_commenter = self.ai_chat_module.comment_on_digest
+        self.social_module = SocialModule(self.gateway, is_admin=self.manager_module.is_admin,
+                                          activity=self.manager_module.active_members)
+        reserved = (HelpModule.TRIGGERS + CASTORICE_COMMANDS + ai_chat.COMMANDS + social.COMMANDS
                     + tuple(name for name, *_ in self.manager_module.commands))
         self.teams_module = TeamsModule(self.gateway, config, is_admin=self.manager_module.is_admin,
                                         nickname_of=self.manager_module.known_nickname, reserved=reserved)
         # /删除数据 @某人 also clears their team place and what AI chat kept about them.
-        self.manager_module.forget_hooks += [self.teams_module.forget_member, self.ai_chat_module.forget_member]
+        self.manager_module.forget_hooks += [self.teams_module.forget_member, self.ai_chat_module.forget_member,
+                                             self.social_module.forget_member]
         dashboard_config = (config.get("manager") or {}).get("dashboard") or {}
         self.dashboard = None
         if self.manager_module.enabled and dashboard_config.get("enabled", True):
             self.dashboard = Dashboard.from_config(self.manager_module, dashboard_config)
         self.help_module = HelpModule(self.api, ai_enabled=self.ai_chat_module.enabled,
-                                      manager_enabled=self.manager_module.enabled, teams=self.teams_module)
+                                      manager_enabled=self.manager_module.enabled, teams=self.teams_module,
+                                      gateway=self.gateway)
         self._answered = OrderedDict()
         self._started = False
 
@@ -94,12 +103,14 @@ class MyClient(botpy.Client):
         # Everything said while handling this message speaks in the group's style.
         with STYLES.scope(message.group_openid):
             await self.manager_module.observe(message)
+            await self.social_module.observe(message)
             if message.mentions_bot:
                 await self._handle_command(message)
 
     async def on_group_at_message_create(self, message):
         with STYLES.scope(message.group_openid):
             await self.manager_module.observe(message)
+            await self.social_module.observe(message)
             await self._handle_command(message)
 
     async def on_group_del_robot(self, event):
@@ -107,6 +118,7 @@ class MyClient(botpy.Client):
         self.manager_module.forget_group(event.group_openid)
         self.teams_module.forget_group(event.group_openid)
         self.ai_chat_module.forget_group(event.group_openid)
+        self.social_module.forget_group(event.group_openid)
 
     def _first_time(self, message_id):
         """With every-message access an @-message arrives as both events; answer it once."""
@@ -125,6 +137,8 @@ class MyClient(botpy.Client):
         if await self.manager_module.handle_manager(message):
             return
         if await self.teams_module.handle_teams(message):
+            return
+        if await self.social_module.handle_social(message):
             return
         if await self.epic_module.handle_epic(message):
             return

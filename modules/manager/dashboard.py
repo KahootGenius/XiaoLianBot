@@ -273,9 +273,10 @@ class Dashboard:
             self.runner = None
             return None
         shown_host = "127.0.0.1" if self.host in ("0.0.0.0", "::") else self.host
-        url = f"http://{shown_host}:{self.port}/" + (f"?token={self.token}" if self.token else "")
-        _log.info(f"[Dashboard] 成员活跃表：{url}")
-        return url
+        url = f"http://{shown_host}:{self.port}/"
+        # The token stays out of the log: logs get copied around, and update.sh prints them.
+        _log.info(f"[Dashboard] 成员活跃表：{url}" + ("?token=…（token 见 config.yaml）" if self.token else ""))
+        return url + (f"?token={self.token}" if self.token else "")
 
     def _check(self, request):
         if self.token:

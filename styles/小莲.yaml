@@ -30,6 +30,9 @@ common:
   date: "{month}月{day}日"
   not_admin: 这个指令只有管理员能用哦～
   error: "{command} 出错了：{error}"
+  # 回复下面的按钮那条小消息（需要腾讯为机器人开通按钮，没开通时不会出现）
+  buttons_hint: 点一下直接发送 👇
+  buttons_unsupported: 当前 QQ 版本不支持这个按钮，请升级后再试
 
 # ---------------------------------------------------------------- /帮助
 help:
@@ -50,6 +53,11 @@ help:
     /21点 开始游戏  /抽卡 要牌  /停止 停牌
     /摇骰子 掷一个骰子
     /发癫 <名称> 随机语录
+  social: |-
+    【互动】
+    /今日运势 每天一签  /翻牌子 随机翻一位群友的牌子
+    /生日 月-日 登记生日  /本月生日 这个月谁过生日
+    /投票 问题 选项1 选项2…  /投 A  /结束投票
   sleep: |-
     【作息】
     /晚安 记录入睡  /早安 查看睡眠时长
@@ -389,6 +397,7 @@ manager:
     newcomers: "🌱 新面孔：{names}"
     more_people: " 等 {count} 人"
     badges: "🎖️ 新成就：{list}"
+    comment: "💭 {name}说：{comment}"      # AI 写的点评（需要 DeepSeek，ai_chat.digest_comment 可以关掉）
     badge_item: "{member}「{badge}」"
     more_badges: " 等 {count} 个"
     on_leave: "🏖️ 正在请假：{count} 人"
@@ -438,6 +447,7 @@ games:
     admins: 管理员
     in_a_team: "你现在是 {captain} 队伍里的队员，不能另外组队哦。"
     done: "{actor} 对 {members} 使用了「{action}」。"     # teams.yaml 里没写 say 的操作用这句
+    rolled: "🎲 {actor} 为 {members} 掷出了「{status}」！"    # effect: roll 的操作没写 say 时用这句
     fail:
       self: 不能抓自己哦～
       captain: "{member} 今天是队长，不能这样做哦。"
@@ -508,3 +518,61 @@ ai:
     usage: "用法：/忘记 序号（序号见 /我的记忆），或 /忘记 全部"
   # /重置对话（管理员）
   reset: "好的，本群和{name}的聊天记录、总结都清空了，从头开始～（群友记忆还在，各自可以用 /忘记 删除）"
+
+# ---------------------------------------------------------------- 互动
+social:
+  # /今日运势：每人每天固定一签。下面这些列表是抽签用的「签筒」，可以随意增删、改成本风格的说法
+  fortune:
+    title: "🔮 {member} 的今日运势 · {date}"
+    level: "运势：{level}"
+    good_line: "宜：{items}"
+    bad_line: "忌：{items}"
+    button: 我也抽一签
+    levels: [大吉, 中吉, 小吉, 吉, 末吉, 凶]
+    good: [冒泡聊天, 早睡早起, 组队开黑, 喝一杯奶茶, 认真回答问题, 分享一首歌, 出门晒太阳, 整理房间]
+    bad: [熬夜, 潜水, 立 flag, 冲动消费, 和人抬杠, 拖延, 空腹喝咖啡, 刷手机到凌晨]
+    # 每条可以用 {member}（昵称）、{level}（今天的运势）
+    comments:
+      - "{name}偷偷看了一眼：{member} 今天是{level}，记得来群里报个到～"
+      - "运势只是参考，开心最重要！"
+      - "今天适合多和大家聊聊天哦。"
+      - "{level}也好，凶也好，有{name}陪着呢。"
+
+  # /生日、/本月生日，以及生日当天的祝福（成员当天第一次说话时）
+  birthday:
+    saved: "记住啦！你的生日是 {date}，到时候{name}第一个祝你生日快乐～"
+    mine: "你登记的生日是 {date}。改：/生日 月-日 · 删除：/生日 删除"
+    none: "你还没有登记生日哦。用法：/生日 10-25"
+    deleted: 好，你的生日已经删掉了。
+    usage: "生日写成「月-日」哦，例如：/生日 10-25"
+    wish:
+      - "🎂 {member}，生日快乐！{name}祝你新的一岁天天开心～"
+      - "🎉 今天是 {member} 的生日！大家快来祝 TA 生日快乐～"
+    month_title: "🎂 {month} 月过生日的群友（{count} 位）："
+    month_row: "{date} {member}"
+    month_none: "{month} 月还没有人登记生日～用 /生日 月-日 登记一下吧"
+
+  # /投票、/投、/结束投票。每个群同时只有一个投票，7 天后自动结束
+  poll:
+    title: "📊 {question}（发起：{creator}，已有 {total} 票）"
+    closed_title: "📊 投票结束：{question}（共 {total} 票）"
+    option: "{label}. {option} · {count} 票：{voters}"
+    option_empty: "{label}. {option} · 0 票"
+    footer: "投票：@我 /投 {first}（到 {last}），再投一次就是改票"
+    voted: "{member} 投给了 {label}. {option}（现在共 {total} 票）"
+    none: "现在没有进行中的投票。发起：/投票 问题 选项1 选项2 …"
+    busy: "已经有一个投票「{question}」在进行中，先 /结束投票 再发起新的吧"
+    usage: "用法：/投票 问题 选项1 选项2 …（用空格或换行隔开，至少两个选项）"
+    too_many: "选项最多 {max} 个哦"
+    bad_choice: "没有这个选项，请投 {first} 到 {last} 之间的字母"
+    not_yours: 只有发起人或管理员能结束这个投票哦
+
+  # /翻牌子：开玩笑的抽签，从本周活跃的群友里按发言多少加权抽一位，每人每天一次
+  flip:
+    result:
+      - "📜 {member} 翻开了牌子……今晚是 {target}！"
+      - "📜 {member} 掀开牌子一看：{target}，就决定是你了！"
+    again: "今天已经翻过牌子啦，翻到的是 {target}。明天再来～"
+    need_mentions: "这个群没开群管理，我不知道谁最近活跃；@ 几个人，我从里面帮你翻"
+    empty: 这周还没有别人有效发言过，牌子都是空的……
+

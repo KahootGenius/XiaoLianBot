@@ -1,10 +1,14 @@
-# systemd service for the Cloudflare quick tunnel that lets other admins open
-# the member table. It starts at boot and restarts if it stops.
+# systemd service for the Cloudflare tunnel that lets other admins open the
+# member table. It starts at boot and restarts if it stops.
 # Install (see docs/DEPLOY.md, "The member table for other admins"):
 #   sudo cp /home/xiaolian/XiaoLianBot/deploy/xiaolian-tunnel.service /etc/systemd/system/
 #   sudo systemctl daemon-reload && sudo systemctl enable --now xiaolian-tunnel
-# A quick tunnel gets a new address every time it starts. To print the current
-# link, token included: sudo /home/xiaolian/XiaoLianBot/deploy/tunnel-link.sh
+#
+# Two kinds of tunnel:
+# - quick tunnel (default): a random *.trycloudflare.com address, new every time it starts;
+# - named tunnel: a fixed address on your own domain, used once deploy/tunnel-fixed.sh
+#   has saved the tunnel's token in /etc/xiaolian/tunnel.env.
+# To print the current link, token included: sudo /home/xiaolian/XiaoLianBot/deploy/tunnel-link.sh
 
 [Unit]
 Description=Cloudflare tunnel to the XiaoLian member table
@@ -13,7 +17,11 @@ After=network-online.target xiaolian.service
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/cloudflared tunnel --no-autoupdate --url http://127.0.0.1:8765
+# systemd reads this file as root, so it stays readable by root only. cloudflared
+# takes the token from the environment, so it never shows in the process list.
+EnvironmentFile=-/etc/xiaolian/tunnel.env
+# ($$ is a plain $ once systemd has read the line.)
+ExecStart=/bin/sh -c 'if [ -n "$${TUNNEL_TOKEN:-}" ]; then exec /usr/bin/cloudflared tunnel --no-autoupdate run; else exec /usr/bin/cloudflared tunnel --no-autoupdate --url http://127.0.0.1:8765; fi'
 Restart=always
 RestartSec=10
 

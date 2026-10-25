@@ -13,6 +13,10 @@ labelled as data, not instructions (modules/ai/context.py).
 
 The persona is the style's system_prompt; the rules around it are in
 prompts/chat.yaml. Raw turns are deleted after ai_chat.keep_days.
+
+ai_chat.special_people in config.yaml says who particular members are (the
+bot's author, say). They're recognised by member_openid, never by nickname,
+so someone who copies a nickname isn't taken for them.
 """
 import asyncio
 import functools
@@ -37,6 +41,10 @@ CHAT_PROMPTS_FILE = content_path("prompts", "chat.yaml")
 # What each line of prompts/chat.yaml may fill in, besides {name} (the style's name).
 PROMPT_FIELDS = {
     "group_rules": {"member"},
+    "special_people": {"people"},
+    "special_line": {"member", "note"},
+    "special_speaker": {"member"},
+    "special_namesake": {"member"},
     "memory_rules": set(),
     "evidence_policy": set(),
     "evidence_title": set(),
@@ -44,12 +52,14 @@ PROMPT_FIELDS = {
     "memory_title": set(),
     "empty_mention": {"member"},
     "summary": set(),
+    "digest_comment": {"digest"},
     "observer": {"member", "known", "said", "reply", "max_text", "max_adds"},
 }
 # Commands this module answers before chatting. Listed so team-game actions can't take them.
 COMMANDS = ("/我的记忆", "/忘记", "/重置对话", "/服务器QA")
 FORGET_ALL_WORDS = ("全部", "所有", "all")
 MEMORY_SPEAKERS = 5         # members whose memories ride along: the speaker plus recent ones
+DIGEST_COMMENT_LIMIT = 120  # characters; the prompt asks for 60
 DAY = 86400
 
 
@@ -75,9 +85,26 @@ def load_chat_prompts(path=CHAT_PROMPTS_FILE):
     return prompts
 
 
+def read_special_people(value):
+    """ai_chat.special_people from config.yaml as {member_openid: note}. A broken entry is
+    skipped with a warning rather than stopping the bot."""
+    if not value:
+        return {}
+    if not isinstance(value, dict):
+        _log.warning("[AIChat] config.yaml 的 ai_chat.special_people 要写成「ID: 说明」的形式，已忽略")
+        return {}
+    people = {}
+    for openid, note in value.items():
+        if not isinstance(note, str) or not note.strip():
+            _log.warning(f"[AIChat] ai_chat.special_people 里的 {str(openid)[:8]}… 没写说明，已跳过")
+            continue
+        people[str(openid).strip()] = note.strip()
+    return people
+
+
 class AIChatModule:
     def __init__(self, gateway, config=None, store=None, client=None, is_admin=None, clock=None,
-                 prompts_path=CHAT_PROMPTS_FILE):
+                 prompts_path=CHAT_PROMPTS_FILE, nickname_of=None):
         self.gw = gateway
         self.config = load_config() if config is None else config
         deepseek = self.config.get("deepseek") or {}
@@ -94,7 +121,11 @@ class AIChatModule:
         self.keep_days = int(chat.get("keep_days", 7))
         self.memory_on = bool(chat.get("memory", True))
         self.memories_per_member = int(chat.get("memories_per_member", 12))
+        self.digest_comment = bool(chat.get("digest_comment", True))
+        self.special = read_special_people(chat.get("special_people"))
         self.is_admin = is_admin or (lambda group, member, role=None: False)
+        # A member's current nickname in a managed group, for special people who aren't in the chat.
+        self.nickname_of = nickname_of or (lambda group, member: None)
         self.tz = pytz.timezone('Asia/Shanghai')
         self.clock = clock or (lambda: datetime.now(self.tz))
         self.summarizing = set()    # groups with a summary call in flight
@@ -189,9 +220,32 @@ class AIChatModule:
         await self.chat(message, text)
         return True
 
-    def _prompt(self, group, member_name, window):
+    def _special_people(self, group, member, member_name, window):
+        """Who the special people known in this group are, under the nicknames they use now,
+        and whether this turn's speaker is one of them. None if none of them is known here."""
+        if not self.special:
+            return None
+        nicknames = {turn["member_openid"]: turn["name"] for turn in window     # the newest name wins
+                     if turn["role"] == "user" and turn["member_openid"] in self.special}
+        lines, known = [], set()
+        for openid, note in self.special.items():
+            nickname = member_name if openid == member else nicknames.get(openid) or self.nickname_of(group, openid)
+            if nickname:
+                lines.append(render(self.prompts["special_line"], member=nickname, note=note))
+                known.add(nickname)
+        if not lines:
+            return None
+        block = [render(self.prompts["special_people"], people="\n".join(lines))]
+        if member in self.special:
+            block.append(render(self.prompts["special_speaker"], member=member_name))
+        elif member_name in known:
+            block.append(render(self.prompts["special_namesake"], member=member_name))
+        return "\n".join(block)
+
+    def _prompt(self, group, member, member_name, window):
         """(instructions, evidence) for one reply."""
-        instructions = [current().system_prompt, render(self.prompts["group_rules"], member=member_name)]
+        instructions = [current().system_prompt, render(self.prompts["group_rules"], member=member_name),
+                        self._special_people(group, member, member_name, window)]
         evidence = []
         summary = self.store.summary(group)
         if summary:
@@ -217,7 +271,7 @@ class AIChatModule:
         said = text or render(self.prompts["empty_mention"], member=name)
         self.store.add_turn(group, member, name, "user", said, self._now())
         window = context.select_window(self.store.recent_turns(group), self.context_tokens)
-        instructions, evidence = self._prompt(group, name, window)
+        instructions, evidence = self._prompt(group, member, name, window)
         try:
             reply = (await self._complete(self.client, self.model,
                                           context.build_messages(instructions, evidence, window),
@@ -297,6 +351,25 @@ class AIChatModule:
             _log.warning(f"[AIChat] 生成总结失败: {e}")
         finally:
             self.summarizing.discard(group)
+
+    async def comment_on_digest(self, digest):
+        """One or two in-character sentences to end the weekly digest, or None.
+
+        Only the digest itself -- counts and nicknames -- goes to DeepSeek. A failure
+        just means the digest goes out without a comment.
+        """
+        if not (self.enabled and self.digest_comment):
+            return None
+        try:
+            text = await self._complete(self.client, self.helper_model, [
+                {"role": "system", "content": current().system_prompt},
+                {"role": "user", "content": render(self.prompts["digest_comment"], digest=digest)},
+            ])
+        except Exception as e:
+            _log.warning(f"[AIChat] 小报点评失败: {e}")
+            return None
+        text = text.strip().strip("“”\"")
+        return text[:DIGEST_COMMENT_LIMIT] or None
 
     # ------------------------------------------------------------------ commands
 

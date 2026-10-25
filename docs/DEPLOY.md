@@ -213,8 +213,9 @@ The page stays on `127.0.0.1:8765` on the server, so nobody can reach it directl
   ssh -L 8765:127.0.0.1:8765 root@SERVER_IP
   ```
   Then browse to `http://127.0.0.1:8765/?token=…` on your computer while that login stays open.
-- **For other admins:** a Cloudflare quick tunnel gives the page a public `https://…trycloudflare.com`
-  address. Visitors still need the token, so strangers get "403".
+- **For other admins:** a Cloudflare tunnel gives the page a public address: a random
+  `https://…trycloudflare.com` one to start with, or a fixed one on your own domain
+  ([A fixed address](#a-fixed-address)). Visitors still need the token, so strangers get "403".
 
 ### The member table for other admins
 
@@ -244,9 +245,45 @@ Send it to admins privately, never in the main group.
 
 **The address changes whenever the tunnel restarts:** after a reboot, a crash, or
 `sudo systemctl restart xiaolian-tunnel`. Run `tunnel-link.sh` again and send the new link. The
-old link stops working at once. Restarting the bot or running `update.sh` doesn't change it.
+old link stops working at once. Restarting the bot or running `update.sh` doesn't change it. To stop
+the changes for good, give it a fixed address (next section).
 
 To switch the public page off: `sudo systemctl disable --now xiaolian-tunnel`.
+
+### A fixed address
+
+A quick tunnel's address is random, and there's no way to keep it. A named tunnel on a domain you
+own keeps one address, like `https://panel.example.com`, through restarts and reboots, so you send
+the link once. Cloudflare doesn't charge for the tunnel; you only pay for the domain. Do the
+section above first.
+
+1. **Put a domain on Cloudflare.** Sign up at [dash.cloudflare.com](https://dash.cloudflare.com).
+   If you have no domain, buy one there under **Domain Registration** (sold at cost; a `.com` is
+   about US$10 a year). A domain bought elsewhere works too: add it to Cloudflare on the Free plan
+   and switch its nameservers where you bought it, as Cloudflare's page explains.
+2. **Create the tunnel.** Go to **Networking** > **Tunnels** > **Create a tunnel**, name it
+   `xiaolian`, and pick Debian when asked about the system. Copy the install command it shows,
+   but **don't run it**: that would set up a second tunnel service next to ours.
+3. **Give the token to the server.** Run this, paste the command when asked, and type the
+   address you'll use:
+   ```bash
+   sudo /home/xiaolian/XiaoLianBot/deploy/tunnel-fixed.sh
+   ```
+   It keeps only the token, in `/etc/xiaolian/tunnel.env` (readable by root only), and restarts
+   the tunnel. The tunnel shows as connected in Cloudflare within a minute.
+4. **Point the address at the page.** In Cloudflare, open the tunnel and its **Routes** tab, then
+   **Add route** > **Published application**. Use the subdomain and domain you typed in step 3
+   (for example `panel` and `example.com`), and Service URL `http://127.0.0.1:8765`. If the page
+   asks for a type and a URL instead, use `HTTP` and `127.0.0.1:8765`.
+
+From now on `tunnel-link.sh` prints `https://panel.example.com/?token=…`, and that link keeps
+working. To cut off someone who shouldn't have it, change `manager.dashboard.token` in `config.yaml`
+and restart the bot: every old link stops working, and `tunnel-link.sh` prints the new one.
+
+- **The link says "403".** The token in the link is wrong; run `tunnel-link.sh` again.
+- **Cloudflare shows error 1033.** The tunnel isn't connected. See
+  `journalctl -u xiaolian-tunnel -n 30`. If the token was wrong, run `tunnel-fixed.sh` again.
+- **Back to a random address:** `sudo /home/xiaolian/XiaoLianBot/deploy/tunnel-fixed.sh --off`.
 
 ## Backups
 

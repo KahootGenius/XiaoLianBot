@@ -71,7 +71,19 @@ takes one or more @mentions.
 | `/解散队伍` | Captains; admins with `@队长` | "Disband": let a whole team go |
 | `/清空队伍` | Admins | "Clear teams": end every team in the group |
 
-Admins can use every action except `/抓` on any team. Teams clear daily at 05:00 Beijing time.
+Admins can use every action except `/抓` on any team.
+
+### Social (every group)
+
+| Command | Meaning |
+|---|---|
+| `/今日运势` | "Today's fortune": one per member per day, worded by the style |
+| `/生日 月-日`, `/生日`, `/生日 删除` | "Birthday": register, show or delete mine; the bot wishes me on the day |
+| `/本月生日` | "This month's birthdays" in this group |
+| `/投票 问题 选项…`, `/投票` | "Poll": start one, or show the open one |
+| `/投 A` | "Vote" for option A; voting again changes the vote |
+| `/结束投票` | "End the poll" (its starter or an admin) |
+| `/翻牌子` | "Flip a name tag": a joke draw among this week's active members, once a day | Teams clear daily at 05:00 Beijing time.
 
 ### Inherited from Castorice
 

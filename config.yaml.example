@@ -14,6 +14,12 @@ secret: "YOUR_APP_SECRET"
 # group_styles:          # optional: a different style for particular groups
 #   "GROUP_OPENID": 桃子  # which group this is (@机器人 /群ID shows the ID)
 
+# --- Optional: buttons under some replies (/帮助, /今日运势, polls ...) ---
+# Tapping one sends the command for the member. QQ only shows them once Tencent
+# has switched custom buttons on for the bot; until then the bot notices the
+# refusal and quietly sends text only. Set false to never try.
+# buttons: true
+
 # --- Optional: DeepSeek (https://platform.deepseek.com) ---
 # Omit this whole section to run the bot without AI features. Epic, Steam,
 # Minecraft, blackjack, sleep, dice, 发癫 and the group manager all work
@@ -37,6 +43,12 @@ secret: "YOUR_APP_SECRET"
 #   keep_days: 7             # raw chat is deleted after this many days
 #   memory: true             # long-term memory about each member (/我的记忆, /忘记)
 #   memories_per_member: 12  # a full notebook drops its oldest entries
+#   digest_comment: true     # end the weekly digest with a short in-character comment
+#   # Who particular members are, which the bot treats as true. Key: their member_openid
+#   # (@机器人 /我的ID; it's different in every group, so one line per group). It goes by the
+#   # ID, so copying someone's nickname doesn't make you them. See docs/CUSTOMIZING.md.
+#   special_people:
+#     "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX": 这个机器人的作者   # 张三, 一群
 
 # --- Optional: outbound proxy for the Steam scraper ---
 # Only needed if store.steampowered.com is unreachable from your host.

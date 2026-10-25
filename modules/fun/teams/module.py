@@ -10,6 +10,7 @@ Every line comes from the style files via t(), except each action's own
 announcement, which sits next to the action in teams.yaml.
 """
 import asyncio
+import random
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -43,11 +44,12 @@ class Turn:
     teams: GroupTeams
     now: int
     team: Team = None       # grab only: the team people are grabbed into
+    rolled: dict = None     # roll only: member openid -> the status it landed on
 
 
 class TeamsModule:
     def __init__(self, gateway, config=None, is_admin=None, nickname_of=None, reserved=(),
-                 rules_path=RULES_FILE, data_path=DATA_FILE, clock=None):
+                 rules_path=RULES_FILE, data_path=DATA_FILE, clock=None, rng=None):
         cfg = (config or {}).get("teams") or {}
         self.captains = {str(c) for c in cfg.get("captains") or []}
         self.groups = {str(g) for g in cfg.get("groups") or []}     # empty: every group
@@ -58,6 +60,7 @@ class TeamsModule:
         self.tz = pytz.timezone('Asia/Shanghai')
         self.clock = clock or (lambda: datetime.now(self.tz))
         self.task = None
+        self.rng = rng or random.Random()
         self.rules = self.roster = None
         if self.enabled:
             self.rules = load_rules(rules_path, reserved)
@@ -111,10 +114,12 @@ class TeamsModule:
             chunks.append(current)
         return chunks
 
-    async def _reply(self, message, text):
+    async def _reply(self, message, text, buttons=None):
         try:
-            for chunk in self._split(text):
-                await self.gw.send(message.group_openid, chunk, reply_to=message.id)
+            chunks = self._split(text)
+            for i, chunk in enumerate(chunks):
+                await self.gw.send(message.group_openid, chunk, reply_to=message.id,
+                                   buttons=buttons if i == len(chunks) - 1 else None)
         except Exception as e:
             _log.error(f"[Teams] 回复失败: {e}")
 
@@ -177,19 +182,24 @@ class TeamsModule:
             return
 
         effect = getattr(self, f"effect_{action.effect}")
-        done, captains, problems = [], [], []
+        turn.rolled = {}
+        done, problems = [], []     # done: (name, their captain's name, the status they now have)
         for openid, name in targets:
             try:
-                captains.append(effect(turn, openid, name).name)
-                done.append(name)
+                captain = effect(turn, openid, name).name
+                done.append((name, captain, turn.rolled.get(openid, action.status)))
             except Refused as e:
                 problems.append(str(e))
         lines = []
         if done:
             self.roster.save()
-            said = dict(actor=turn.actor_name, members=join(done), count=len(done), captain=captains[0],
-                        action=action.name)
-            lines.append(render(action.say, **said) if action.say else t("games.teams.done", **said))
+            # A roll lands differently for each member, so each gets a line of their own.
+            groups = [[d] for d in done] if action.effect == "roll" else [done]
+            for group in groups:
+                said = dict(actor=turn.actor_name, members=join([name for name, _, _ in group]), count=len(group),
+                            captain=group[0][1], action=action.name, status=group[0][2])
+                generic = "games.teams.rolled" if action.effect == "roll" else "games.teams.done"
+                lines.append(render(action.say, **said) if action.say else t(generic, **said))
         await self._reply(message, "\n".join(lines + problems))
 
     def _grabbing_team(self, turn):
@@ -264,6 +274,13 @@ class TeamsModule:
             del turn.teams.teams[team.captain]
         return team
 
+    def effect_roll(self, turn, openid, name):
+        team, member = self._target(turn, openid, name)
+        status = self.rng.choice(turn.action.pool)
+        member.status[self.rules.column_of(status)] = status
+        turn.rolled[openid] = status
+        return team
+
     def effect_set(self, turn, openid, name):
         team, member = self._target(turn, openid, name)
         action = turn.action
@@ -288,7 +305,9 @@ class TeamsModule:
         legend = [f"{icon}{status}" for status, icon in self.rules.icons.items() if status in shown]
         if legend:
             lines.append(t("games.teams.legend", legend=" ".join(legend)))
-        await self._reply(message, "\n".join(lines))
+        grab = next(a.name for a in self.rules.actions if a.effect == "grab")
+        await self._reply(message, "\n".join(lines), buttons=[[
+            ("刷新", f"/{self.rules.commands['teams']}"), (grab, f"/{grab} ")]])
 
     def _label(self, member, shown):
         """A member's name with their statuses: icons in front, statuses without one in brackets after."""

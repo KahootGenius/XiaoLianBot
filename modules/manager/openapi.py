@@ -8,9 +8,11 @@ reusing botpy's HTTP session and access token. Tests replace this class with a f
 """
 import asyncio
 import itertools
+import time
 from collections import OrderedDict
 from botpy import logging
 from botpy.http import Route
+from core.style import t
 
 
 _log = logging.get_logger()
@@ -19,6 +21,9 @@ _log = logging.get_logger()
 NO_PERMISSION = 11253
 REMOVE_BATCH_SIZE = 20      # platform limit per batch_remove_members call
 TRACE_HEADER = "X-Tps-trace-Id"
+# After QQ refuses buttons (a custom layout needs Tencent to switch it on for the
+# bot), replies go out as plain text only for this long before trying again.
+BUTTON_RETRY_SECONDS = 6 * 3600
 
 
 class OpenAPIError(Exception):
@@ -35,8 +40,10 @@ class OpenAPIError(Exception):
 
 
 class QQGateway:
-    def __init__(self, api):
+    def __init__(self, api, buttons=True):
         self.api = api
+        self.buttons = buttons              # config.yaml: buttons
+        self.buttons_off_until = 0.0
         # msg_id -> next msg_seq. QQ rejects a second reply with the same
         # (msg_id, msg_seq) pair as a duplicate (error 40054005).
         self._seq = OrderedDict()
@@ -49,20 +56,55 @@ class QQGateway:
                 self._seq.popitem(last=False)
         return next(counter)
 
-    async def send(self, group_openid, content, reply_to=None):
+    async def send(self, group_openid, content, reply_to=None, buttons=None):
         """Send text to a group, as a passive reply when `reply_to` is a message id.
 
         Passive replies only work within 5 minutes of the original message;
         past that (or on any failure) fall back to a proactive message.
+        `buttons` -- rows of (label, command) -- go under a reply; see send_buttons.
         """
         if reply_to:
             try:
-                return await self.api.post_group_message(
+                result = await self.api.post_group_message(
                     group_openid=group_openid, msg_type=0, content=content,
                     msg_id=reply_to, msg_seq=self._next_seq(reply_to))
+                if buttons:
+                    await self.send_buttons(group_openid, reply_to, buttons)
+                return result
             except Exception as e:
                 _log.warning(f"[Manager] 被动回复失败，改为主动发送: {e}")
         return await self.api.post_group_message(group_openid=group_openid, msg_type=0, content=content)
+
+    @staticmethod
+    def keyboard(rows):
+        """QQ's custom keyboard for rows of (label, command). Tapping a button sends "@bot command"
+        for the member; a command ending in a space is only typed in, for them to finish (e.g. "/抓 ")."""
+        buttons, n = [], itertools.count(1)
+        for row in rows[:5]:
+            buttons.append({"buttons": [{
+                "id": str(next(n)),
+                "render_data": {"label": label, "visited_label": label, "style": 1},
+                "action": {"type": 2, "permission": {"type": 2}, "data": command.strip(),
+                           "enter": not command.endswith(" "), "unsupport_tips": t("common.buttons_unsupported")},
+            } for label, command in row[:5]]})
+        return {"content": {"rows": buttons}}
+
+    async def send_buttons(self, group_openid, reply_to, rows):
+        """Tap-to-send buttons, as a small Markdown message of their own under a reply.
+
+        The reply itself has already gone out as plain text, so if QQ refuses the
+        buttons -- custom layouts need Tencent to switch them on for the bot --
+        nothing is lost: the bot stops trying for a while and keeps to text.
+        """
+        if not self.buttons or time.monotonic() < self.buttons_off_until:
+            return
+        try:
+            await self.api.post_group_message(
+                group_openid=group_openid, msg_type=2, markdown={"content": t("common.buttons_hint")},
+                keyboard=self.keyboard(rows), msg_id=reply_to, msg_seq=self._next_seq(reply_to))
+        except Exception as e:
+            self.buttons_off_until = time.monotonic() + BUTTON_RETRY_SECONDS
+            _log.info(f"[Buttons] QQ 没有接受按钮（{e}），{BUTTON_RETRY_SECONDS // 3600} 小时内只发文字")
 
     async def _call(self, method, path, body=None, query=None, **params):
         http = self.api._http

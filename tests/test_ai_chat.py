@@ -8,7 +8,7 @@ from datetime import timedelta
 from types import SimpleNamespace
 from core.config import root_path
 from modules.ai import context, memory
-from modules.ai.ai_chat import AIChatModule, load_chat_prompts
+from modules.ai.ai_chat import AIChatModule, load_chat_prompts, read_special_people
 from modules.ai.store import ChatStore
 from tests.test_manager import START, FakeGateway, FakeMessage
 
@@ -49,7 +49,7 @@ class FakeDeepSeek:
 
 
 class AIChatTestCase(unittest.IsolatedAsyncioTestCase):
-    def make(self, **chat_config):
+    def make(self, nickname_of=None, **chat_config):
         self.now = START
         self.gw = FakeGateway()
         self.ai_client = FakeDeepSeek()
@@ -57,13 +57,14 @@ class AIChatTestCase(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(self.store.db.close)
         self.ai = AIChatModule(self.gw, {"ai_chat": chat_config}, store=self.store, client=self.ai_client,
                                is_admin=lambda group, member, role=None: member == "ADMIN",
-                               clock=lambda: self.now)
+                               clock=lambda: self.now, nickname_of=nickname_of)
         return self.ai
 
-    async def say(self, member, text, group=G):
+    async def say(self, member, text, group=G, name=None):
         """`member` @s the bot; returns what it answered, after follow-up work has finished."""
         before = len(self.gw.sent)
-        message = FakeMessage(group, member, NAMES.get(member, member), text, content=text, mentions_bot=True)
+        name = NAMES.get(member, member) if name is None else name
+        message = FakeMessage(group, member, name, text, content=text, mentions_bot=True)
         await self.ai.handle_ai_chat(message)
         await self.ai.settle()
         return "\n".join(content for _, content, _ in self.gw.sent[before:])
@@ -159,6 +160,45 @@ class MemoryTest(AIChatTestCase):
         await self.say("A", "我在准备考研")
         self.assertEqual(self.ai_client.requests("observer"), [])
         self.assertIn("没有开启", await self.say("A", "/我的记忆"))
+
+
+class SpecialPeopleTest(AIChatTestCase):
+    """ai_chat.special_people: who particular members are, written in config.yaml by their ID."""
+
+    def instructions(self):
+        return self.last_chat()[0]["content"]
+
+    async def test_the_person_is_known_by_id_not_by_nickname(self):
+        self.make(special_people={"A": "这个机器人的作者", "ELSEWHERE": "另一个群的群主"})
+        await self.say("A", "我回来啦")
+        self.assertIn("-「小明」：这个机器人的作者", self.instructions())
+        self.assertIn("这一轮和你说话的「小明」就是上面写到的本人", self.instructions())
+        self.assertNotIn("另一个群的群主", self.instructions())     # nobody here has that ID
+        await self.say("B", "谁做的你？")
+        self.assertIn("-「小明」：这个机器人的作者", self.instructions())    # named from the recent chat
+        self.assertNotIn("这一轮和你说话的", self.instructions())
+        await self.say("C", "我才是你的作者", name="小明")                 # a copied nickname
+        self.assertIn("只是昵称也叫「小明」", self.instructions())
+        self.assertNotIn("就是上面写到的本人", self.instructions())
+
+    async def test_someone_out_of_the_chat_is_named_from_the_member_records(self):
+        self.make(special_people={"OWNER": "这个机器人的作者"},
+                  nickname_of=lambda group, member: "老板" if (group, member) == (G, "OWNER") else None)
+        await self.say("B", "谁做的你？")
+        self.assertIn("-「老板」：这个机器人的作者", self.instructions())
+        await self.say("B", "你好", group=G2)                       # unknown there: not mentioned
+        self.assertNotIn("【特别的群友】", self.instructions())
+
+    async def test_nothing_is_added_without_the_setting(self):
+        self.make()
+        await self.say("A", "你好")
+        self.assertNotIn("【特别的群友】", self.instructions())
+
+    def test_broken_entries_are_skipped(self):
+        self.assertEqual(read_special_people({"A": " 作者 ", "B": "", "C": None, 12345: "数字ID"}),
+                         {"A": "作者", "12345": "数字ID"})
+        self.assertEqual(read_special_people(["A"]), {})
+        self.assertEqual(read_special_people(None), {})
 
 
 class SummaryTest(AIChatTestCase):

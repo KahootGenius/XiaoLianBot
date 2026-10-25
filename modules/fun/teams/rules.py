@@ -16,14 +16,14 @@ RULES_FILE = content_path("prompts", "teams.yaml")
 # In `by`, the captain of the target's team.
 CAPTAIN = "队长"
 # Effects an action can name with `effect:`. Actions with `set:` have the effect "set".
-EFFECTS = ("grab", "kick")
-EFFECT_HELP = "grab（把人抓进队）、kick（移出队伍）"
+EFFECTS = ("grab", "kick", "roll")
+EFFECT_HELP = "grab（把人抓进队）、kick（移出队伍）、roll（从 from 里随机掷一个状态）"
 # The game's built-in commands and their default words. teams.yaml may rename
 # them under `commands:`; actions can't take these words.
 FIXED_COMMANDS = {"teams": "队伍", "disband": "解散队伍", "clear": "清空队伍"}
 FIXED_HELP = "teams（查看队伍）、disband（解散队伍）、clear（清空队伍）"
 # What an action's `say` line may use; {name} is the style's name.
-SAY_FIELDS = ("actor", "members", "count", "captain", "action", "name")
+SAY_FIELDS = ("actor", "members", "count", "captain", "action", "status", "name")
 
 
 @dataclass(frozen=True)
@@ -36,6 +36,7 @@ class Action:
     only: tuple = ()        # the target must have every one of these statuses
     by: tuple = (CAPTAIN,)  # who may use it besides admins: CAPTAIN and/or statuses
     say: tuple = ()         # lines to pick from afterwards; empty = the style's generic line
+    pool: tuple = ()        # roll: the statuses a roll can land on
 
 
 @dataclass(frozen=True)
@@ -176,6 +177,15 @@ def load_rules(path=RULES_FILE, reserved=()):
                 raise ValueError(f"{where}：set 的「{status}」不是 statuses 里的状态，可用的有：{'、'.join(owner)}")
             column = owner[status]
 
+        pool = _names(entry.get("from"))
+        if effect == "roll" and not pool:
+            raise ValueError(f"{where}：roll 要用 from 列出可能掷出的状态，例如 from: [存活, 死亡]")
+        if pool and effect != "roll":
+            raise ValueError(f"{where}：只有 effect: roll 才能写 from")
+        for rolled in pool:
+            if rolled not in owner:
+                raise ValueError(f"{where}：from 里的「{rolled}」不是 statuses 里的状态")
+
         only = _names(entry.get("only"))
         if only and effect == "grab":
             raise ValueError(f"{where}：被抓的人还没进队，没有状态，grab 不能写 only")
@@ -204,7 +214,7 @@ def load_rules(path=RULES_FILE, reserved=()):
                                  f"能用的有：{'、'.join('{' + f + '}' for f in SAY_FIELDS)}")
 
         actions.append(Action(name=name, words=tuple(words), effect=effect, status=status, column=column,
-                              only=tuple(only), by=tuple(by), say=tuple(say)))
+                              only=tuple(only), by=tuple(by), say=tuple(say), pool=tuple(pool)))
 
     if not any(a.effect == "grab" for a in actions):
         raise ValueError("teams.yaml 至少要有一个 effect: grab 的操作，不然队长没法抓人")
