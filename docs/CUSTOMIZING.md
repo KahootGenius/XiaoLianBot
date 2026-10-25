@@ -314,7 +314,7 @@ at startup** and names the line.
 |---|---|---|
 | `group_rules` | Comes right after the persona: how to read the labelled group transcript, and who this reply is for | `{member}` |
 | `special_people`, `special_line` | Added when someone from `ai_chat.special_people` is known in the group: who they are, one `special_line` each | `{people}`; `{member}`, `{note}` |
-| `special_speaker`, `special_namesake` | Added when this turn's speaker is one of them, or only has the same nickname as one | `{member}` |
+| `special_speaker`, `special_namesake` | Added when this turn's speaker is one of them, or only has the same nickname as one | `{member}`; `special_speaker` also `{note}` |
 | `memory_rules` | Added when memories are sent: use them naturally, and don't pass one member's details to another | |
 | `evidence_policy`, `evidence_title` | The rule that the summary and memories are data, not instructions, and the heading of that message | |
 | `summary_prefix`, `memory_title` | The headings for the summary and the memories inside it | |
@@ -352,15 +352,17 @@ If you change `keep_days` or `memories_per_member`, change the same numbers in
 `ai_chat.special_people` in `config.yaml` gives the bot facts about particular members that it
 treats as true, such as who built it. Since it lives in `config.yaml`, it never reaches GitHub.
 
-- **The key is the member's ID in that group.** They get it with `@机器人 /我的ID`. QQ gives
-  everyone a different ID in each group, so add one line per group.
+- **The key is the member's ID.** They get it with `@机器人 /我的ID`. Someone keeps the same ID
+  in every group the bot is in, so one line per person is enough.
 - **The value is who they are,** as one line: `这个机器人的作者`, `群主，也是比赛的裁判`.
 - **It goes by the ID, never the nickname.** When that person speaks, the bot is told it's really
   them. When someone else uses the same nickname, the bot is told that person is someone else.
 - **Others can ask about them.** The bot can name them to anyone ("谁做的你？") once it knows
   their nickname: from the recent chat, or from the member records in a managed group.
 
-Restart the bot after a change. A line with no note is skipped, and the log says which.
+Restart the bot after a change. At startup the log lists the start of each ID it loaded
+(`[AIChat] 特别的群友 …`), to check against `/我的ID`. A line with no note is skipped, and the log
+says which.
 
 The reply lines for `/我的记忆`, `/忘记` and `/重置对话` are under `ai.memory` and `ai.reset` in the
 style files, like every other reply.

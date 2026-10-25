@@ -172,7 +172,7 @@ class SpecialPeopleTest(AIChatTestCase):
         self.make(special_people={"A": "这个机器人的作者", "ELSEWHERE": "另一个群的群主"})
         await self.say("A", "我回来啦")
         self.assertIn("-「小明」：这个机器人的作者", self.instructions())
-        self.assertIn("这一轮和你说话的「小明」就是上面写到的本人", self.instructions())
+        self.assertIn("这一轮和你说话的「小明」就是上面写到的本人（这个机器人的作者）", self.instructions())
         self.assertNotIn("另一个群的群主", self.instructions())     # nobody here has that ID
         await self.say("B", "谁做的你？")
         self.assertIn("-「小明」：这个机器人的作者", self.instructions())    # named from the recent chat

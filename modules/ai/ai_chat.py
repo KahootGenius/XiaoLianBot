@@ -43,7 +43,7 @@ PROMPT_FIELDS = {
     "group_rules": {"member"},
     "special_people": {"people"},
     "special_line": {"member", "note"},
-    "special_speaker": {"member"},
+    "special_speaker": {"member", "note"},
     "special_namesake": {"member"},
     "memory_rules": set(),
     "evidence_policy": set(),
@@ -237,7 +237,7 @@ class AIChatModule:
             return None
         block = [render(self.prompts["special_people"], people="\n".join(lines))]
         if member in self.special:
-            block.append(render(self.prompts["special_speaker"], member=member_name))
+            block.append(render(self.prompts["special_speaker"], member=member_name, note=self.special[member]))
         elif member_name in known:
             block.append(render(self.prompts["special_namesake"], member=member_name))
         return "\n".join(block)
@@ -463,6 +463,9 @@ class AIChatModule:
             return
         _log.info(f"[AIChat] AI 聊天：模型 {self.model}，上下文约 {self.context_tokens} token，"
                   f"长期记忆{'开启' if self.memory_on else '关闭'}，聊天记录保留 {self.keep_days} 天")
+        if self.special:
+            # The start of each ID, to check against what /我的ID says.
+            _log.info(f"[AIChat] 特别的群友 {len(self.special)} 位，ID 开头：{'、'.join(o[:8] for o in self.special)}")
         while True:
             try:
                 await self.housekeeping()
