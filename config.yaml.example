@@ -1,0 +1,137 @@
+# Copy this file to config.yaml and fill in your own credentials.
+# config.yaml is gitignored -- never commit real keys.
+
+# --- Required: QQ Open Platform (https://q.qq.com) ---
+# Found under your bot's 开发设置 / Development Settings.
+appid: "YOUR_APP_ID"
+secret: "YOUR_APP_SECRET"
+
+# --- Optional: the bot's speaking style ---
+# Every line the bot says comes from a file in styles/. 小莲.yaml is the
+# complete default; add 桃子.yaml etc. (start from styles/_示例.yaml).
+# Styles are chosen only here, never from chat; restart the bot after a change.
+# style: 小莲             # every group's style
+# group_styles:          # optional: a different style for particular groups
+#   "GROUP_OPENID": 桃子  # which group this is (@机器人 /群ID shows the ID)
+
+# --- Optional: DeepSeek (https://platform.deepseek.com) ---
+# Omit this whole section to run the bot without AI features. Epic, Steam,
+# Minecraft, blackjack, sleep, dice, 发癫 and the group manager all work
+# without it; only AI chat with 小莲 and /服务器QA are disabled.
+# deepseek:
+#   api_key: "YOUR_DEEPSEEK_API_KEY"
+#   qa_api_key: "YOUR_QA_API_KEY"   # optional, defaults to api_key
+#   model: deepseek-flash            # optional; "deepseek-chat" is being retired
+#   helper_model: deepseek-flash     # optional: summaries and memory notes; defaults to model
+#   thinking: false                  # think before answering: slower and dearer, off by default
+
+# --- Optional: how AI chat remembers (needs the deepseek section above) ---
+# In each group everyone who @s the bot shares one conversation. Recent chat
+# is sent with every request; older chat is folded into a rolling summary;
+# after each reply the bot notes what the speaker said about themselves.
+# Only messages that @ the bot and its replies are stored, never other chat.
+# The rules around the persona are in prompts/chat.yaml.
+# ai_chat:
+#   context_tokens: 3000     # recent chat sent with each request (estimated tokens)
+#   summarize_after: 20      # turns that scrolled out of the window before they're summarized
+#   keep_days: 7             # raw chat is deleted after this many days
+#   memory: true             # long-term memory about each member (/我的记忆, /忘记)
+#   memories_per_member: 12  # a full notebook drops its oldest entries
+
+# --- Optional: outbound proxy for the Steam scraper ---
+# Only needed if store.steampowered.com is unreachable from your host.
+# Enables the `/steamfree proxy` variant.
+# steam:
+#   proxy: "http://host:port"
+
+# --- Optional: team games (/抓) ---
+# Captains grab members into their teams (@机器人 /抓 @某人), then decide what
+# happens to them: /踢出, /设为小队长, /死亡 ... Grabbed members can't leave on
+# their own. Admins (manager.admins, and the group's owner and admins) act as
+# referees. Teams are cleared every day. The game itself -- member statuses,
+# captain actions, team size, reset time -- is in prompts/teams.yaml.
+# Leave `captains` empty to keep team games off.
+teams:
+  # member_openid of each captain; each runs @机器人 /我的ID in the group where
+  # they play. A comment after each ID helps you remember who it is.
+  captains: []
+  #  - "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"   # 张三
+  # group_openid of the groups that play. Empty = every group the bot is in.
+  groups: []
+
+# --- Optional: group manager (the 30-day inactivity rule) ---
+# Leave `groups` empty to keep the manager off. See README.md for the
+# platform-side setup (the group owner must let the bot receive all messages).
+manager:
+  # group_openid of each group to manage. @小莲 /群ID in the group to get it.
+  groups: []
+  # group_openid of an admins-only group for reports and removal lists.
+  # Everyone in that group may use admin commands. Empty = removal lists go
+  # to the managed group itself, and dry-run reports are only shown on demand.
+  report_group: ""
+  # member_openid of each admin. @小莲 /我的ID to get yours. (Members whose QQ
+  # role is owner/admin are recognised automatically once the platform reports it.)
+  admins: []
+
+  # dry_run = 演练: only reports what it would do -- start here for 2-4 weeks
+  # confirm = 确认: reminds for real; an admin approves each removal list
+  # auto    = 自动: reminds and removes automatically (daily cap below)
+  # Admins can also switch with: @小莲 /管理模式 演练|确认|自动
+  mode: dry_run
+
+  remind_day: 25          # @ reminder after this many days without valid speech
+  remove_day: 30          # removable after this many days...
+  min_notice_days: 5      # ...and at least this many days after the reminder
+  max_leave_days: 90      # 单次请假最长天数
+  self_service_leave: true    # members can /请假 themselves (admins get notified)
+  exempt_admins: true     # admins and the owner never count towards inactivity
+  check_time: "20:00"     # daily check (Asia/Shanghai)
+  max_removals_per_day: 15
+  # Safety stop: if more people are due at once than max(max_removals_per_day,
+  # this share of known members), nothing is removed and admins are alerted.
+  breaker_ratio: 0.1
+  announce_removals: false    # post an anonymous "N 位群友按群规移出" note in the group
+  # How reminders @ people: "text" = plain "@昵称" (no notification),
+  # "tag" = QQ's mention tag (real @). Test with @小莲 /艾特测试 first.
+  mention_format: text
+  store_snippets: true    # keep the first 30 characters of each member's latest valid message
+  # rules_text: |          # shown by /群规; defaults to the group's current rule
+  #   连续30天无有效发言……
+
+  # What counts as 有效发言. "units" = Chinese characters plus English/number words.
+  valid_message:
+    min_units: 5
+    min_units_question: 3
+    min_units_reply: 3        # quote-replies
+    min_units_with_media: 3   # a photo or video with a short caption
+    image_only_counts: false  # stickers arrive as images too, so off by default
+    video_only_counts: false
+    voice_counts: false       # voice messages without speech-to-text
+    files_count: true
+    links_count: true
+    count_bot_chat: false     # chatting with 小莲 doesn't keep anyone in the group
+    repeat_minutes: 30        # identical text within this window counts as 复读
+    # extra_fillers: ["冲冲冲"]   # more whole-message phrases that never count
+
+  achievements:
+    announce: true
+    max_per_hour: 3
+
+  weekly_digest:
+    enabled: true
+    weekday: 7        # 1 = Monday ... 7 = Sunday
+    time: "21:00"
+
+  # Member table: a read-only web page listing every recorded member, their
+  # latest message (counted or not, and when) and where they stand.
+  # Open http://127.0.0.1:8765/ in a browser on the machine running the bot.
+  dashboard:
+    enabled: true
+    port: 8765
+    # Keep 127.0.0.1 so only this machine can open it. To let other admins
+    # in -- through a tunnel (cpolar, 花生壳, ngrok, Cloudflare Tunnel), a
+    # private network like Tailscale, or a server -- set a long random token
+    # first and share the link with ?token=... in it. Without a token the page
+    # refuses every request that doesn't really come from this machine.
+    host: "127.0.0.1"
+    token: ""

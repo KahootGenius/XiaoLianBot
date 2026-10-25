@@ -1,7 +1,10 @@
-botpy
-openai
-pytz
-PyYAML
-requests
-mcstatus
-aiohttp
+# NOTE: the `botpy` import comes from the PyPI package `qq-botpy`, not `botpy`.
+# Installing `botpy` gets you an unrelated package and the bot will fail to start.
+qq-botpy>=1.2.1,<2
+openai>=1.78.0,<2
+pytz>=2025.2
+PyYAML>=6.0.2,<7
+requests>=2.32.3,<3
+mcstatus>=11.1.1,<12
+aiohttp>=3.11.18,<4
+beautifulsoup4>=4.13.4,<5

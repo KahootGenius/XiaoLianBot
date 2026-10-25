@@ -1,99 +1,60 @@
 import os
-
 import json
-
 import random
-
 from botpy import logging
+from core.config import root_path
+from core.style import t
+
 
 _log = logging.get_logger()
 
+
 class CrazyTalkModule:
-
     def __init__(self, api):
-
         self.api = api
-
-        self.json_folder = os.path.join(os.path.dirname(os.path.dirname(__file__)), "gobananas")
-
+        self.json_folder = root_path("assets", "quotes")
         self.all_quotes = self._load_json("all.json")
-
         self.psycho_quotes = self._load_json("psycho.json")
 
     def _load_json(self, filename):
-
-        """加载JSON文件中的语录"""
-
+        """Load the quote list from a JSON file."""
         try:
-
             file_path = os.path.join(self.json_folder, filename)
-
             with open(file_path, 'r', encoding='utf-8') as f:
-
                 return json.load(f)
-
         except Exception as e:
-
             _log.error(f"加载{filename}失败: {e}")
-
             return []
 
     def _replace_name(self, text, name):
-
-        """替换文本中的名称变量"""
-
+        """Substitute the target's name into the quote's name placeholders."""
         text = text.replace("<name>", name)
-
         text = text.replace("{target_name}", name)
-
         return text
 
     def get_random_quote(self, name, quote_type="all"):
-
-        """获取随机语录并替换名称"""
-
+        """Pick a random quote and substitute the target's name into it."""
         quotes = self.all_quotes if quote_type == "all" else self.psycho_quotes
-
         if not quotes:
-
-            return f"没有找到{quote_type}类型的语录"
-
+            return t("games.crazy_talk.no_quotes", type=quote_type)
         quote = random.choice(quotes)
-
         return self._replace_name(quote, name)
 
     async def handle_crazy_talk(self, message):
-
-        """处理发癫命令"""
-
+        """Handle the /发癫 ("go crazy") command."""
         content = message.content
-
         if "/发癫" in content:
-
             parts = content.split("/发癫", 1)
-
             if len(parts) > 1:
-
                 target_name = parts[1].strip()
-
                 if not target_name:
-
-                    await message.reply(content="请输入对象名称，例如：/发癫 小明")
-
+                    await message.reply(content=t("games.crazy_talk.usage"))
                     return True
-
                 quote_type = random.choice(["all", "psycho"])
-
                 quote = self.get_random_quote(target_name, quote_type)
-
                 await message.reply(content=quote)
-
                 return True
-
             else:
-
-                await message.reply(content="请输入对象名称，例如：/发癫 小明")
-
+                await message.reply(content=t("games.crazy_talk.usage"))
                 return True
-
         return False

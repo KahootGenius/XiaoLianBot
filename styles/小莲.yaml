@@ -1,0 +1,501 @@
+# 小莲的说话方式：机器人在群里说的每一句话都在这个文件里。
+#
+# 这是默认风格，必须完整，不要删句子。
+# 想要别的风格（比如「桃子」）：在 styles/ 里新建 桃子.yaml，按同样的层级只写想改的句子；
+# 没写的句子、或者写坏了的句子，会自动沿用这里的说法。也可以把整个文件复制一份再改。
+#
+# 写法：
+# - 花括号 {xxx} 是程序填进去的内容（名字、天数……）。可以挪位置、可以不用，
+#   但不能自己发明新的；{name} 永远是本风格的名字（下面的 name）。
+# - 写成列表（每行以 "- " 开头）的句子，每次随机挑一句。
+# - 含花括号、冒号或首尾空格的句子请用双引号括起来；多行的内容用 |- 开头的写法。
+#
+# 用哪个风格只在电脑上的 config.yaml 里设置（style 和 group_styles），群里改不了；改完重启机器人生效。
+# 检查有没有写错：在项目文件夹里运行 python -m core.style check 风格名
+
+name: 小莲
+
+# @机器人 直接聊天时 AI 使用的人设（需要配置 DeepSeek 密钥）
+system_prompt: |
+  你是「小莲」，这个 QQ 群的看板娘兼小管家。
+  性格：十九岁的女孩子，温柔、认真、有一点点小迷糊，偶尔会小声吐槽；记性很好，谁好久没在群里说话，她都记得。
+  说话方式：简短自然，像群友聊天一样，一般一到三句话；偶尔用「～」或一个颜文字，不要每句都用；不用 Markdown 标题、表格或长列表。
+  原则：不懂就直说，不编造事实；不讨论违法违规、色情暴力和政治敏感话题；有人问起群规时，鼓励大家多参与讨论。
+  始终记住自己的名字和人设。
+
+# ---------------------------------------------------------------- 通用
+common:
+  someone: 某位群友                   # 成员没有昵称时的称呼
+  separator: "、"                     # 把几个名字连在一起时用的符号
+  date: "{month}月{day}日"
+  not_admin: 这个指令只有管理员能用哦～
+  error: "{command} 出错了：{error}"
+
+# ---------------------------------------------------------------- /帮助
+help:
+  title: 指令列表
+  games: |-
+    【游戏资讯】
+    /epicfree 查看Epic免费游戏
+    /订阅epic 每日12点推送  /epicTD 取消
+    /steamfree 查看Steam免费游戏
+    /订阅steam 每日18点推送  /steamTD 取消
+  minecraft: |-
+    【Minecraft】
+    /mc绑定 <地址> 绑定服务器
+    /mc状态 查询服务器状态
+    /mc解绑 解除绑定
+  fun: |-
+    【娱乐】
+    /21点 开始游戏  /抽卡 要牌  /停止 停牌
+    /摇骰子 掷一个骰子
+    /发癫 <名称> 随机语录
+  sleep: |-
+    【作息】
+    /晚安 记录入睡  /早安 查看睡眠时长
+  ai: |-
+    【AI】
+    /服务器QA <问题> 服务器问答
+    直接@我聊天即可
+    /我的记忆 我记得的关于你的事  /忘记 序号 删掉一条
+  footer: 提示：所有指令需@我使用
+  admin: 管理员指令：/管理帮助
+
+# ---------------------------------------------------------------- 群管理
+manager:
+  # /帮助 里的【群管理】一段
+  help_block: |-
+    【群管理】
+    /我的状态 活跃卡片  /排行 本周发言榜（/排行 月）
+    /成就 我的成就  /群规 查看群规
+    /请假 天数 原因  /销假 提前结束请假
+
+  # /管理帮助
+  admin_help: |-
+    🛠️ 管理指令（都需要 @我）
+    /管理状态 模式、接口权限和统计
+    /管理模式 演练|确认|自动 切换执行方式
+    /不活跃 [人数] 按沉默天数列出成员
+    /成员表 [筛选] [页码] 成员活跃表（筛选：提醒 快到期 无效 有效 请假 豁免 已移出）
+    /成员 昵称或@某人 某位成员的详细记录
+    /豁免 @某人 [原因] · /取消豁免 @某人 · /豁免名单
+    /请假 @某人 天数 原因 · /撤销请假 @某人或编号 · /请假名单
+    /待移出 · /确认移出 [编号] · /排除 序号… · /取消移出 [编号] · /已移出 [编号]
+    /立即检查 马上执行一次每日检查
+    /小报 预览本周小报
+    /艾特测试 测试 @ 的显示效果
+    /删除数据 @某人 按本人要求删除其全部记录
+    /重置对话 清空本群和我的聊天上下文（群友记忆保留）
+
+  not_managed: 这个群还没有开启群管理哦～（管理员可以把 /群ID 的结果填进 config.yaml 的 manager.groups）
+  private_only: 这个会列出大家的活跃情况，为了不在大群里公开，请到管理群里用～
+
+  # 三种模式的名字和说明（管理员输入模式时仍然用 演练/确认/自动）
+  modes:
+    dry_run: 演练
+    confirm: 确认
+    auto: 自动
+  mode_hints:
+    dry_run: 只在管理群汇报会提醒谁、会移出谁，不做任何操作
+    confirm: 正常提醒；移出名单需要管理员 /确认移出
+    auto: 正常提醒，到期自动移出（每日有上限）
+
+  # 一条消息为什么算、为什么不算（/成员表、/成员 和网页成员表里显示）
+  kinds:
+    text: 讨论
+    question: 提问
+    reply: 回复
+    share: 分享
+    sticker: 表情
+    short: 太短
+    filler: 语气词
+    checkin: 签到
+    repeat: 复读
+    duplicate: 重复发送
+    chain: 接龙
+    command: 指令
+    bot_chat: 和机器人聊天
+    image: 仅图片
+    video: 仅视频
+    voice: 语音
+    empty: 空消息
+
+  # 第 25 天的 @ 提醒。{mentions}：被提醒的人；{days}：已沉默天数；{left}：剩余天数
+  remind:
+    - "{mentions}\n{name}已经 {days} 天没看到你们认真冒泡啦……按群规，再过 {left} 天还没有有效发言的话，就要被移出群聊了。考试、工作或者身体不舒服的话，可以 @我 /请假 哦～"
+    - "{mentions}\n叮咚～群规小提醒：你们已经 {days} 天没有有效发言啦。{left} 天内来聊聊天、问个问题、分享点东西都可以；忙的话记得 @我 /请假。"
+  # @ 提醒里每个人的写法（config.yaml 的 mention_format 为 text 时使用）
+  mention_text: "@{member}"
+
+  # 被提醒之后又有了有效发言
+  welcome_back:
+    - "看到你啦～提醒解除，{name}记下了！"
+    - "欢迎回来！这次的提醒就作废啦～"
+
+  # 解锁成就。{member}：昵称；{badge}：图标加成就名；{desc}：说明
+  achievement:
+    - "🎉 {member} 解锁了成就「{badge}」——{desc}"
+    - "叮！{member} 获得成就「{badge}」：{desc}。{name}给你鼓掌～"
+
+  # 移出后在群里发的匿名通知（需在 config.yaml 里开启 announce_removals）
+  removal_notice: "今天有 {count} 位长期没有发言的群友按群规移出了群聊。想回来的话，随时可以重新申请～"
+
+  # /群规
+  rules:
+    default_text: |-
+      连续30天无有效发言，且未请假/未处于豁免名单，将被移出群聊。
+      有效发言指实质性讨论、提问、回答、分享，不包括纯表情、签到、复制粘贴。
+      第25天会@提醒一次；移出前不另行警告。
+      因考试、工作、健康等原因可向管理员请假，单次最长90天。
+      被移出后可随时申请重新加入。
+    title: 📜 群规
+    explain: "{name}怎么判断有效发言：至少 {min_units} 个字的讨论都算；提问或带引用的回复 {min_short} 个字就算；分享链接、文件也算。纯表情、签到、复读、接龙不算，@我用指令或聊天也不算哦。"
+    check_yourself: 查看自己的情况：@我 /我的状态
+
+  # /我的ID、/群ID
+  ids:
+    member: "你的 member_openid：\n{id}\n（要设为管理员，把它填进 config.yaml 的 manager.admins）"
+    group: "本群的 group_openid：\n{id}\n（要开启群管理，把它填进 config.yaml 的 manager.groups）"
+
+  # /我的状态
+  status:
+    title: "📋 {member} 的活跃卡片"
+    last_valid: "最近有效发言：{date}（{ago}）{snippet}"
+    today: 今天
+    days_ago: "{days} 天前"
+    snippet: "「{text}」"
+    no_valid: 最近有效发言：还没有记录到哦
+    streak: "连续发言：{streak} 天（最长 {best} 天）"
+    week: "近 7 天有效发言：{count} 条"
+    rank: " · 第 {rank} 名"
+    total: "累计有效发言：{count} 条 · 成就 {earned}/{total}"
+    line: "状态：{status}"
+    states:
+      exempt: 豁免中
+      admin: 管理员（不参与计时）
+      leave: "请假中（至 {date}）"
+      remove: "已 {days} 天没有有效发言，已达到移出条件"
+      reminded: "已提醒，{left} 天内有效发言即可解除"
+      remind: "已 {days} 天没有有效发言，到了提醒的时候了"
+      today: 今天已有效发言 ✅
+      fresh: "计时从今天开始，距离提醒还有 {left} 天"
+      counting: "{days} 天没有有效发言，距离提醒还有 {left} 天"
+    # 卡片最后一句话
+    comments:
+      active:
+        - 状态很好，继续保持～
+        - "最近很活跃嘛，{name}很开心！"
+      quiet:
+        - 最近有点安静哦，来聊聊天吧～
+        - "好几天没听到你的声音了，{name}有点想你。"
+      reminded: "已经提醒过你啦，{left} 天内有效发言一次就好～"
+      on_leave: "请假中，好好忙你的事，{name}不会催你的。"
+      exempt: "你在豁免名单上，{name}不会催你～"
+
+  # /排行
+  leaderboard:
+    title: "🏆 近 {days} 天有效发言榜"
+    row: "{place} {member} · {count} 条"
+    first: 🥇
+    second: 🥈
+    third: 🥉
+    other: "{n}."
+    you: "你：第 {rank} 名 · {count} 条"
+    empty: "这周大家都好安静……{name}有点寂寞。"
+
+  # /成就
+  badges:
+    title: "🎖️ {member} 的成就（{earned}/{total}）"
+    row: "{icon} {badge} —— {desc}（{date}）"
+    locked: "还没解锁：{names}"
+    all_done: 全部解锁啦，太厉害了！
+
+  # /请假、/销假、/请假名单、/撤销请假
+  leave:
+    ask_admin: 请假需要找管理员帮你登记哦～
+    usage: "用法：/请假 天数 原因，例如「/请假 30 期末考试」（单次最长 {max} 天）"
+    too_long: "单次请假最长 {max} 天哦，到期后可以再续～"
+    no_reason: 未填写
+    granted: "收到～{member} 的假期到 {until}，这段时间{name}不会催你。祝一切顺利！"
+    notice: "📝 {member} 请假 {days} 天（至 {until}），原因：{reason}。如需撤销：/撤销请假 {ids}"
+    none: 你现在没有在请假哦～
+    ended: 欢迎回来！假期结束啦，计时从今天重新开始～
+    list_title: "🏖️ 正在请假（{count} 人）"
+    list_row: "#{id} {member} · 至 {until} · {reason}"
+    list_empty: 现在没有人在请假。
+    revoked: "已撤销 {members} 的请假，计时从现在重新开始。"
+    revoke_none: "没有找到正在进行的请假。用法：/撤销请假 @某人 或 /撤销请假 编号（见 /请假名单）"
+
+  # /管理状态
+  status_report:
+    title: 🛠️ 群管理状态
+    mode: "模式：{mode}（{hint}）"
+    since: "开始统计：{date}（第 {day} 天）"
+    not_started: 开始统计：还没开始（没收到过群内全部消息）
+    feed_ok: 接收全部消息：✅ 正常
+    feed_bad: "接收全部消息：❌ {problem}"
+    members: "记录到的成员：{count} 人 · 请假 {leave} · 豁免 {exempt} · 已提醒 {reminded}"
+    apis: "群成员列表接口：{member_list} · 移出成员接口：{remove}"
+    available: ✅ 可用
+    unavailable: ❌ 未开通
+    unknown: ❔ 未知
+    schedule: "每日检查：{time} · 管理通知：{where}"
+    to_admin_group: 管理群
+    to_this_group: 本群（仅移出名单）
+    no_member_list: 提示：没有成员列表权限时，从没发过言的成员我看不到，需要管理员自己留意。
+
+  # 收不到群内全部消息时的说明
+  feed:
+    never: 还没有收到过本群的「全部消息」，现在只能看到 @我 的消息。请群主在群设置里把我的消息范围设为「接收群内全部消息」。在那之前我不会提醒或移出任何人。
+    lost: 最近只收到 @我 的消息，没有收到其他群消息，可能是「接收群内全部消息」的授权被关掉了。为了不误判，提醒和移出已暂停。
+
+  # /管理模式
+  mode:
+    current: "当前模式：{mode}（{hint}）\n切换：/管理模式 演练|确认|自动"
+    invalid: 模式只有三种：演练、确认、自动
+    switched: "已切换为「{mode}」模式：{hint}。"
+
+  # /豁免、/取消豁免、/豁免名单
+  exempt:
+    usage: 用法：/豁免 @某人 原因
+    added: "已把 {members} 加入豁免名单。"
+    remove_usage: 用法：/取消豁免 @某人
+    removed: "已把 {members} 移出豁免名单。"
+    list_title: "🛡️ 豁免名单（{count} 人）"
+    list_row: "{n}. {member}{reason}"
+    reason: " · {reason}"
+    empty: 豁免名单是空的。
+
+  # /删除数据
+  forget:
+    usage: 用法：/删除数据 @某人
+    done: "已删除 {members} 的全部记录。之后的发言会从头开始计时。"
+
+  # /不活跃
+  inactive:
+    title: "🔎 最久没有有效发言的成员（前 {count} 位）"
+    row: "{n}. {member} · {days} 天{tag}"
+    reminded_tag: （已提醒）
+    empty: 还没有记录到需要计时的成员。
+
+  # /成员表
+  table:
+    title: "📋 成员活跃表{filter} · 第 {page}/{pages} 页"
+    filter: "（{filter}）"
+    summary: "共 {count} 人 · 已提醒 {reminded} · 快到期 {due} · 请假 {leave}"
+    days: "{days}天"
+    reminded: 已提醒
+    latest: "   最近 {date} {verdict}"
+    last_valid: "   有效 {date}"
+    no_valid: 无
+    valid_mark: "✓"
+    invalid_mark: "✗"
+    next: "下一页：/成员表 {args}"
+    detail_hint: 详情：/成员 昵称
+    filters: "筛选：{words}"
+    empty: 没有符合条件的成员。
+
+  # /成员
+  card:
+    title: "👤 {member}"
+    status: "状态：{status}"
+    left: "，还剩 {days} 天"
+    days: "（{days} 天没有有效发言）"
+    latest: "最近一条：{time} {verdict}"
+    valid: "✓ 有效（{kind}）"
+    invalid: "✗ 不算（{kind}）"
+    expired: （判断记录已超过 35 天）
+    last_valid: "最近有效：{time}"
+    never: 还没有
+    snippet: "「{text}」"
+    counts: "近 7 天有效 {week} 条 · 累计 {total} 条"
+    first_seen: "首次出现：{time}"
+    usage: 用法：/成员 昵称（可以只写一部分），或 /成员 @某人
+    not_found: "没找到「{query}」。我只记得统计开始后在群里说过话的人。"
+    this_member: 这位成员
+    ambiguous: "找到 {count} 位：{names}\n昵称再写完整一点？"
+    and_more: " 等"
+
+  # 成员表和网页成员表里的状态
+  states:
+    removed: 已移出
+    left: 已离开
+    bot: 机器人
+    exempt: 豁免
+    admin: 管理员
+    leave: "请假至 {date}"
+    remove: 可移出
+    reminded: "{date}已提醒"
+    remind: 该提醒了
+    ok: 正常
+
+  # 移出名单
+  batch:
+    pending_title: "🧹 待确认的移出名单 #{id}（{count} 人）"
+    manual_title: "🧹 需要手动移出的成员 #{id}（{count} 人）"
+    row: "{n}. {member} · 最后有效发言：{last}{reminded}"
+    never_valid: 开始统计以来没有
+    reminded: " · {date}已提醒"
+    how_pending: "回复「/确认移出 {id}」执行；「/排除 序号…」把某几位从名单里拿掉（给 {grace} 天宽限）；「/取消移出 {id}」放弃。名单当天有效。"
+    how_manual: "我还没有移出成员的接口权限，请管理员在群成员列表里手动移出（不要拉黑），完成后回复「/已移出 {id}」。"
+    none_open: 现在没有待处理的移出名单。
+    none_pending: 没有找到待确认的移出名单（可能已过期，用 /待移出 查看）。
+    none_to_cancel: 没有找到待处理的移出名单。
+    cancelled: "已取消移出名单 #{id}。"
+    exclude_usage: "用法：/排除 序号…（序号见 /待移出），例如「/排除 2 5」"
+    exclude_bad: 序号不对哦，看看 /待移出 里的编号～
+    all_excluded: "名单 #{id} 里的人都被排除了，名单已取消。"
+    exclude_reason: 管理员排除
+    none_manual: 没有找到需要手动移出的名单。
+    marked: "好的，名单 #{id} 的 {count} 人已记为移出。他们重新进群后会重新计时。"
+    removed: "✅ 已按群规移出 {count} 人：{members}（未拉黑，可以重新申请入群）"
+    failed_api: "移出失败：{error}（trace_id: {trace}）。名单 #{id} 保留，稍后可以再试 /确认移出 {id}。"
+    failed: "移出失败：{error}。名单 #{id} 保留，稍后可以再试。"
+    waiting: 移出名单已经在等管理员处理了（/待移出）。
+
+  # 每日检查的汇报
+  daily:
+    reminded: "📣 已提醒 {count} 人：{members}"
+    nothing: 今天没有需要提醒或移出的成员。
+    dry_title: 【演练模式】以下操作都没有真正执行
+    dry_remind: "会提醒 {count} 人：{members}"
+    dry_remove: "会移出 {count} 人：{members}"
+    dry_member: "{member}（{days}天）"
+    breaker: "⚠️ 今天有 {count} 人达到移出条件，超过安全上限 {limit} 人，已暂停移出。可能是数据出了问题（比如机器人离线期间漏记了消息），请管理员用 /不活跃 检查。"
+    warning: "⚠️ {problem}"
+
+  # /艾特测试
+  mention_test: "艾特测试：{mention}\n如果上面显示成了你的名字（而且你收到了提醒），就把 config.yaml 里的 manager.mention_format 改成 tag。"
+
+  # 每周小报
+  digest:
+    intro: "📮 本周群聊小报（{start}–{end}）"
+    outro:
+      - "下周也要多多聊天哦～ —— {name}"
+      - "大家辛苦啦，周末愉快！ —— {name}"
+    messages: "💬 有效发言 {count} 条{trend}，{speakers} 位群友参与"
+    trend: "（比上周 {change}%）"
+    busiest: "⏰ 最热闹的时段：{hour} 点"
+    top: "🏆 本周话痨：{list}"
+    top_item: "{member}（{count}）"
+    newcomers: "🌱 新面孔：{names}"
+    more_people: " 等 {count} 人"
+    badges: "🎖️ 新成就：{list}"
+    badge_item: "{member}「{badge}」"
+    more_badges: " 等 {count} 个"
+    on_leave: "🏖️ 正在请假：{count} 人"
+
+# ---------------------------------------------------------------- 娱乐
+games:
+  dice: "你投出了: {number} 点 "
+  blackjack:
+    start: "游戏开始！\n你的手牌: {hand} (点数: {points})\n机器人的明牌: {dealer}\n你可以输入 /抽卡 继续要牌，或输入 /停止 停止要牌"
+    no_game: 当前没有进行中的游戏，请先输入 /21点 开始游戏。
+    hand: "你的手牌: {hand} (点数: {points})\n机器人的明牌: {dealer}"
+    bust: "你的手牌: {hand} (点数: {points})\n爆牌了！你输了！"
+    result: "游戏结束！\n你的手牌: {hand} (点数: {points})\n机器人的手牌: {dealer_hand} (点数: {dealer_points})\n{outcome}"
+    dealer_bust: 机器人爆牌了！你赢了！
+    win: 恭喜你赢了！
+    lose: 很遗憾，你输了！
+    draw: 平局！
+  crazy_talk:
+    usage: 请输入对象名称，例如：/发癫 小明
+    no_quotes: "没有找到{type}类型的语录"
+  sleep:
+    good_night: "晚安！现在是{time}，祝你好梦~ 🌙"
+    good_morning: "早安！现在是{time}。\n你睡了{hours}小时{minutes}分钟。\n{comment}"
+    too_short: 要注意休息哦！
+    just_right: 睡眠时间刚刚好！
+    too_long: 睡得有点久哦！
+    no_record: 你还没有记录睡眠时间呢，请先使用 /晚安 指令~
+  # 组队游戏。玩法、状态、队长的每个操作和操作成功后说的话，都在 prompts/teams.yaml 里
+  teams:
+    # /帮助 里的【组队游戏】一段。{grab} 是抓人的指令，{actions} 是队长的其他操作，{reset} 是每天清空的时间
+    help: |-
+      【组队游戏】每天 {reset} 清空队伍
+      /队伍 查看今天的队伍
+      队长：{grab} @某人 抓人进队 · /解散队伍
+      队长对自己的队员：{actions}（都要 @ 对象）
+      管理员（裁判）：对任何队员都能用以上操作 · /解散队伍 @队长 · /清空队伍
+    title: "🏳️ 今日队伍 · {date}"
+    team: "【{captain}】{count} 人：{members}"
+    tagged: "{member}（{statuses}）"        # 没有图标的状态
+    legend: "图例：{legend}"
+    none: "今天还没有队伍哦～队长 @我 {grab} @某人 就能开始组队。"
+    unnamed: "群友#{tag}"                   # 不知道昵称时的称呼
+    not_here: 这个群没有开启组队游戏哦～
+    usage: "要 @ 对象哦，例如：@我 /{action} @某人"
+    denied: "只有{who}才能用 /{action} 哦～"
+    admins: 管理员
+    in_a_team: "你现在是 {captain} 队伍里的队员，不能另外组队哦。"
+    done: "{actor} 对 {members} 使用了「{action}」。"     # teams.yaml 里没写 say 的操作用这句
+    fail:
+      self: 不能抓自己哦～
+      captain: "{member} 今天是队长，不能这样做哦。"
+      taken: "{member} 已经在 {captain} 的队伍里了。"
+      mine: "{member} 已经在你的队伍里啦。"
+      full: "队伍满员了（最多 {max} 人），{member} 没能加入。"
+      not_yours: "{member} 不在你的队伍里。"
+      free: "{member} 现在不在任何队伍里。"
+      already: "{member} 已经是「{status}」了。"
+      needs: "{member} 不是「{status}」，不能用 /{action}。"
+    disbanded: "{captain} 的队伍解散了，{count} 人恢复自由。"
+    no_team: "{member} 今天没有带队伍。"
+    no_own_team: 你今天还没有队伍哦。
+    disband_usage: "要解散哪支队伍？请 @ 那位队长：/解散队伍 @队长"
+    disband_denied: "只有队长能解散自己的队伍；管理员可以用 /解散队伍 @队长。"
+    disband_others: "解散别人的队伍要管理员来哦；解散自己的队伍直接发 /解散队伍 就好。"
+    cleared: "已清空本群的 {count} 支队伍，大家都恢复自由啦。"
+    cleared_none: 本群现在没有队伍。
+
+# ---------------------------------------------------------------- 资讯
+info:
+  epic:
+    title: Epic免费游戏推送
+    now: 当前免费：
+    soon: 即将推出：
+    item: "{title} - {price}元 - {period}"
+    subscribed: 已订阅Epic免费游戏推送，将在每天中午12点推送信息。
+    unsubscribed: 已取消订阅Epic免费游戏推送。
+  steam:
+    title: Steam免费游戏推送
+    game: "游戏：{title}\n原价：{price}\n{period}游戏ID：{id}\n获取方式：访问Steam商店页面，搜索此游戏ID或在商店页面后添加/app/{id}/"
+    period: "促销时间：{period}\n"
+    none: 当前没有限时免费游戏。
+    fetching: 正在获取Steam免费游戏信息，请稍候...
+    fetching_proxy: 正在通过代理获取Steam免费游戏信息，请稍候...
+    no_proxy: "获取Steam免费游戏信息失败: 未配置代理。\n\n请在 config.yaml 中添加：\nsteam:\n  proxy: \"http://host:port\""
+    failed: "获取Steam免费游戏信息失败: {error}\n\n可能的原因:\n1. 网络连接问题\n2. Steam网站暂时无法访问\n3. 可能需要使用VPN或代理\n\n请稍后再试或使用'/steamfree proxy'命令尝试通过代理访问"
+    limited: "消息发送受限，已进一步处理:\n\n{text}"
+    subscribed: 已订阅Steam免费游戏推送，将在每天下午6点推送信息。
+    unsubscribed: 已取消订阅Steam免费游戏推送。
+  minecraft:
+    bound: 已绑定Minecraft服务器
+    bind_usage: "请提供服务器地址，格式：/mc绑定 域名或IP:端口"
+    unbound: 已解除 Minecraft 服务器绑定
+    not_bound: 当前群组未绑定任何服务器
+    bind_first: 请先使用 /mc绑定 命令绑定服务器地址
+    status: "服务器状态：在线\n延迟：{latency}ms\n在线人数：{online}/{max}\n在线玩家：\n{players}"
+    no_players: 无
+    unreachable: 无法连接到服务器，请检查服务器地址是否正确或服务器是否在线
+    failed: "查询失败：{error}"
+
+# ---------------------------------------------------------------- AI
+ai:
+  error: "AI回复出错：{error}"
+  qa_usage: 请在指令后提供您的问题，例如：/服务器QA 如何重启服务器？
+  qa_error: "服务器QA回复出错：{error}"
+  image_error: "发送图片失败：{error}"
+  # 长期记忆：/我的记忆、/忘记
+  memory:
+    title: "📒 {name}记得的关于 {member} 的事（{count} 条）："
+    row: "{n}. {text}"
+    footer: "删掉某条：/忘记 序号 · 全部删掉：/忘记 全部"
+    empty: "{name}还没有记下关于你的事哦～多聊聊就会记住啦。"
+    disabled: 长期记忆没有开启哦。
+    forgot: "好，第 {n} 条已经忘掉了。"
+    forgot_all: "好，关于你的 {count} 条记忆都删掉了。"
+    no_such: "没有第 {n} 条哦，先用 /我的记忆 看看序号～"
+    usage: "用法：/忘记 序号（序号见 /我的记忆），或 /忘记 全部"
+  # /重置对话（管理员）
+  reset: "好的，本群和{name}的聊天记录、总结都清空了，从头开始～（群友记忆还在，各自可以用 /忘记 删除）"

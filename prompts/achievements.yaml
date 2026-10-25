@@ -1,0 +1,125 @@
+# 小莲的成就。增删、修改成就只要改这个文件，不用动代码；改完重启机器人生效。
+# 写错了（比如重复的 code、不存在的计数），机器人启动时会直接报出是第几个成就的问题。
+#
+# 每个成就要写：
+#   code      唯一编号，只用英文、数字、下划线。有人获得之后就不要再改它，
+#             否则大家已有的这个成就会对不上（名称、说明、图标可以随时改）。
+#   icon      图标，一个 emoji
+#   name      名称
+#   desc      说明：解锁时小莲会念出来，/成就 里也会显示
+#   announce  解锁时是否在群里祝贺，可省略，默认 true
+# 再加上下面三种条件中的一种（只能写一种）：
+#   counter + at_least   某项计数达到多少，例如 counter: valid 和 at_least: 100
+#   streak               连续多少天都有有效发言，例如 streak: 7
+#   comeback: true       沉默 20 天以上后回来发言
+#
+# 可用的计数（每条有效发言更新一次，只算有效发言）：
+#   valid     有效发言条数
+#   question  提问条数
+#   reply     带引用的回复条数
+#   share     分享次数：链接、文件、带说明的图片或视频
+#   night     凌晨 0–5 点的条数
+#   morning   早上 5–8 点的条数
+#   weekend   周六、周日的条数
+#   long      50 个字以上的长发言条数
+#   days      有有效发言的天数（同一天只算一次）
+#
+# 新加的成就会在成员下一次有效发言时检查；条件早就满足的人会在那时解锁。
+
+- code: first_words
+  icon: 🌱
+  name: 初次见面
+  desc: 第一次有效发言
+  announce: false          # 刚上线时几乎人人都会解锁，祝贺会刷屏
+  counter: valid
+  at_least: 1
+
+- code: chatter_100
+  icon: 💬
+  name: 话匣子
+  desc: 累计 100 条有效发言
+  counter: valid
+  at_least: 100
+
+- code: chatter_500
+  icon: 🎙️
+  name: 群聊台柱
+  desc: 累计 500 条有效发言
+  counter: valid
+  at_least: 500
+
+- code: streak_7
+  icon: 🔥
+  name: 七日之约
+  desc: 连续 7 天有效发言
+  streak: 7
+
+- code: streak_30
+  icon: 🌕
+  name: 月度全勤
+  desc: 连续 30 天有效发言
+  streak: 30
+
+- code: helper_20
+  icon: 🤝
+  name: 热心解答
+  desc: 20 次有内容的回复
+  counter: reply
+  at_least: 20
+
+- code: curious_20
+  icon: ❓
+  name: 好奇宝宝
+  desc: 提出 20 个问题
+  counter: question
+  at_least: 20
+
+- code: sharer_10
+  icon: 📎
+  name: 分享达人
+  desc: 分享 10 次链接或文件
+  counter: share
+  at_least: 10
+
+- code: night_owl
+  icon: 🦉
+  name: 夜猫子
+  desc: 凌晨 0–5 点有效发言 10 次
+  counter: night
+  at_least: 10
+
+- code: early_bird
+  icon: 🐦
+  name: 早起的鸟儿
+  desc: 早上 5–8 点有效发言 10 次
+  counter: morning
+  at_least: 10
+
+- code: comeback
+  icon: 🌈
+  name: 好久不见
+  desc: 沉默 20 天以上后回来聊天
+  comeback: true
+
+# 下面是可以直接启用的例子：把整段行首的 "# " 删掉，重启即可。
+#
+# - code: weekend_warrior
+#   icon: 🏖️
+#   name: 周末战士
+#   desc: 周末有效发言 50 次
+#   counter: weekend
+#   at_least: 50
+#
+# - code: essayist
+#   icon: 📝
+#   name: 长文作者
+#   desc: 发过 10 条 50 字以上的长发言
+#   counter: long
+#   at_least: 10
+#
+# - code: regular_100
+#   icon: 📅
+#   name: 百日常客
+#   desc: 累计 100 天有有效发言
+#   counter: days
+#   at_least: 100

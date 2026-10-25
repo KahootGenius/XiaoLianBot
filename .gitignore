@@ -1,5 +1,6 @@
 venv/
 venve/
+.venv/
 __pycache__/
 *.log
 *.log.*
