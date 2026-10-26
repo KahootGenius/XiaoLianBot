@@ -309,6 +309,22 @@ class TeamsModule:
         await self._reply(message, "\n".join(lines), buttons=[[
             ("刷新", f"/{self.rules.commands['teams']}"), (grab, f"/{grab} ")]])
 
+    def today_for_ai(self, group):
+        """Today's teams for AI chat, as [(captain, [(member, [statuses])])], leaving out statuses
+        listed under hide_from_ai in teams.yaml. Reads only: an earlier day's teams count as none."""
+        if not self.enabled:
+            return []
+        teams = self.roster.groups.get(group)
+        if teams is None or teams.day != self._day().isoformat():
+            return []
+        found = []
+        for team in teams.teams.values():
+            members = [(m.name, [s for s in self.rules.tidy(m.status).values() if s not in self.rules.hidden])
+                       for m in team.members.values()]
+            if members:
+                found.append((team.name, members))
+        return found
+
     def _label(self, member, shown):
         """A member's name with their statuses: icons in front, statuses without one in brackets after."""
         icons, plain = "", []

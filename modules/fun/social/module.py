@@ -185,6 +185,23 @@ class SocialModule:
                     member=r["nickname"] or t("common.someone")) for r in rows]
         await self._reply(message, "\n".join(lines))
 
+    def today_for_ai(self, group):
+        """For AI chat: today's birthdays, and the open poll as (question, [(label, option, votes)]).
+        Reads only; a poll past its time counts as closed."""
+        today = self._now().date()
+        birthdays = []
+        for row in self.store.birthdays_in(group, today.month):
+            day = 28 if (row["month"], row["day"]) == (2, 29) and not _leap(today.year) else row["day"]
+            if day == today.day:
+                birthdays.append(row["nickname"] or t("common.someone"))
+        poll = self.store.open_poll(group)
+        if poll is not None and int(self._now().timestamp()) - poll["created_at"] >= POLL_DAYS * DAY:
+            poll = None
+        if poll is not None:
+            votes = [v["choice"] for v in self.store.votes(poll["id"])]
+            poll = (poll["question"], [(LETTERS[i], option, votes.count(i)) for i, option in enumerate(poll["options"])])
+        return {"birthdays": birthdays, "poll": poll}
+
     # ------------------------------------------------------------------ polls
 
     def _open_poll(self, group):

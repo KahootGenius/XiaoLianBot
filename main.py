@@ -63,6 +63,9 @@ class MyClient(botpy.Client):
                     + tuple(name for name, *_ in self.manager_module.commands))
         self.teams_module = TeamsModule(self.gateway, config, is_admin=self.manager_module.is_admin,
                                         nickname_of=self.manager_module.known_nickname, reserved=reserved)
+        # AI chat knows today's teams, birthdays and poll, so she can play along.
+        self.ai_chat_module.teams_today = self.teams_module.today_for_ai
+        self.ai_chat_module.social_today = self.social_module.today_for_ai
         # /删除数据 @某人 also clears their team place and what AI chat kept about them.
         self.manager_module.forget_hooks += [self.teams_module.forget_member, self.ai_chat_module.forget_member,
                                              self.social_module.forget_member]

@@ -90,6 +90,20 @@ class BirthdayTest(SocialTestCase):
         self.assertNotEqual(await self.say("A", "早"), "")
 
 
+class TodayForAITest(SocialTestCase):
+    async def test_ai_chat_hears_of_todays_birthdays_and_the_open_poll(self):
+        self.make()
+        self.assertEqual(self.social.today_for_ai(GROUP), {"birthdays": [], "poll": None})
+        await self.say("A", "/生日 11-1")                     # today
+        await self.say("B", "/生日 11-2")
+        await self.say("A", "/投票 周六几点开？ 19点 20点")
+        await self.say("B", "/投 A")
+        self.assertEqual(self.social.today_for_ai(GROUP),
+                         {"birthdays": ["小明"], "poll": ("周六几点开？", [("A", "19点", 1), ("B", "20点", 0)])})
+        self.now += timedelta(days=8)                         # the poll has run out of time
+        self.assertEqual(self.social.today_for_ai(GROUP), {"birthdays": [], "poll": None})
+
+
 class PollTest(SocialTestCase):
     async def test_a_poll_from_start_to_end(self):
         self.make()

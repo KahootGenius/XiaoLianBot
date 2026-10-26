@@ -11,6 +11,8 @@ import math
 import re
 
 
+# A bracketed action in a reply, like "（歪了歪头）". Short, so a long aside isn't taken for one.
+_ACTION = re.compile(r"[（(]([^（）()\n]{1,20})[）)]")
 # CJK ideographs, kana and full-width forms each cost about a token.
 _WIDE = re.compile(r"[⺀-鿿豈-﫿＀-￯]")
 
@@ -43,6 +45,22 @@ def unsummarized(turns, window, up_to_id):
     """Turns that have scrolled out of the window but aren't in the summary yet, oldest first."""
     oldest = window[0]["id"] if window else math.inf
     return [turn for turn in turns if up_to_id < turn["id"] < oldest]
+
+
+def recent_actions(window, replies=5, limit=8):
+    """The bracketed actions in the bot's last few replies, newest first, each once. Listed in the
+    request so the next reply picks a new one: models otherwise copy their own habits."""
+    found = []
+    for turn in reversed(window):
+        if turn["role"] != "assistant":
+            continue
+        for action in _ACTION.findall(turn["content"]):
+            if action.strip() and action.strip() not in found:
+                found.append(action.strip())
+        replies -= 1
+        if replies == 0:
+            break
+    return found[:limit]
 
 
 def compose(instructions, evidence, policy, title):

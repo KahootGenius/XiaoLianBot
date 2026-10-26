@@ -291,6 +291,9 @@ The existing `/复活` sets 存活, so it also heals the injured.
 - `max_members`: the most members a team may have, not counting the captain. `0` means no limit.
 - `reset_time`: when every team clears each day (Beijing time), for example `"05:00"`. The game
   day runs from one reset to the next, so a game that goes past midnight isn't cut off.
+- `hide_from_ai`: statuses AI chat is never told about. With a DeepSeek key, every chat request
+  carries today's teams and each member's statuses, so the bot can play along; list here any status
+  that shouldn't go to the AI, for example `hide_from_ai: [死亡]`. A member's other statuses still go.
 
 ### With code: a new kind of effect
 
@@ -313,10 +316,15 @@ at startup** and names the line.
 | Key | What it is | Fills in |
 |---|---|---|
 | `group_rules` | Comes right after the persona: how to read the labelled group transcript, and who this reply is for | `{member}` |
+| `reply_shape` | After the group rules: keep replies short, at most one bracketed action, and a new action each time | |
 | `special_people`, `special_line` | Added when someone from `ai_chat.special_people` is known in the group: who they are, one `special_line` each | `{people}`; `{member}`, `{note}` |
 | `special_speaker`, `special_namesake` | Added when this turn's speaker is one of them, or only has the same nickname as one | `{member}`; `special_speaker` also `{note}` |
 | `memory_rules` | Added when memories are sent: use them naturally, and don't pass one member's details to another | |
 | `evidence_policy`, `evidence_title` | The rule that the summary and memories are data, not instructions, and the heading of that message | |
+| `now` | The first line of that message: Beijing time | `{date}`, `{weekday}`, `{time}` |
+| `today_teams`, `team_line` | Today's team game, one line per team (`ai_chat.game_state`) | `{teams}`; `{captain}`, `{members}` |
+| `today_birthdays`, `today_poll` | Who has a birthday today, and the open poll with its counts (`ai_chat.game_state`) | `{members}`; `{question}`, `{options}` |
+| `recent_actions` | The bracketed actions in the bot's last few replies, which `reply_shape` says not to reuse | `{actions}` |
 | `summary_prefix`, `memory_title` | The headings for the summary and the memories inside it | |
 | `empty_mention` | Stands in for a message that only @s the bot | `{member}` |
 | `digest_comment` | The prompt for the comment that ends the weekly digest | `{digest}` |
@@ -334,6 +342,7 @@ deepseek:
   model: deepseek-flash      # chat model
   helper_model: deepseek-flash   # summaries and memory notes; defaults to model
   thinking: false            # thinking first is slower and dearer
+  temperature: 1.3           # chat replies only: higher varies more; null = DeepSeek's default (1.0)
 ai_chat:
   context_tokens: 3000       # recent chat sent with every request, in estimated tokens
   summarize_after: 20        # turns that left the window before they're summarized
@@ -342,6 +351,7 @@ ai_chat:
   memories_per_member: 12    # a full notebook drops its oldest entries
   memory_check: true         # check each new memory with one more cheap call; jokes aren't kept
   digest_comment: true       # end the weekly digest with a short comment
+  game_state: true           # tell her today's teams, birthdays and open poll
   special_people:            # who particular members are (next section)
     "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX": 这个机器人的作者
 ```

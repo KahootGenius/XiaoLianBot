@@ -10,7 +10,9 @@ shares one conversation:
   about themselves, and a check call drops notes that were only jokes
   (modules/ai/memory.py).
 Summary and memories travel in a separate "evidence" system message that is
-labelled as data, not instructions (modules/ai/context.py).
+labelled as data, not instructions (modules/ai/context.py). So do the Beijing
+time, today's team game, birthdays and open poll, and the actions the bot's
+last replies used, which it's told to vary.
 
 The persona is the style's system_prompt; the rules around it are in
 prompts/chat.yaml. Raw turns are deleted after ai_chat.keep_days.
@@ -42,6 +44,7 @@ CHAT_PROMPTS_FILE = content_path("prompts", "chat.yaml")
 # What each line of prompts/chat.yaml may fill in, besides {name} (the style's name).
 PROMPT_FIELDS = {
     "group_rules": {"member"},
+    "reply_shape": set(),
     "special_people": {"people"},
     "special_line": {"member", "note"},
     "special_speaker": {"member", "note"},
@@ -49,6 +52,12 @@ PROMPT_FIELDS = {
     "memory_rules": set(),
     "evidence_policy": set(),
     "evidence_title": set(),
+    "now": {"date", "weekday", "time"},
+    "today_teams": {"teams"},
+    "team_line": {"captain", "members"},
+    "today_birthdays": {"members"},
+    "today_poll": {"question", "options"},
+    "recent_actions": {"actions"},
     "summary_prefix": set(),
     "memory_title": set(),
     "empty_mention": {"member"},
@@ -62,6 +71,8 @@ COMMANDS = ("/我的记忆", "/忘记", "/重置对话", "/服务器QA")
 FORGET_ALL_WORDS = ("全部", "所有", "all")
 MEMORY_SPEAKERS = 5         # members whose memories ride along: the speaker plus recent ones
 DIGEST_COMMENT_LIMIT = 120  # characters; the prompt asks for 60
+DEFAULT_TEMPERATURE = 1.3   # chat replies only: DeepSeek's suggestion for conversation (their default is 1.0)
+WEEKDAYS = "一二三四五六日"
 DAY = 86400
 
 
@@ -118,6 +129,8 @@ class AIChatModule:
         self.model = str(deepseek.get("model") or DEFAULT_MODEL)
         self.helper_model = str(deepseek.get("helper_model") or self.model)
         self.thinking = bool(deepseek.get("thinking", False))
+        temperature = deepseek.get("temperature", DEFAULT_TEMPERATURE)
+        self.temperature = None if temperature is None else float(temperature)     # None: DeepSeek's default
         self.context_tokens = int(chat.get("context_tokens", 3000))
         self.summarize_after = int(chat.get("summarize_after", 20))
         self.keep_days = int(chat.get("keep_days", 7))
@@ -125,6 +138,10 @@ class AIChatModule:
         self.memories_per_member = int(chat.get("memories_per_member", 12))
         self.memory_check = bool(chat.get("memory_check", True))
         self.digest_comment = bool(chat.get("digest_comment", True))
+        self.game_state = bool(chat.get("game_state", True))
+        # Today's team game and birthdays/poll, set by main.py: group -> what teams.today_for_ai and
+        # social.today_for_ai return. Without them the bot only knows the time.
+        self.teams_today = self.social_today = None
         self.special = read_special_people(chat.get("special_people"))
         self.is_admin = is_admin or (lambda group, member, role=None: False)
         # A member's current nickname in a managed group, for special people who aren't in the chat.
@@ -168,20 +185,23 @@ class AIChatModule:
 
     # ------------------------------------------------------------------ helpers
 
-    async def _complete(self, client, model, messages, thinking=False):
+    async def _complete(self, client, model, messages, thinking=False, temperature=None):
         """Run a blocking chat completion in a worker thread and return its text.
 
         The OpenAI client is synchronous; calling it directly from a coroutine
         would stall the bot's event loop for the whole duration of the request.
         DeepSeek thinks before answering unless told not to, which is slower
-        and dearer than a group chat needs.
+        and dearer than a group chat needs. Only chat replies pass a temperature;
+        the helper calls keep DeepSeek's default, so their JSON stays steady.
         """
+        options = {} if temperature is None else {"temperature": temperature}
         call = functools.partial(
             client.chat.completions.create,
             model=model,
             messages=messages,
             stream=False,
             extra_body={"thinking": {"type": "enabled" if thinking else "disabled"}},
+            **options,
         )
         response = await asyncio.get_running_loop().run_in_executor(None, call)
         return response.choices[0].message.content or ""
@@ -245,11 +265,38 @@ class AIChatModule:
             block.append(render(self.prompts["special_namesake"], member=member_name))
         return "\n".join(block)
 
+    def _today(self, group, window):
+        """The first part of the evidence: the time, today's game, birthdays and poll, and the
+        actions the bot's last replies used. Nicknames come from members, so this is data."""
+        now = self.clock()
+        lines = [render(self.prompts["now"], date=t("common.date", month=now.month, day=now.day),
+                        weekday=WEEKDAYS[now.weekday()], time=now.strftime("%H:%M"))]
+        if self.game_state and self.teams_today:
+            teams = [render(self.prompts["team_line"], captain=captain,
+                            members=join([f"{name}（{join(statuses)}）" if statuses else name
+                                          for name, statuses in members]))
+                     for captain, members in self.teams_today(group)]
+            if teams:
+                lines.append(render(self.prompts["today_teams"], teams="\n".join(teams)))
+        if self.game_state and self.social_today:
+            today = self.social_today(group)
+            if today["birthdays"]:
+                lines.append(render(self.prompts["today_birthdays"], members=join(today["birthdays"])))
+            if today["poll"]:
+                question, options = today["poll"]
+                lines.append(render(self.prompts["today_poll"], question=question,
+                                    options=join([f"{label}. {option}：{votes}" for label, option, votes in options])))
+        actions = context.recent_actions(window)
+        if actions:
+            lines.append(render(self.prompts["recent_actions"], actions="".join(f"「{a}」" for a in actions)))
+        return "\n".join(lines)
+
     def _prompt(self, group, member, member_name, window):
         """(instructions, evidence) for one reply."""
         instructions = [current().system_prompt, render(self.prompts["group_rules"], member=member_name),
+                        render(self.prompts["reply_shape"]),
                         self._special_people(group, member, member_name, window)]
-        evidence = []
+        evidence = [self._today(group, window)]
         summary = self.store.summary(group)
         if summary:
             evidence.append(f"{render(self.prompts['summary_prefix'])}\n{summary['summary']}")
@@ -278,7 +325,7 @@ class AIChatModule:
         try:
             reply = (await self._complete(self.client, self.model,
                                           context.build_messages(instructions, evidence, window),
-                                          thinking=self.thinking)).strip()
+                                          thinking=self.thinking, temperature=self.temperature)).strip()
         except Exception as e:
             await self._reply(message, t("ai.error", error=e))
             return

@@ -47,6 +47,7 @@ class Rules:
     max_members: int = 0    # per team, not counting the captain; 0 = no limit
     reset_time: dtime = dtime(5, 0)
     commands: dict = None   # built-in command -> its word, see FIXED_COMMANDS
+    hidden: tuple = ()      # statuses AI chat is never told about (hide_from_ai)
 
     def column_of(self, status):
         return next(column for column, statuses in self.columns.items() if status in statuses)
@@ -117,6 +118,11 @@ def load_rules(path=RULES_FILE, reserved=()):
                                  f"状态名不能重复")
             owner[status] = column
         columns[column] = tuple(statuses)
+
+    hidden = _names(data.get("hide_from_ai"))
+    for status in hidden:
+        if status not in owner:
+            raise ValueError(f"teams.yaml 的 hide_from_ai 里的「{status}」不是 statuses 里的状态")
 
     raw = data.get("icons") or {}
     if not isinstance(raw, dict):
@@ -230,4 +236,4 @@ def load_rules(path=RULES_FILE, reserved=()):
     except (TypeError, ValueError):
         raise ValueError("teams.yaml 的 reset_time 要写成 \"05:00\" 这样的时间")
     return Rules(columns=columns, icons=icons, actions=tuple(actions), max_members=max_members,
-                 reset_time=reset_time, commands=commands)
+                 reset_time=reset_time, commands=commands, hidden=tuple(hidden))

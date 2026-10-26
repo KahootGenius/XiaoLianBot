@@ -96,6 +96,11 @@ seekchat (`Desktop/ai`):
   entries per member per group. Members see theirs with `/我的记忆` and delete them with
   `/忘记 序号` or `/忘记 全部`. On the server, [deploy/memories.sh](deploy/memories.sh) lists,
   rewrites and deletes anyone's.
+- **She knows what's going on.** Each request carries the Beijing time, today's teams in the team
+  game, whose birthday it is and the open poll, so she can tease the night owls and play along.
+  Statuses listed under `hide_from_ai` in `teams.yaml` are left out.
+- **She varies.** Replies stay short, and the actions in her last few replies are listed so the
+  next one picks something new. Chat replies use `deepseek.temperature` (1.3 by default).
 - **She knows who's who.** `ai_chat.special_people` in `config.yaml` tells her facts about
   particular members, such as who built her. She recognises them by their ID, so someone who copies
   their nickname can't pass for them.

@@ -230,6 +230,25 @@ class SetupTest(TeamGameTestCase):
         self.assertIn("05:00", block)
 
 
+class AIViewTest(TeamGameTestCase):
+    async def test_ai_chat_sees_todays_teams_but_not_hidden_statuses(self):
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder)
+        path = os.path.join(folder, "teams.yaml")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(shipped_rules().replace("hide_from_ai: []", "hide_from_ai: [死亡]"))
+        self.make(rules_path=path)
+        self.assertEqual(self.teams.today_for_ai(GROUP), [])
+        await self.say("CA", "/抓 @M1 @M2")
+        await self.say("CA", "/设为小队长 @M1")
+        await self.say("CA", "/死亡 @M2")
+        self.assertEqual(self.teams.today_for_ai(GROUP), [("阿队", [("小一", ["小队长", "存活"]), ("小二", ["队员"])])])
+        self.assertEqual(self.teams.today_for_ai(OTHER_GROUP), [])
+        self.now += timedelta(days=1)                         # yesterday's teams are over
+        self.assertEqual(self.teams.today_for_ai(GROUP), [])
+        self.assertEqual(TeamsModule(self.gw, {}).today_for_ai(GROUP), [])     # game off
+
+
 class RenamedCommandsTest(TeamGameTestCase):
     async def test_built_in_commands_can_be_renamed(self):
         folder = tempfile.mkdtemp()
@@ -296,6 +315,7 @@ class RulesFileTest(unittest.TestCase):
         self.assertRefused(self.GOOD.replace("{actor} 抓到了", "{who} 抓到了"), "{who}")
         self.assertRefused(self.GOOD.replace("effect: grab", "set: 小队长"), "effect: grab")
         self.assertRefused(self.GOOD.replace('reset_time: "05:00"', "reset_time: 早上五点"), "reset_time")
+        self.assertRefused(self.GOOD.replace("hide_from_ai: []", "hide_from_ai: [失踪]"), "hide_from_ai", "「失踪」")
         self.assertRefused(self.GOOD.replace("aliases: [放人]", "aliases: [成员踢出]"), "/成员",
                            reserved=("/成员", "/帮助"))
 

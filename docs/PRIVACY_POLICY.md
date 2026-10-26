@@ -71,7 +71,7 @@
 
 ### 三、第三方共享
 
-**AI 对话功能（含 `/服务器QA`）：** 当用户使用该功能时，以下内容将被传输至 **DeepSeek**（api.deepseek.com）以生成回复：用户发送的**消息内容**；该群最近与机器人的对话（含发言人的昵称）和群聊总结；参与对话的成员的长期记忆；运营者在配置中为个别成员写的身份说明（例如“机器人的作者”），连同该成员当前的昵称。每次回复后，机器人还会把这一轮对话发给 DeepSeek（最多两次），用于整理和核对发言人的长期记忆。每周小报（统计数字和上榜成员的昵称）也会发给 DeepSeek，生成一两句点评。传输内容**不包含**成员标识或群组标识（member_openid、group_openid）。`/服务器QA` 只传输问题本身。请勿通过 AI 对话功能发送敏感或私密信息。DeepSeek 的数据处理方式适用其自身隐私政策。
+**AI 对话功能（含 `/服务器QA`）：** 当用户使用该功能时，以下内容将被传输至 **DeepSeek**（api.deepseek.com）以生成回复：用户发送的**消息内容**；该群最近与机器人的对话（含发言人的昵称）和群聊总结；参与对话的成员的长期记忆；运营者在配置中为个别成员写的身份说明（例如“机器人的作者”），连同该成员当前的昵称；当天组队游戏的队伍名单（昵称和游戏状态）、当天过生日的成员的昵称，以及正在进行的投票（问题、选项和票数，不含投票人）。每次回复后，机器人还会把这一轮对话发给 DeepSeek（最多两次），用于整理和核对发言人的长期记忆。每周小报（统计数字和上榜成员的昵称）也会发给 DeepSeek，生成一两句点评。传输内容**不包含**成员标识或群组标识（member_openid、group_openid）。`/服务器QA` 只传输问题本身。请勿通过 AI 对话功能发送敏感或私密信息。DeepSeek 的数据处理方式适用其自身隐私政策。
 
 > 若部署时未配置 DeepSeek 密钥，AI 对话与 `/服务器QA` 功能将自动停用，届时不存在任何第三方数据传输。
 
@@ -164,6 +164,9 @@ contacts, payment info.
 - the memories of the members in that conversation
 - the notes the operator wrote in `ai_chat.special_people` (who someone is, such as "the bot's
   author"), with that member's current nickname, for the members known in that group
+- today's team-game rosters (nicknames and game statuses, minus any under `hide_from_ai`), the
+  nicknames of members whose birthday is today, and the open poll (question, options and counts,
+  not who voted)
 
 After each reply, one or two more calls send that one exchange, to note memories and to check that
 they were meant seriously. The weekly digest

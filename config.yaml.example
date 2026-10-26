@@ -30,6 +30,7 @@ secret: "YOUR_APP_SECRET"
 #   model: deepseek-flash            # optional; "deepseek-chat" is being retired
 #   helper_model: deepseek-flash     # optional: summaries and memory notes; defaults to model
 #   thinking: false                  # think before answering: slower and dearer, off by default
+#   temperature: 1.3                 # chat replies only: higher varies more; null = DeepSeek's default (1.0)
 
 # --- Optional: how AI chat remembers (needs the deepseek section above) ---
 # In each group everyone who @s the bot shares one conversation. Recent chat
@@ -45,6 +46,7 @@ secret: "YOUR_APP_SECRET"
 #   memories_per_member: 12  # a full notebook drops its oldest entries
 #   memory_check: true       # check each new memory with one more cheap call, so jokes aren't kept
 #   digest_comment: true     # end the weekly digest with a short in-character comment
+#   game_state: true         # tell the bot today's teams, birthdays and open poll (teams.yaml hide_from_ai)
 #   # Who particular members are, which the bot treats as true. Key: their member_openid
 #   # (@机器人 /我的ID; one line per person, as the ID is the same in every group). It goes
 #   # by the ID, so copying someone's nickname doesn't make you them. See docs/CUSTOMIZING.md.
