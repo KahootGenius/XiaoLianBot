@@ -3,7 +3,8 @@
 After the bot replies, a second, cheap call -- the observer -- reads that one
 exchange and picks out what the speaker said about themselves that's worth
 keeping: their situation, plans, likes, promises. It can also mark entries
-that are now outdated. Memories belong to one member in one group, so
+that are now outdated. A third cheap call then checks each new note against
+the exchange and drops anything said as a joke, as banter or in a game. Memories belong to one member in one group, so
 nothing said in one group reaches another, and a member can see and delete
 their own with /我的记忆 and /忘记.
 
@@ -71,6 +72,30 @@ def parse_observation(raw, known, max_adds=MAX_ADDS_PER_TURN):
         if 1 <= n <= len(known) and n not in forget:
             forget.append(n)
     return facts, forget
+
+
+def parse_check(raw, count):
+    """1-based numbers of the candidate notes the check kept, out of `count`.
+    Anything unreadable keeps none: better a missed note than a joke taken as fact."""
+    match = re.search(r"\{.*\}", raw or "", re.S)
+    if not match:
+        return set()
+    try:
+        data = json.loads(match.group(0))
+    except ValueError:
+        return set()
+    keep = data.get("keep") if isinstance(data, dict) else None
+    if not isinstance(keep, list):
+        return set()
+    numbers = set()
+    for n in keep:
+        try:
+            n = int(n)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= n <= count:
+            numbers.add(n)
+    return numbers
 
 
 def evidence(title, members):

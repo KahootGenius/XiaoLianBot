@@ -285,6 +285,28 @@ and restart the bot: every old link stops working, and `tunnel-link.sh` prints t
   `journalctl -u xiaolian-tunnel -n 30`. If the token was wrong, run `tunnel-fixed.sh` again.
 - **Back to a random address:** `sudo /home/xiaolian/XiaoLianBot/deploy/tunnel-fixed.sh --off`.
 
+## What AI chat remembers about members
+
+Members see and delete their own memories in QQ with `/我的记忆` and `/忘记`. To see or fix anyone's,
+use `memories.sh` on the server. Changes apply at once; the bot doesn't need a restart.
+
+- **List everything:**
+  ```bash
+  sudo /home/xiaolian/XiaoLianBot/deploy/memories.sh
+  ```
+- **Only memories, or members' nicknames, containing a word:**
+  ```bash
+  sudo /home/xiaolian/XiaoLianBot/deploy/memories.sh 爸爸
+  ```
+- **Delete by number** (the first column of the list):
+  ```bash
+  sudo /home/xiaolian/XiaoLianBot/deploy/memories.sh delete 12 15
+  ```
+- **Rewrite one:**
+  ```bash
+  sudo /home/xiaolian/XiaoLianBot/deploy/memories.sh edit 12 下周要考四级
+  ```
+
 ## Backups
 
 Everything except `config.yaml`, `data/` and `local/` is on GitHub. Back up `data/` now and then. For a clean

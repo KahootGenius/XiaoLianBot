@@ -114,6 +114,16 @@ class ChatStore:
     def delete_memory(self, memory_id):
         self._write("DELETE FROM memories WHERE id = ?", memory_id)
 
+    def memory(self, memory_id):
+        return self._one("SELECT * FROM memories WHERE id = ?", memory_id)
+
+    def all_memories(self):
+        """Every member's memories in every group, a member's together (modules/ai/memory_admin.py)."""
+        return self._all("SELECT * FROM memories ORDER BY group_openid, member_openid, id")
+
+    def set_memory_text(self, memory_id, text):
+        self._write("UPDATE memories SET text = ? WHERE id = ?", text, memory_id)
+
     def clear_memories(self, group, member):
         return self._write("DELETE FROM memories WHERE group_openid = ? AND member_openid = ?",
                            group, member).rowcount

@@ -91,8 +91,11 @@ seekchat (`Desktop/ai`):
   - The newest chat that fits `ai_chat.context_tokens` goes with every request.
   - Older chat is folded into a rolling summary by a cheap second call.
 - **She remembers people.** After each reply, another cheap call notes what the speaker said about
-  themselves: their plans, situation and likes. She keeps at most 12 short entries per member per
-  group. Members see theirs with `/我的记忆` and delete them with `/忘记 序号` or `/忘记 全部`.
+  themselves: their plans, situation and likes. A third cheap call checks each new note and drops
+  jokes, banter and game talk, so 「我是你爸爸」 isn't kept as a fact. She keeps at most 12 short
+  entries per member per group. Members see theirs with `/我的记忆` and delete them with
+  `/忘记 序号` or `/忘记 全部`. On the server, [deploy/memories.sh](deploy/memories.sh) lists,
+  rewrites and deletes anyone's.
 - **She knows who's who.** `ai_chat.special_people` in `config.yaml` tells her facts about
   particular members, such as who built her. She recognises them by their ID, so someone who copies
   their nickname can't pass for them.
@@ -156,7 +159,8 @@ main.py                 entry point: client, event routing, command chain
 core/                   config loading; style.py loads the style files
 modules/
   ai/                   AI chat: ai_chat.py runs it, context.py builds each request,
-                        memory.py reads the memory notes, store.py keeps data/chat.db; /deepseek
+                        memory.py reads the memory notes and checks, store.py keeps data/chat.db,
+                        memory_admin.py lists and edits memories; /deepseek
   fun/                  blackjack, dice, 发癫, sleep
   info/                 Epic, Steam, Minecraft
   fun/teams/            the team game: rules.py reads prompts/teams.yaml, roster.py keeps
@@ -176,7 +180,8 @@ prompts/achievements.yaml  the badges: add or change them without code
 prompts/teams.yaml      the team game: statuses and captain actions, without code
 prompts/chat.yaml       AI chat's rules around the persona: group chat, summary, memory notes
 assets/quotes/          发癫 quote data
-deploy/                 systemd services (bot, tunnel), update script, tunnel link and fixed address
+deploy/                 systemd services (bot, tunnel), update script, tunnel link and fixed address,
+                        memory tool
 docs/                   privacy policy, self-test report, command reference, customizing guide,
                         server guide (DEPLOY.md)
 tests/                  unit tests and simulated month-long runs
@@ -236,6 +241,8 @@ post. Still, an always-on host, such as a small Linux server, is better than a l
   admins, and [deploy/tunnel-link.sh](deploy/tunnel-link.sh) to print its current link
 - [deploy/tunnel-fixed.sh](deploy/tunnel-fixed.sh), which gives that link a fixed address on your
   own domain, so it stops changing
+- [deploy/memories.sh](deploy/memories.sh), to look at, rewrite or delete what AI chat remembers
+  about members
 
 ## Tests
 

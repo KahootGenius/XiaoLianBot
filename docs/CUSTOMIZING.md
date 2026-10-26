@@ -322,6 +322,7 @@ at startup** and names the line.
 | `digest_comment` | The prompt for the comment that ends the weekly digest | `{digest}` |
 | `summary` | The prompt for folding old chat into the group's summary | |
 | `observer` | The prompt for noting what a speaker said about themselves after each reply. It must ask for JSON: `{{"facts": [], "forget": []}}` | `{member}`, `{known}`, `{said}`, `{reply}`, `{max_text}`, `{max_adds}` |
+| `memory_check` | The prompt that checks the observer's new notes and keeps only what was meant seriously. It must ask for JSON: `{{"keep": []}}`. An unreadable answer keeps nothing | `{member}`, `{said}`, `{reply}`, `{notes}` |
 
 Every line can also use `{name}`, the bot's name in the current style. A literal brace is written
 twice, `{{` and `}}`, as in the observer's JSON.
@@ -339,6 +340,7 @@ ai_chat:
   keep_days: 7               # raw chat is deleted after this many days
   memory: true               # long-term memory about each member
   memories_per_member: 12    # a full notebook drops its oldest entries
+  memory_check: true         # check each new memory with one more cheap call; jokes aren't kept
   digest_comment: true       # end the weekly digest with a short comment
   special_people:            # who particular members are (next section)
     "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX": 这个机器人的作者

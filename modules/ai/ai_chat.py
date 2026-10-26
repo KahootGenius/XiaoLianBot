@@ -7,7 +7,8 @@ shares one conversation:
 - rolling summary: once ai_chat.summarize_after turns have scrolled out of
   the window, a cheap call folds them into the group's summary;
 - memory: after every reply an observer call notes what the speaker said
-  about themselves (modules/ai/memory.py).
+  about themselves, and a check call drops notes that were only jokes
+  (modules/ai/memory.py).
 Summary and memories travel in a separate "evidence" system message that is
 labelled as data, not instructions (modules/ai/context.py).
 
@@ -54,6 +55,7 @@ PROMPT_FIELDS = {
     "summary": set(),
     "digest_comment": {"digest"},
     "observer": {"member", "known", "said", "reply", "max_text", "max_adds"},
+    "memory_check": {"member", "said", "reply", "notes"},
 }
 # Commands this module answers before chatting. Listed so team-game actions can't take them.
 COMMANDS = ("/我的记忆", "/忘记", "/重置对话", "/服务器QA")
@@ -121,6 +123,7 @@ class AIChatModule:
         self.keep_days = int(chat.get("keep_days", 7))
         self.memory_on = bool(chat.get("memory", True))
         self.memories_per_member = int(chat.get("memories_per_member", 12))
+        self.memory_check = bool(chat.get("memory_check", True))
         self.digest_comment = bool(chat.get("digest_comment", True))
         self.special = read_special_people(chat.get("special_people"))
         self.is_admin = is_admin or (lambda group, member, role=None: False)
@@ -306,6 +309,10 @@ class AIChatModule:
                     self.store.delete_memory(known[n - 1]["id"])
                 if not facts:
                     return
+                if self.memory_check:
+                    facts = await self.check_notes(name, said, reply, facts)
+                    if not facts or self.generation.get(group, 0) != generation:
+                        return
                 # A full notebook drops its oldest entries to make room.
                 kept = [m for i, m in enumerate(known, 1) if i not in forget]
                 for old in kept[:max(0, len(kept) + len(facts) - self.memories_per_member)]:
@@ -314,6 +321,18 @@ class AIChatModule:
                     self.store.add_memory(group, member, fact, self._now())
             except Exception as e:
                 _log.warning(f"[AIChat] 整理记忆失败: {e}")
+
+    async def check_notes(self, name, said, reply, facts):
+        """The candidate notes `name` meant seriously, judged by one more cheap call on the
+        same exchange. Jokes, banter, role-play and game talk are dropped; an unreadable
+        answer keeps nothing, and a failed call is logged by observe(), keeping nothing."""
+        prompt = render(self.prompts["memory_check"], member=name, said=memory.excerpt(said),
+                        reply=memory.excerpt(reply), notes=memory.numbered(facts, ""))
+        raw = await self._complete(self.client, self.helper_model, [{"role": "user", "content": prompt}])
+        keep = memory.parse_check(raw, len(facts))
+        if len(keep) < len(facts):      # only the count: logs outlive the chat itself
+            _log.info(f"[AIChat] 核对记忆：{len(facts) - len(keep)} 条不像认真说的，没有记下")
+        return [fact for i, fact in enumerate(facts, 1) if i in keep]
 
     async def maybe_summarize(self, group, up_to_id=None):
         """Fold turns that left the window into the group's summary once there are enough of them.

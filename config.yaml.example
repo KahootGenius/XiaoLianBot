@@ -43,6 +43,7 @@ secret: "YOUR_APP_SECRET"
 #   keep_days: 7             # raw chat is deleted after this many days
 #   memory: true             # long-term memory about each member (/我的记忆, /忘记)
 #   memories_per_member: 12  # a full notebook drops its oldest entries
+#   memory_check: true       # check each new memory with one more cheap call, so jokes aren't kept
 #   digest_comment: true     # end the weekly digest with a short in-character comment
 #   # Who particular members are, which the bot treats as true. Key: their member_openid
 #   # (@机器人 /我的ID; one line per person, as the ID is the same in every group). It goes

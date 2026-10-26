@@ -1,13 +1,15 @@
 """AI chat's context window, rolling summary and per-member memory, with a fake DeepSeek."""
+import io
 import json
 import os
 import shutil
+import sqlite3
 import tempfile
 import unittest
 from datetime import timedelta
 from types import SimpleNamespace
 from core.config import root_path
-from modules.ai import context, memory
+from modules.ai import context, memory, memory_admin
 from modules.ai.ai_chat import AIChatModule, load_chat_prompts, read_special_people
 from modules.ai.store import ChatStore
 from tests.test_manager import START, FakeGateway, FakeMessage
@@ -15,6 +17,7 @@ from tests.test_manager import START, FakeGateway, FakeMessage
 G, G2 = "G", "G2"
 NAMES = {"A": "小明", "B": "小红", "ADMIN": "管理员"}
 NOTHING = '{"facts": [], "forget": []}'
+KEEP_ALL = '{"keep": [1, 2, 3, 4, 5]}'
 
 
 class FakeDeepSeek:
@@ -22,14 +25,14 @@ class FakeDeepSeek:
 
     def __init__(self):
         self.calls = []
-        self.answers = {"chat": [], "observer": [], "summary": []}
+        self.answers = {"chat": [], "observer": [], "check": [], "summary": []}
         self.hooks = {}
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
 
     @staticmethod
     def kind(messages):
         if len(messages) == 1:
-            return "observer"
+            return "check" if "防止把玩笑当真" in messages[0]["content"] else "observer"
         return "summary" if "滚动总结" in messages[0]["content"] else "chat"
 
     def create(self, **request):
@@ -39,7 +42,7 @@ class FakeDeepSeek:
             self.hooks[kind]()
         queue = self.answers[kind]
         answer = queue.pop(0) if queue else {"chat": f"回复{len(self.calls)}", "observer": NOTHING,
-                                             "summary": "总结：小明在准备考研"}[kind]
+                                             "check": KEEP_ALL, "summary": "总结：小明在准备考研"}[kind]
         if isinstance(answer, Exception):
             raise answer
         return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=answer))])
@@ -154,6 +157,34 @@ class MemoryTest(AIChatTestCase):
         self.assertIn("用法", await self.say("A", "/忘记"))
         self.assertIn("2 条记忆都删掉了", await self.say("A", "/忘记 全部"))
         self.assertEqual(self.ai_client.calls, [])                # commands never reach DeepSeek
+
+    async def test_jokes_are_checked_out_before_anything_is_kept(self):
+        self.make()
+        self.ai_client.answers["observer"].append('{"facts": ["在准备考研", "自称是小红的爸爸"], "forget": []}')
+        self.ai_client.answers["check"].append('只有第一条是认真的：{"keep": [1]}')
+        await self.say("A", "我在准备考研。还有，我是小红的爸爸")
+        check = self.ai_client.requests("check")[0]
+        self.assertIn("小明：我在准备考研。还有，我是小红的爸爸", check["messages"][0]["content"])
+        self.assertIn("1. 在准备考研\n2. 自称是小红的爸爸", check["messages"][0]["content"])
+        self.assertEqual(check["model"], "deepseek-flash")
+        self.assertEqual([m["text"] for m in self.store.memories(G, "A")], ["在准备考研"])
+        await self.say("A", "今天好累")                          # nothing to note: no check call
+        self.assertEqual(len(self.ai_client.requests("check")), 1)
+
+    async def test_a_failed_or_unreadable_check_keeps_nothing(self):
+        self.make()
+        self.ai_client.answers["observer"] += ['{"facts": ["喜欢猫"], "forget": []}'] * 2
+        self.ai_client.answers["check"] += [RuntimeError("超时"), "可以记"]
+        await self.say("A", "我喜欢猫")
+        await self.say("A", "真的，我喜欢猫")
+        self.assertEqual(self.store.memories(G, "A"), [])
+
+    async def test_the_check_can_be_switched_off(self):
+        self.make(memory_check=False)
+        self.ai_client.answers["observer"].append('{"facts": ["喜欢猫"], "forget": []}')
+        await self.say("A", "我喜欢猫")
+        self.assertEqual(self.ai_client.requests("check"), [])
+        self.assertEqual([m["text"] for m in self.store.memories(G, "A")], ["喜欢猫"])
 
     async def test_memory_can_be_switched_off(self):
         self.make(memory=False)
@@ -285,6 +316,63 @@ class PureTest(unittest.TestCase):
         self.assertEqual(forget, [1])
         self.assertTrue(memory.looks_sensitive("邮箱 a.b@qq.com"))
         self.assertFalse(memory.looks_sensitive("喜欢 2077 年的赛博朋克"))
+
+    def test_check_answers_are_read_carefully(self):
+        self.assertEqual(memory.parse_check('好的 {"keep": [2, "1", 9, "x"]}', 3), {1, 2})
+        self.assertEqual(memory.parse_check('{"keep": "1"}', 3), set())        # not a list: keep none
+        self.assertEqual(memory.parse_check("都可以记", 3), set())
+
+
+class MemoryAdminTest(unittest.TestCase):
+    """The operator's command line for members' memories (deploy/memories.sh)."""
+
+    def setUp(self):
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder)
+        self.chat, self.manager = os.path.join(folder, "chat.db"), os.path.join(folder, "manager.db")
+        store = ChatStore(self.chat)
+        store.add_turn(G, "A", "小明的旧名", "user", "你好", 0)
+        for group, member, text in ((G, "A", "在准备考研"), (G, "A", "自称是小红的爸爸"), (G2, "B", "喜欢猫")):
+            store.add_memory(group, member, text, 0)
+        store.db.close()
+        db = sqlite3.connect(self.manager)
+        db.execute("CREATE TABLE members (group_openid TEXT, member_openid TEXT, nickname TEXT)")
+        db.execute("INSERT INTO members VALUES (?, ?, ?)", (G, "A", "小明"))
+        db.commit()
+        db.close()
+
+    def run_cli(self, *argv):
+        out = io.StringIO()
+        return memory_admin.main(list(argv), self.chat, self.manager, out), out.getvalue()
+
+    def texts(self):
+        store = ChatStore(self.chat)
+        self.addCleanup(store.db.close)
+        return [row["text"] for row in store.all_memories()]
+
+    def test_listing_and_searching(self):
+        code, out = self.run_cli()
+        self.assertEqual(code, 0)
+        self.assertIn("小明", out)                      # the member records' current name...
+        self.assertNotIn("小明的旧名", out)             # ...over the one AI chat last saw
+        self.assertIn("B…", out)                        # nobody knows B's name: the ID's start
+        self.assertIn("3 memories", out)
+        out = self.run_cli("爸爸")[1]
+        self.assertIn("自称是小红的爸爸", out)
+        self.assertNotIn("喜欢猫", out)
+        self.assertIn("2 memories", self.run_cli("小明")[1])
+        self.assertIn("No memories containing 外星人", self.run_cli("外星人")[1])
+
+    def test_deleting_and_rewriting(self):
+        code, out = self.run_cli("delete", "2", "9")
+        self.assertIn("Deleted 2: 自称是小红的爸爸", out)
+        self.assertIn("No memory 9.", out)
+        self.assertEqual(self.run_cli("edit", "1", "在准备考研，", "目标计算机")[0], 0)
+        self.assertEqual(self.texts(), ["在准备考研， 目标计算机", "喜欢猫"])
+        self.assertEqual(self.run_cli("edit", "1", "长" * 61)[0], 2)        # too long for a memory
+        self.assertEqual(self.run_cli("delete")[0], 2)
+        self.assertEqual(self.run_cli("delete", "第二条")[0], 2)
+        self.assertEqual(self.texts(), ["在准备考研， 目标计算机", "喜欢猫"])
 
 
 class PromptsFileTest(unittest.TestCase):

@@ -71,7 +71,7 @@
 
 ### 三、第三方共享
 
-**AI 对话功能（含 `/服务器QA`）：** 当用户使用该功能时，以下内容将被传输至 **DeepSeek**（api.deepseek.com）以生成回复：用户发送的**消息内容**；该群最近与机器人的对话（含发言人的昵称）和群聊总结；参与对话的成员的长期记忆；运营者在配置中为个别成员写的身份说明（例如“机器人的作者”），连同该成员当前的昵称。每次回复后，机器人还会把这一轮对话发给 DeepSeek，用于整理发言人的长期记忆。每周小报（统计数字和上榜成员的昵称）也会发给 DeepSeek，生成一两句点评。传输内容**不包含**成员标识或群组标识（member_openid、group_openid）。`/服务器QA` 只传输问题本身。请勿通过 AI 对话功能发送敏感或私密信息。DeepSeek 的数据处理方式适用其自身隐私政策。
+**AI 对话功能（含 `/服务器QA`）：** 当用户使用该功能时，以下内容将被传输至 **DeepSeek**（api.deepseek.com）以生成回复：用户发送的**消息内容**；该群最近与机器人的对话（含发言人的昵称）和群聊总结；参与对话的成员的长期记忆；运营者在配置中为个别成员写的身份说明（例如“机器人的作者”），连同该成员当前的昵称。每次回复后，机器人还会把这一轮对话发给 DeepSeek（最多两次），用于整理和核对发言人的长期记忆。每周小报（统计数字和上榜成员的昵称）也会发给 DeepSeek，生成一两句点评。传输内容**不包含**成员标识或群组标识（member_openid、group_openid）。`/服务器QA` 只传输问题本身。请勿通过 AI 对话功能发送敏感或私密信息。DeepSeek 的数据处理方式适用其自身隐私政策。
 
 > 若部署时未配置 DeepSeek 密钥，AI 对话与 `/服务器QA` 功能将自动停用，届时不存在任何第三方数据传输。
 
@@ -165,7 +165,8 @@ contacts, payment info.
 - the notes the operator wrote in `ai_chat.special_people` (who someone is, such as "the bot's
   author"), with that member's current nickname, for the members known in that group
 
-A second call after each reply sends that one exchange so memories can be noted. The weekly digest
+After each reply, one or two more calls send that one exchange, to note memories and to check that
+they were meant seriously. The weekly digest
 (counts and top talkers' nicknames) is sent for its closing comment. No openids are sent. `/服务器QA` sends only the question. The classifier runs locally, so nothing from the
 manager leaves the server except QQ API calls.
 
