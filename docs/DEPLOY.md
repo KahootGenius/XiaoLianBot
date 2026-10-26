@@ -288,7 +288,8 @@ and restart the bot: every old link stops working, and `tunnel-link.sh` prints t
 ## What AI chat remembers about members
 
 Members see and delete their own memories in QQ with `/我的记忆` and `/忘记`. To see or fix anyone's,
-use `memories.sh` on the server. Changes apply at once; the bot doesn't need a restart.
+use `memories.sh` on the server. Changes apply at once; the bot doesn't need a restart. The bot's
+one-line impression of each member is listed too, marked `[impression]`.
 
 - **List everything:**
   ```bash

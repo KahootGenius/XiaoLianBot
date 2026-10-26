@@ -1,0 +1,29 @@
+# AI 聊天的预演脚本：python -m modules.ai.rehearse 用真实的 DeepSeek 和当前的风格跑一遍这段假群聊，
+# 打印她的每句回复，方便改人设前后对比。每一行会产生两次很小的 DeepSeek 调用；什么都不会保存。
+# 想要自己群里的版本，复制到 local/prompts/rehearsal.yaml 再改（那里的不会上传到 GitHub）。
+
+# 可省略：北京时间，默认是现在。每一行往后推一分钟
+time: "2026-11-01 23:30"
+
+# 可省略：昵称 → member_openid，config.yaml 的 ai_chat.special_people 靠它认人
+# ids:
+#   小明: "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+
+# 可省略：今天的组队游戏（队长: {队员: [状态, …]}）、今天过生日的人、正在进行的投票
+teams:
+  阿队: {小红: [队员, 存活]}
+birthdays: [小红]
+poll:
+  question: 周六几点开黑？
+  options: {"19点": 3, "21点": 1}
+
+# 一行一句：「昵称：消息」，每句都 @ 了她
+lines:
+  - 小明：你好呀，新来的，请多指教
+  - 小红：你多大了？
+  - 小明：今天考试没考好……
+  - 小红：认真问一下，考研数学怎么复习？
+  - 小明：哈哈哈我是小红的爸爸
+  - 小红：今天是我生日诶，夸夸我嘛
+  - 小明：说真的，你是机器人吗？
+  - 小红：晚安啦

@@ -93,14 +93,21 @@ seekchat (`Desktop/ai`):
 - **She remembers people.** After each reply, another cheap call notes what the speaker said about
   themselves: their plans, situation and likes. A third cheap call checks each new note and drops
   jokes, banter and game talk, so 「我是你爸爸」 isn't kept as a fact. She keeps at most 12 short
-  entries per member per group. Members see theirs with `/我的记忆` and delete them with
-  `/忘记 序号` or `/忘记 全部`. On the server, [deploy/memories.sh](deploy/memories.sh) lists,
+  entries per member per group, plus a one-line impression of each person: what she calls them and
+  your running jokes. Members see theirs with `/我的记忆` and delete them with `/忘记 序号`,
+  `/忘记 印象` or `/忘记 全部`. On the server, [deploy/memories.sh](deploy/memories.sh) lists,
   rewrites and deletes anyone's.
 - **She knows what's going on.** Each request carries the Beijing time, today's teams in the team
   game, whose birthday it is and the open poll, so she can tease the night owls and play along.
   Statuses listed under `hide_from_ai` in `teams.yaml` are left out.
-- **She varies.** Replies stay short, and the actions in her last few replies are listed so the
-  next one picks something new. Chat replies use `deepseek.temperature` (1.3 by default).
+- **She varies.** Before each reply a cheap flash call judges what the message needs, as in
+  seekchat: 严谨 (0.6), 平衡 (1.0) or 奔放 (1.15) sets the temperature, and 短/中/长 the length. The
+  actions in her last few replies are listed so she picks new ones.
+- **Her voice and world come from the style.** Optional `examples` and `bad_examples` teach her
+  tone; `lore` entries ride along only when their keywords come up. Try changes first with
+  `python -m modules.ai.rehearse`, which plays a scripted chat against the real DeepSeek.
+- **She can overhear (off by default).** With `ai_chat.overhear`, the last few messages that didn't
+  @ her go along with the next reply, kept in memory only.
 - **She knows who's who.** `ai_chat.special_people` in `config.yaml` tells her facts about
   particular members, such as who built her. She recognises them by their ID, so someone who copies
   their nickname can't pass for them.
@@ -165,7 +172,7 @@ core/                   config loading; style.py loads the style files
 modules/
   ai/                   AI chat: ai_chat.py runs it, context.py builds each request,
                         memory.py reads the memory notes and checks, store.py keeps data/chat.db,
-                        memory_admin.py lists and edits memories; /deepseek
+                        memory_admin.py lists and edits memories, rehearse.py tries a persona; /deepseek
   fun/                  blackjack, dice, 发癫, sleep
   info/                 Epic, Steam, Minecraft
   fun/teams/            the team game: rules.py reads prompts/teams.yaml, roster.py keeps
@@ -184,6 +191,7 @@ styles/_示例.yaml        an example to start a new style from
 prompts/achievements.yaml  the badges: add or change them without code
 prompts/teams.yaml      the team game: statuses and captain actions, without code
 prompts/chat.yaml       AI chat's rules around the persona: group chat, summary, memory notes
+prompts/rehearsal.yaml  a scripted group chat for python -m modules.ai.rehearse
 assets/quotes/          发癫 quote data
 deploy/                 systemd services (bot, tunnel), update script, tunnel link and fixed address,
                         memory tool

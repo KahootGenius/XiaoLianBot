@@ -108,7 +108,7 @@ Admins can use every action except `/抓` on any team.
 | `/摇骰子` | Roll a die | `fun/dice.py` |
 | `/服务器QA <question>` | Minecraft server Q&A mode | `ai/ai_chat.py` |
 | `/我的记忆` | "My memories": what the bot has noted about me in this group | `ai/ai_chat.py` |
-| `/忘记 <序号…>`, `/忘记 全部` | "Forget": delete some or all of my memories | `ai/ai_chat.py` |
+| `/忘记 <序号…>`, `/忘记 印象`, `/忘记 全部` | "Forget": delete some or all of my memories, or the bot's impression of me | `ai/ai_chat.py` |
 | `/重置对话` | "Reset the conversation" (admins): clear this group's chat context and summary | `ai/ai_chat.py` |
 | `/deepseek` | Post a fixed image | `ai/deepseek.py` |
 

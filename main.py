@@ -109,6 +109,8 @@ class MyClient(botpy.Client):
             await self.social_module.observe(message)
             if message.mentions_bot:
                 await self._handle_command(message)
+            else:
+                self.ai_chat_module.hear(message)       # only kept with ai_chat.overhear
 
     async def on_group_at_message_create(self, message):
         with STYLES.scope(message.group_openid):

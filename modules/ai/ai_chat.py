@@ -25,6 +25,7 @@ import asyncio
 import functools
 import os
 import re
+from collections import deque
 from datetime import datetime
 import pytz
 import yaml
@@ -44,7 +45,13 @@ CHAT_PROMPTS_FILE = content_path("prompts", "chat.yaml")
 # What each line of prompts/chat.yaml may fill in, besides {name} (the style's name).
 PROMPT_FIELDS = {
     "group_rules": {"member"},
+    "examples": {"examples"},
+    "bad_examples": {"examples"},
     "reply_shape": set(),
+    "length_short": set(),
+    "length_medium": set(),
+    "length_long": set(),
+    "lore": {"lore"},
     "special_people": {"people"},
     "special_line": {"member", "note"},
     "special_speaker": {"member", "note"},
@@ -60,18 +67,24 @@ PROMPT_FIELDS = {
     "recent_actions": {"actions"},
     "summary_prefix": set(),
     "memory_title": set(),
+    "impression_title": set(),
+    "overheard": {"lines"},
     "empty_mention": {"member"},
     "summary": set(),
     "digest_comment": {"digest"},
-    "observer": {"member", "known", "said", "reply", "max_text", "max_adds"},
+    "observer": {"member", "known", "impression", "said", "reply", "max_text", "max_adds", "max_impression"},
+    "register": {"member", "said", "last"},
     "memory_check": {"member", "said", "reply", "notes"},
 }
 # Commands this module answers before chatting. Listed so team-game actions can't take them.
 COMMANDS = ("/我的记忆", "/忘记", "/重置对话", "/服务器QA")
 FORGET_ALL_WORDS = ("全部", "所有", "all")
+FORGET_IMPRESSION_WORDS = ("印象",)
+OVERHEAR_MINUTES = 30       # overheard chat older than this is stale
+OVERHEARD_TEXT = 100        # characters of each overheard message
 MEMORY_SPEAKERS = 5         # members whose memories ride along: the speaker plus recent ones
 DIGEST_COMMENT_LIMIT = 120  # characters; the prompt asks for 60
-DEFAULT_TEMPERATURE = 1.3   # chat replies only: DeepSeek's suggestion for conversation (their default is 1.0)
+DEFAULT_TEMPERATURE = 1.0   # chat replies when dynamic_temperature is off or its judgement fails
 WEEKDAYS = "一二三四五六日"
 DAY = 86400
 
@@ -127,7 +140,9 @@ class AIChatModule:
         # (Epic, Steam, Minecraft, blackjack, sleep, ...) still runs normally.
         self.enabled = bool(api_key) or client is not None
         self.model = str(deepseek.get("model") or DEFAULT_MODEL)
-        self.helper_model = str(deepseek.get("helper_model") or self.model)
+        # Summaries, memory notes and checks, and the pre-reply judgement stay on the flash tier even
+        # when replies use a bigger model.
+        self.helper_model = str(deepseek.get("helper_model") or DEFAULT_MODEL)
         self.thinking = bool(deepseek.get("thinking", False))
         temperature = deepseek.get("temperature", DEFAULT_TEMPERATURE)
         self.temperature = None if temperature is None else float(temperature)     # None: DeepSeek's default
@@ -139,6 +154,15 @@ class AIChatModule:
         self.memory_check = bool(chat.get("memory_check", True))
         self.digest_comment = bool(chat.get("digest_comment", True))
         self.game_state = bool(chat.get("game_state", True))
+        # seekchat's 动态想象力: one cheap call before each reply picks its temperature and length.
+        self.dynamic = bool(chat.get("dynamic_temperature", True))
+        picked = chat.get("temperatures") if isinstance(chat.get("temperatures"), dict) else {}
+        self.register_temperatures = {register: float(picked.get(register, value))
+                                      for register, value in context.REGISTERS.items()}
+        # Messages that don't @ the bot, heard and kept in memory only (0 = off; see the privacy policy).
+        self.overhear = max(0, int(chat.get("overhear", 0) or 0))
+        self.heard = {}             # group -> deque of (ts, member, nickname, text)
+        self.replied_at = {}        # group -> when the bot last replied there
         # Today's team game and birthdays/poll, set by main.py: group -> what teams.today_for_ai and
         # social.today_for_ai return. Without them the bot only knows the time.
         self.teams_today = self.social_today = None
@@ -291,12 +315,44 @@ class AIChatModule:
             lines.append(render(self.prompts["recent_actions"], actions="".join(f"「{a}」" for a in actions)))
         return "\n".join(lines)
 
-    def _prompt(self, group, member, member_name, window):
-        """(instructions, evidence) for one reply."""
-        instructions = [current().system_prompt, render(self.prompts["group_rules"], member=member_name),
+    def hear(self, message):
+        """A group message that doesn't @ the bot. With ai_chat.overhear it's kept, in memory only,
+        so the bot's next reply in that group knows what was just said around it."""
+        if not (self.enabled and self.overhear) or message.is_bot:
+            return
+        text = re.sub(r"<[^>]{0,200}>", "", message.content or "").strip()   # no mention or face tags
+        if not text or text.startswith("/"):
+            return
+        heard = self.heard.setdefault(message.group_openid, deque(maxlen=self.overhear))
+        heard.append((self._now(), message.member_openid, message.nickname or t("common.someone"),
+                      text[:OVERHEARD_TEXT]))
+
+    def _overheard(self, group):
+        """What was said in the group without @-ing the bot since its last reply there, or None."""
+        since = max(self.replied_at.get(group, 0), self._now() - OVERHEAR_MINUTES * 60)
+        lines = [f"{nickname}：{text}" for ts, _, nickname, text in self.heard.get(group, ()) if ts > since]
+        return render(self.prompts["overheard"], lines="\n".join(lines)) if lines else None
+
+    def _impression(self, group, member):
+        row = self.store.impression(group, member)
+        return row["text"] if row else None
+
+    def _prompt(self, group, member, member_name, window, length=None):
+        """(instructions, evidence) for one reply. `length` is the pre-reply call's 短/中/长, if it gave one."""
+        style = current()
+        examples = str(style.lookup("examples") or "").strip()
+        bad = str(style.lookup("bad_examples") or "").strip()
+        lore = context.lore_for(style.lookup("lore"), window)
+        # The parts that never change for a style come first, so DeepSeek's prefix cache can reuse them.
+        instructions = [style.system_prompt,
+                        examples and render(self.prompts["examples"], examples=examples),
+                        bad and render(self.prompts["bad_examples"], examples=bad),
+                        render(self.prompts["group_rules"], member=member_name),
                         render(self.prompts["reply_shape"]),
-                        self._special_people(group, member, member_name, window)]
-        evidence = [self._today(group, window)]
+                        length and render(self.prompts[context.LENGTHS[length]]),
+                        self._special_people(group, member, member_name, window),
+                        lore and render(self.prompts["lore"], lore="\n".join(f"- {text}" for text in lore))]
+        evidence = [self._today(group, window), self._overheard(group)]
         summary = self.store.summary(group)
         if summary:
             evidence.append(f"{render(self.prompts['summary_prefix'])}\n{summary['summary']}")
@@ -306,14 +362,31 @@ class AIChatModule:
             for turn in reversed(window):
                 if turn["role"] == "user" and turn["member_openid"] not in speakers:
                     speakers[turn["member_openid"]] = turn["name"]
-            known = [(name, [m["text"] for m in self.store.memories(group, openid)])
-                     for openid, name in list(speakers.items())[:MEMORY_SPEAKERS]]
-            block = memory.evidence(render(self.prompts["memory_title"]), known)
-            if block:
+            chosen = list(speakers.items())[:MEMORY_SPEAKERS]
+            facts = memory.evidence(render(self.prompts["memory_title"]),
+                                    [(name, [m["text"] for m in self.store.memories(group, openid)])
+                                     for openid, name in chosen])
+            views = memory.impressions(render(self.prompts["impression_title"]),
+                                       [(name, self._impression(group, openid)) for openid, name in chosen])
+            if facts or views:
                 instructions.append(render(self.prompts["memory_rules"]))
-                evidence.append(block)
+                evidence += [facts, views]
         return context.compose(instructions, evidence, render(self.prompts["evidence_policy"]),
                                render(self.prompts["evidence_title"]))
+
+    async def perceive(self, name, said, window):
+        """seekchat's 动态想象力: one cheap call before the reply judges the register and length this
+        message needs. (register, length), or (None, None) if it fails and the manual temperature rides."""
+        last = next((turn["content"] for turn in reversed(window) if turn["role"] == "assistant"), "")
+        prompt = render(self.prompts["register"], member=name, said=memory.excerpt(said, 300),
+                        last=memory.excerpt(last, 300) if last else "（还没有）")
+        try:
+            raw = await self._complete(self.client, self.helper_model, [{"role": "user", "content": prompt}],
+                                       temperature=0)
+        except Exception as e:
+            _log.warning(f"[AIChat] 回复前的判断失败，这次用 deepseek.temperature: {e}")
+            return None, None
+        return context.parse_register(raw)
 
     async def chat(self, message, text):
         group, member = message.group_openid, message.member_openid
@@ -321,17 +394,20 @@ class AIChatModule:
         said = text or render(self.prompts["empty_mention"], member=name)
         self.store.add_turn(group, member, name, "user", said, self._now())
         window = context.select_window(self.store.recent_turns(group), self.context_tokens)
-        instructions, evidence = self._prompt(group, member, name, window)
+        register, length = await self.perceive(name, said, window) if self.dynamic else (None, None)
+        instructions, evidence = self._prompt(group, member, name, window, length)
         try:
             reply = (await self._complete(self.client, self.model,
                                           context.build_messages(instructions, evidence, window),
-                                          thinking=self.thinking, temperature=self.temperature)).strip()
+                                          thinking=self.thinking,
+                                          temperature=self.register_temperatures.get(register, self.temperature))).strip()
         except Exception as e:
             await self._reply(message, t("ai.error", error=e))
             return
         if not reply:
             return
         await self._reply(message, reply)
+        self.replied_at[group] = self._now()
         self.store.add_turn(group, None, current().name, "assistant", reply, self._now())
         if self.memory_on and member:
             self._spawn(self.observe(group, member, name, said, reply))
@@ -345,12 +421,18 @@ class AIChatModule:
                 generation = self.generation.get(group, 0)
                 known = self.store.memories(group, member)
                 texts = [m["text"] for m in known]
+                seen = self._impression(group, member)
                 prompt = render(self.prompts["observer"], member=name, said=memory.excerpt(said),
                                 reply=memory.excerpt(reply), known=memory.numbered(texts, "（还没有）"),
-                                max_text=memory.MAX_MEMORY_TEXT, max_adds=memory.MAX_ADDS_PER_TURN)
+                                impression=seen or "（还没有）", max_text=memory.MAX_MEMORY_TEXT,
+                                max_adds=memory.MAX_ADDS_PER_TURN, max_impression=memory.MAX_IMPRESSION_TEXT)
                 raw = await self._complete(self.client, self.helper_model, [{"role": "user", "content": prompt}])
                 if self.generation.get(group, 0) != generation:
                     return
+                # The impression is the bot's own view, running jokes included: no seriousness check.
+                impression = memory.parse_impression(raw)
+                if impression and impression != seen:
+                    self.store.set_impression(group, member, impression, self._now())
                 facts, forget = memory.parse_observation(raw, texts)
                 for n in forget:
                     self.store.delete_memory(known[n - 1]["id"])
@@ -445,20 +527,29 @@ class AIChatModule:
             await self._reply(message, t("ai.memory.disabled"))
             return
         rows = self.store.memories(message.group_openid, message.member_openid)
-        if not rows:
+        seen = self._impression(message.group_openid, message.member_openid)
+        if not rows and not seen:
             await self._reply(message, t("ai.memory.empty"))
             return
         lines = [t("ai.memory.title", member=message.nickname or t("common.someone"), count=len(rows))]
         lines += [t("ai.memory.row", n=i, text=row["text"]) for i, row in enumerate(rows, 1)]
+        if seen:
+            lines.append(t("ai.memory.impression", text=seen))
         lines.append(t("ai.memory.footer"))
         await self._reply(message, "\n".join(lines))
 
     async def cmd_forget(self, message, args):
-        """/忘记 序号… or /忘记 全部: delete my own memories."""
+        """/忘记 序号…, /忘记 印象 or /忘记 全部: delete my own memories, or the bot's impression of me."""
         group, member = message.group_openid, message.member_openid
         if args in FORGET_ALL_WORDS:
             count = self.store.clear_memories(group, member)
             await self._reply(message, t("ai.memory.forgot_all", count=count))
+            return
+        if args in FORGET_IMPRESSION_WORDS:
+            row = self.store.impression(group, member)
+            if row:
+                self.store.delete_memory(row["id"])
+            await self._reply(message, t("ai.memory.forgot_impression" if row else "ai.memory.no_impression"))
             return
         numbers = [int(n) for n in re.findall(r"\d+", args)]
         if not numbers:
@@ -479,6 +570,7 @@ class AIChatModule:
             await self._reply(message, t("common.not_admin"))
             return
         self.store.reset_chat(message.group_openid)
+        self.heard.pop(message.group_openid, None)
         self._deleted(message.group_openid)
         await self._reply(message, t("ai.reset"))
 
@@ -507,11 +599,16 @@ class AIChatModule:
     def forget_member(self, group, member):
         if self.enabled:
             self.store.forget_member(group, member)
+            heard = self.heard.get(group)
+            if heard:
+                self.heard[group] = deque((h for h in heard if h[1] != member), maxlen=heard.maxlen)
             self._deleted(group)
 
     def forget_group(self, group):
         if self.enabled:
             self.store.forget_group(group)
+            self.heard.pop(group, None)
+            self.replied_at.pop(group, None)
             self._deleted(group)
 
     async def housekeeping(self):
@@ -528,7 +625,9 @@ class AIChatModule:
         if not self.enabled:
             return
         _log.info(f"[AIChat] AI 聊天：模型 {self.model}，上下文约 {self.context_tokens} token，"
-                  f"长期记忆{'开启' if self.memory_on else '关闭'}，聊天记录保留 {self.keep_days} 天")
+                  f"长期记忆{'开启' if self.memory_on else '关闭'}，聊天记录保留 {self.keep_days} 天，"
+                  f"回复温度{'每次自动判断' if self.dynamic else f'固定 {self.temperature}'}，"
+                  f"{f'带上群里最近 {self.overhear} 条没有 @ 的聊天' if self.overhear else '只看 @ 的消息'}")
         if self.special:
             # The start of each ID, to check against what /我的ID says.
             _log.info(f"[AIChat] 特别的群友 {len(self.special)} 位，ID 开头：{'、'.join(o[:8] for o in self.special)}")

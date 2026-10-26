@@ -1,5 +1,7 @@
 """Look at, rewrite and delete what AI chat remembers about members, from the command line.
 
+That's the facts members told the bot about themselves, and its one-line
+impression of each member, marked [impression] in the list.
 Members see and delete their own memories with /我的记忆 and /忘记; this is for
 the operator, on the machine running the bot. On the server, deploy/memories.sh
 runs it as the bot's user:
@@ -68,7 +70,8 @@ def show(store, names, word, out):
     print(f"{'#':>5}  group     {_pad('member', width)}  saved  memory", file=out)
     for r in rows:
         saved = datetime.fromtimestamp(r["created_at"], TZ).strftime("%m-%d")
-        print(f"{r['id']:>5}  {r['group_openid'][:8]}  {_pad(who[r['id']], width)}  {saved}  {r['text']}", file=out)
+        text = f"[impression] {r['text']}" if r["kind"] == "impression" else r["text"]
+        print(f"{r['id']:>5}  {r['group_openid'][:8]}  {_pad(who[r['id']], width)}  {saved}  {text}", file=out)
     print(f"{len(rows)} memories. Delete: delete NUMBER...   Rewrite: edit NUMBER NEW TEXT", file=out)
 
 

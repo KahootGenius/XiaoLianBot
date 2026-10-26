@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS memories (
     group_openid TEXT NOT NULL,
     member_openid TEXT NOT NULL,
     text TEXT NOT NULL,
-    created_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'fact'    -- fact: what they said about themselves; impression: the bot's view
 );
 CREATE INDEX IF NOT EXISTS idx_memories_member ON memories (group_openid, member_openid, id);
 """
@@ -47,6 +48,10 @@ class ChatStore:
             self.db.execute("PRAGMA journal_mode=WAL")
             self.db.execute("PRAGMA synchronous=NORMAL")
         self.db.executescript(SCHEMA)
+        if "kind" not in {row[1] for row in self.db.execute("PRAGMA table_info(memories)")}:
+            # A chat.db from before impressions: everything in it is a fact.
+            self.db.execute("ALTER TABLE memories ADD COLUMN kind TEXT NOT NULL DEFAULT 'fact'")
+            self.db.commit()
 
     def _one(self, sql, *args):
         return self.db.execute(sql, args).fetchone()
@@ -104,8 +109,20 @@ class ChatStore:
     # ---- memories
 
     def memories(self, group, member):
-        return self._all("SELECT * FROM memories WHERE group_openid = ? AND member_openid = ? ORDER BY id",
-                         group, member)
+        """A member's facts, oldest first. Their impression is separate: impression()."""
+        return self._all("SELECT * FROM memories WHERE group_openid = ? AND member_openid = ? AND kind = 'fact' "
+                         "ORDER BY id", group, member)
+
+    def impression(self, group, member):
+        return self._one("SELECT * FROM memories WHERE group_openid = ? AND member_openid = ? "
+                         "AND kind = 'impression'", group, member)
+
+    def set_impression(self, group, member, text, ts):
+        """One impression per member: the new one replaces the old."""
+        self._write("DELETE FROM memories WHERE group_openid = ? AND member_openid = ? AND kind = 'impression'",
+                    group, member)
+        self._write("INSERT INTO memories (group_openid, member_openid, text, created_at, kind) "
+                    "VALUES (?, ?, ?, ?, 'impression')", group, member, text, ts)
 
     def add_memory(self, group, member, text, ts):
         self._write("INSERT INTO memories (group_openid, member_openid, text, created_at) VALUES (?, ?, ?, ?)",
@@ -125,6 +142,7 @@ class ChatStore:
         self._write("UPDATE memories SET text = ? WHERE id = ?", text, memory_id)
 
     def clear_memories(self, group, member):
+        """Every memory of one member, their impression included."""
         return self._write("DELETE FROM memories WHERE group_openid = ? AND member_openid = ?",
                            group, member).rowcount
 

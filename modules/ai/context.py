@@ -9,8 +9,17 @@ with their nickname.
 """
 import math
 import re
+from modules.ai.memory import first_json
 
 
+# seekchat's 动态想象力: the pre-reply call names a register, which picks the reply's temperature,
+# and a length, which picks the length line in prompts/chat.yaml. seekchat's 奔放 is 1.3; at 1.3
+# deepseek-flash garbled about one reply in ten in rehearsals, at 1.15 none in twenty.
+# ai_chat.temperatures overrides any of them.
+REGISTERS = {"严谨": 0.6, "平衡": 1.0, "奔放": 1.15}
+LENGTHS = {"短": "length_short", "中": "length_medium", "长": "length_long"}
+LORE_TURNS = 4      # lore keywords are looked for in the last few turns...
+LORE_LIMIT = 3      # ...and at most this many entries ride along
 # A bracketed action in a reply, like "（歪了歪头）". Short, so a long aside isn't taken for one.
 _ACTION = re.compile(r"[（(]([^（）()\n]{1,20})[）)]")
 # CJK ideographs, kana and full-width forms each cost about a token.
@@ -61,6 +70,34 @@ def recent_actions(window, replies=5, limit=8):
         if replies == 0:
             break
     return found[:limit]
+
+
+def parse_register(raw):
+    """(register, length) from the pre-reply call's answer, each None when unreadable."""
+    data = first_json(raw)
+    register, length = str(data.get("register") or "").strip(), str(data.get("length") or "").strip()
+    return (register if register in REGISTERS else None), (length if length in LENGTHS else None)
+
+
+def parse_lore(entries):
+    """[(keywords, text)] from a style's lore lines, each "关键词、关键词：内容". Others are skipped."""
+    parsed = []
+    for entry in entries if isinstance(entries, list) else []:
+        entry = str(entry)
+        cuts = [i for i in (entry.find("："), entry.find(":")) if i > 0]
+        if not cuts:
+            continue
+        keys = [k.strip() for k in re.split(r"[、,，/|]", entry[:min(cuts)]) if k.strip()]
+        text = entry[min(cuts) + 1:].strip()
+        if keys and text:
+            parsed.append((keys, text))
+    return parsed
+
+
+def lore_for(entries, window):
+    """The lore whose keywords come up in the last few turns, in the style file's order."""
+    recent = "\n".join(turn["content"] for turn in window[-LORE_TURNS:])
+    return [text for keys, text in parse_lore(entries) if any(key in recent for key in keys)][:LORE_LIMIT]
 
 
 def compose(instructions, evidence, policy, title):

@@ -15,6 +15,7 @@ import re
 
 
 MAX_MEMORY_TEXT = 60        # characters per entry; longer facts are cut
+MAX_IMPRESSION_TEXT = 50    # the bot's one-line impression of a member
 MAX_ADDS_PER_TURN = 2
 OBSERVER_TEXT_BUDGET = 600  # characters of each side of the exchange the observer sees
 
@@ -39,6 +40,18 @@ def looks_sensitive(text):
     return bool(_SENSITIVE.search(text))
 
 
+def first_json(raw):
+    """The first {...} in a model's answer as a dict, or {} when there's none to read."""
+    match = re.search(r"\{.*\}", raw or "", re.S)
+    if not match:
+        return {}
+    try:
+        data = json.loads(match.group(0))
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def parse_observation(raw, known, max_adds=MAX_ADDS_PER_TURN):
     """(facts to add, 1-based numbers of entries to forget) from the observer's answer.
 
@@ -46,15 +59,7 @@ def parse_observation(raw, known, max_adds=MAX_ADDS_PER_TURN):
     "nothing" on its own. `known` are the entry texts the observer was shown.
     """
     facts, forget = [], []
-    match = re.search(r"\{.*\}", raw or "", re.S)
-    if not match:
-        return facts, forget
-    try:
-        data = json.loads(match.group(0))
-    except ValueError:
-        return facts, forget
-    if not isinstance(data, dict):
-        return facts, forget
+    data = first_json(raw)
     listed = lambda key: data.get(key) if isinstance(data.get(key), list) else []
     for fact in listed("facts"):
         if not isinstance(fact, str):
@@ -74,17 +79,19 @@ def parse_observation(raw, known, max_adds=MAX_ADDS_PER_TURN):
     return facts, forget
 
 
+def parse_impression(raw):
+    """The observer's updated impression of the speaker, or None to keep the old one."""
+    text = first_json(raw).get("impression")
+    if not isinstance(text, str):
+        return None
+    text = text.strip()[:MAX_IMPRESSION_TEXT]
+    return text if text and text.lower() not in ("null", "none") and not looks_sensitive(text) else None
+
+
 def parse_check(raw, count):
     """1-based numbers of the candidate notes the check kept, out of `count`.
     Anything unreadable keeps none: better a missed note than a joke taken as fact."""
-    match = re.search(r"\{.*\}", raw or "", re.S)
-    if not match:
-        return set()
-    try:
-        data = json.loads(match.group(0))
-    except ValueError:
-        return set()
-    keep = data.get("keep") if isinstance(data, dict) else None
+    keep = first_json(raw).get("keep")
     if not isinstance(keep, list):
         return set()
     numbers = set()
@@ -102,3 +109,9 @@ def evidence(title, members):
     """The memory block for a request: `members` is [(nickname, [entry texts])]."""
     blocks = [f"{name}：\n" + "\n".join(f"- {text}" for text in texts) for name, texts in members if texts]
     return f"{title}\n" + "\n".join(blocks) if blocks else ""
+
+
+def impressions(title, members):
+    """The impressions block: `members` is [(nickname, impression or None)]."""
+    lines = [f"- {name}：{text}" for name, text in members if text]
+    return f"{title}\n" + "\n".join(lines) if lines else ""

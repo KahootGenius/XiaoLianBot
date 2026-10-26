@@ -28,15 +28,18 @@ secret: "YOUR_APP_SECRET"
 #   api_key: "YOUR_DEEPSEEK_API_KEY"
 #   qa_api_key: "YOUR_QA_API_KEY"   # optional, defaults to api_key
 #   model: deepseek-flash            # optional; "deepseek-chat" is being retired
-#   helper_model: deepseek-flash     # optional: summaries and memory notes; defaults to model
+#   helper_model: deepseek-flash     # optional: summaries, memory notes and checks, and the judgement
+#                                    # before each reply; stays deepseek-flash even if model changes
 #   thinking: false                  # think before answering: slower and dearer, off by default
-#   temperature: 1.3                 # chat replies only: higher varies more; null = DeepSeek's default (1.0)
+#   temperature: 1.0                 # replies, when ai_chat.dynamic_temperature is off or its judgement fails
 
 # --- Optional: how AI chat remembers (needs the deepseek section above) ---
 # In each group everyone who @s the bot shares one conversation. Recent chat
 # is sent with every request; older chat is folded into a rolling summary;
 # after each reply the bot notes what the speaker said about themselves.
 # Only messages that @ the bot and its replies are stored, never other chat.
+# Before each reply a cheap call judges how it should sound (严谨/平衡/奔放) and
+# how long it should be; that picks the temperature and a length line.
 # The rules around the persona are in prompts/chat.yaml.
 # ai_chat:
 #   context_tokens: 3000     # recent chat sent with each request (estimated tokens)
@@ -47,6 +50,10 @@ secret: "YOUR_APP_SECRET"
 #   memory_check: true       # check each new memory with one more cheap call, so jokes aren't kept
 #   digest_comment: true     # end the weekly digest with a short in-character comment
 #   game_state: true         # tell the bot today's teams, birthdays and open poll (teams.yaml hide_from_ai)
+#   dynamic_temperature: true    # judge each reply's temperature and length first (one more cheap call)
+#   temperatures: {严谨: 0.6, 平衡: 1.0, 奔放: 1.15}   # the temperature for each judgement
+#   overhear: 0              # also send the last N messages that didn't @ the bot (kept in memory only,
+#                            # 30 minutes at most). 0 = off. Read the privacy policy's note first.
 #   # Who particular members are, which the bot treats as true. Key: their member_openid
 #   # (@机器人 /我的ID; one line per person, as the ID is the same in every group). It goes
 #   # by the ID, so copying someone's nickname doesn't make you them. See docs/CUSTOMIZING.md.

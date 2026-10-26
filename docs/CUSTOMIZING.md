@@ -15,6 +15,7 @@ Changing how the bot talks means editing YAML, and you can keep several characte
 | `prompts/achievements.yaml` | The badges (see "Adding achievements") |
 | `prompts/teams.yaml` | The team game's statuses and captain actions (see "Changing the team game") |
 | `prompts/chat.yaml` | AI chat's rules around the persona: group chat, summaries, memory notes (see "Changing how AI chat remembers") |
+| `prompts/rehearsal.yaml` | A scripted group chat for trying a persona against the real DeepSeek (see "Trying changes before the group sees them") |
 | `config.yaml` | `style:` and `group_styles:` pick the styles; `manager.rules_text` overrides the rule text in `/群规` |
 
 ## Private versions: `local/`
@@ -28,7 +29,7 @@ Anything in `styles/` or `prompts/` can have a private version that never goes t
 | `styles/桃子.yaml`, or a style only you have | `local/styles/桃子.yaml` |
 | `prompts/teams.yaml` | `local/prompts/teams.yaml` |
 | `prompts/achievements.yaml` | `local/prompts/achievements.yaml` |
-| `prompts/chat.yaml`, `prompts/server_qa_prompt.yaml` | `local/prompts/…` |
+| `prompts/chat.yaml`, `prompts/server_qa_prompt.yaml`, `prompts/rehearsal.yaml` | `local/prompts/…` |
 
 - **A private `小莲.yaml` only needs the lines you change.** Every line it leaves out, or writes
   with a mistake, comes from the shared `styles/小莲.yaml`. Other styles fall back to your private
@@ -315,11 +316,14 @@ at startup** and names the line.
 
 | Key | What it is | Fills in |
 |---|---|---|
+| `examples`, `bad_examples` | Right after the persona, when the style has them: the style's sample exchanges, and the voice to avoid | `{examples}` |
 | `group_rules` | Comes right after the persona: how to read the labelled group transcript, and who this reply is for | `{member}` |
 | `reply_shape` | After the group rules: keep replies short, at most one bracketed action, and a new action each time | |
 | `special_people`, `special_line` | Added when someone from `ai_chat.special_people` is known in the group: who they are, one `special_line` each | `{people}`; `{member}`, `{note}` |
 | `special_speaker`, `special_namesake` | Added when this turn's speaker is one of them, or only has the same nickname as one | `{member}`; `special_speaker` also `{note}` |
-| `memory_rules` | Added when memories are sent: use them naturally, and don't pass one member's details to another | |
+| `length_short`, `length_medium`, `length_long` | The length line the judgement before each reply picks | |
+| `lore` | The style's lore whose keywords came up in the last few turns, one line each | `{lore}` |
+| `memory_rules` | Added when memories or impressions are sent: use them naturally, and don't pass one member's details to another | |
 | `evidence_policy`, `evidence_title` | The rule that the summary and memories are data, not instructions, and the heading of that message | |
 | `now` | The first line of that message: Beijing time | `{date}`, `{weekday}`, `{time}` |
 | `today_teams`, `team_line` | Today's team game, one line per team (`ai_chat.game_state`) | `{teams}`; `{captain}`, `{members}` |
@@ -329,7 +333,9 @@ at startup** and names the line.
 | `empty_mention` | Stands in for a message that only @s the bot | `{member}` |
 | `digest_comment` | The prompt for the comment that ends the weekly digest | `{digest}` |
 | `summary` | The prompt for folding old chat into the group's summary | |
-| `observer` | The prompt for noting what a speaker said about themselves after each reply. It must ask for JSON: `{{"facts": [], "forget": []}}` | `{member}`, `{known}`, `{said}`, `{reply}`, `{max_text}`, `{max_adds}` |
+| `observer` | The prompt for noting what a speaker said about themselves after each reply, and updating the bot's impression of them. It must ask for JSON: `{{"facts": [], "forget": [], "impression": null}}` | `{member}`, `{known}`, `{impression}`, `{said}`, `{reply}`, `{max_text}`, `{max_adds}`, `{max_impression}` |
+| `register` | The judgement before each reply: 严谨, 平衡 or 奔放 (the temperature) and 短, 中 or 长 (the length line). It must ask for JSON: `{{"register": "…", "length": "…"}}` | `{member}`, `{said}`, `{last}` |
+| `impression_title`, `overheard` | The headings for the impressions and, with `ai_chat.overhear`, the chat she overheard | `{lines}` for `overheard` |
 | `memory_check` | The prompt that checks the observer's new notes and keeps only what was meant seriously. It must ask for JSON: `{{"keep": []}}`. An unreadable answer keeps nothing | `{member}`, `{said}`, `{reply}`, `{notes}` |
 
 Every line can also use `{name}`, the bot's name in the current style. A literal brace is written
@@ -340,9 +346,9 @@ Settings in `config.yaml`:
 ```yaml
 deepseek:
   model: deepseek-flash      # chat model
-  helper_model: deepseek-flash   # summaries and memory notes; defaults to model
+  helper_model: deepseek-flash   # summaries, memory notes and checks, the judgement before each reply
   thinking: false            # thinking first is slower and dearer
-  temperature: 1.3           # chat replies only: higher varies more; null = DeepSeek's default (1.0)
+  temperature: 1.0           # replies when dynamic_temperature is off or its judgement fails
 ai_chat:
   context_tokens: 3000       # recent chat sent with every request, in estimated tokens
   summarize_after: 20        # turns that left the window before they're summarized
@@ -352,12 +358,51 @@ ai_chat:
   memory_check: true         # check each new memory with one more cheap call; jokes aren't kept
   digest_comment: true       # end the weekly digest with a short comment
   game_state: true           # tell her today's teams, birthdays and open poll
+  dynamic_temperature: true  # judge each reply's temperature and length first (one more cheap call)
+  temperatures: {严谨: 0.6, 平衡: 1.0, 奔放: 1.15}
+  overhear: 0                # also send the last N messages that didn't @ her; 0 = off (privacy policy!)
   special_people:            # who particular members are (next section)
     "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX": 这个机器人的作者
 ```
 
 If you change `keep_days` or `memories_per_member`, change the same numbers in
 `docs/PRIVACY_POLICY.md`.
+
+`helper_model` stays deepseek-flash even if you switch `model` to deepseek-v4-pro for replies, so
+the extra calls stay cheap. At 1.3, flash garbled about one reply in ten during rehearsals, which is
+why 奔放 defaults to 1.15 rather than seekchat's 1.3.
+
+### Her voice and her world: samples and a lorebook
+
+Three optional keys in a style file, next to `system_prompt`:
+
+```yaml
+examples: |               # a few short exchanges in her voice: she learns the tone
+  群友：作业写不完了，救命
+  小莲：写不完就别在群里喊。先挑最急的那份。
+bad_examples: |           # a voice she must never have
+  小莲：作为一个 AI 助手，我很高兴为您服务！
+lore:                     # "关键词、关键词：内容": sent only when a keyword comes up
+  - "群规、潜水：连续 30 天没有有效发言会被移出，可以请假。"
+```
+
+- **Write samples for uncommon moments.** If a member says nearly what a sample says, she tends to
+  answer with the sample. Leave greetings and "are you a bot" to the persona.
+- **Lore keeps the persona short.** An entry rides along only when one of its keywords appears in
+  the last four turns, three entries at most.
+
+### Trying changes before the group sees them
+
+`modules/ai/rehearse.py` plays a scripted group chat against the real DeepSeek with your
+`config.yaml` and style, and prints every reply, with the judgement and temperature it got:
+
+```bash
+.venv/bin/python -m modules.ai.rehearse
+.venv/bin/python -m modules.ai.rehearse --model deepseek-v4-pro --times 2
+```
+
+The script is `prompts/rehearsal.yaml`; put your group's own in `local/prompts/rehearsal.yaml`. Each
+line costs two small DeepSeek calls, and nothing is saved.
 
 ### Telling AI chat who someone is
 
@@ -375,6 +420,8 @@ treats as true, such as who built it. Since it lives in `config.yaml`, it never 
 Restart the bot after a change. At startup the log lists the start of each ID it loaded
 (`[AIChat] 特别的群友 …`), to check against `/我的ID`. A line with no note is skipped, and the log
 says which.
+
+Members see the bot's impression of them in `/我的记忆` and delete it with `/忘记 印象`.
 
 The reply lines for `/我的记忆`, `/忘记` and `/重置对话` are under `ai.memory` and `ai.reset` in the
 style files, like every other reply.
