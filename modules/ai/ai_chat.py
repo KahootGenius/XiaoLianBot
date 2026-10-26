@@ -262,7 +262,11 @@ class AIChatModule:
             return await self.handle_server_qa(message)
         word = next((w for w in self.commands if text.startswith(w)), None)
         if word is not None:
-            await self.commands[word](message, text[len(word):].strip())
+            try:
+                await self.commands[word](message, text[len(word):].strip())
+            except Exception as e:
+                _log.error(f"[AIChat] 指令 {word} 出错: {e}")
+                await self._reply(message, t("common.error", command=word, error=e))
             return True
         await self.chat(message, text)
         return True

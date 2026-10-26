@@ -27,6 +27,10 @@ class RichGroupMessage(GroupMessage):
     # The bot's own ids (robot id and appid), filled in by main.py on_ready, so
     # its @mention can be recognised inside GROUP_MESSAGE_CREATE content.
     self_ids = set()
+    # The bot's QQ name, also from on_ready. "@小蓮女神" typed or pasted as plain text,
+    # not picked from QQ's member list, arrives as text rather than as a mention, and
+    # only through GROUP_MESSAGE_CREATE. At the start of a message it still counts.
+    self_names = set()
 
     def __init__(self, api, event_id, data, event_type):
         super().__init__(api, event_id, data)
@@ -77,13 +81,23 @@ class RichGroupMessage(GroupMessage):
         ids = {mention.get(k) for k in ("id", "member_openid", "user_openid")}
         return bool(ids & self.self_ids)
 
+    def _after_typed_name(self, text):
+        """`text` after a leading "@<bot name>" typed as plain text, or None if it doesn't start so."""
+        text = text.lstrip()
+        for name in self.self_names:
+            if name and text.startswith(f"@{name}"):
+                return text[len(name) + 1:].strip()
+        return None
+
     @property
     def mentions_bot(self):
         if self.event_type == "GROUP_AT_MESSAGE_CREATE":
             return True
         if any(self._mention_is_me(m) for m in self.mention_list if m.get("scope") != "all"):
             return True
-        return any(mark in self.self_ids for mark in MENTION_MARK_RE.findall(self.raw_content))
+        if any(mark in self.self_ids for mark in MENTION_MARK_RE.findall(self.raw_content)):
+            return True
+        return self._after_typed_name(self.raw_content) is not None
 
     @property
     def mentioned_members(self):
@@ -110,7 +124,9 @@ class RichGroupMessage(GroupMessage):
                 return ""
             return f"@{names.get(target) or '某人'}"
 
-        return MENTION_MARK_RE.sub(replace, self.raw_content).strip()
+        text = MENTION_MARK_RE.sub(replace, self.raw_content).strip()
+        after = self._after_typed_name(text)
+        return text if after is None else after
 
 
 def install():

@@ -197,6 +197,14 @@ class MemoryTest(AIChatTestCase):
         self.assertEqual(self.ai_client.requests("check"), [])
         self.assertEqual([m["text"] for m in self.store.memories(G, "A")], ["喜欢猫"])
 
+    async def test_a_command_that_fails_says_so(self):
+        self.make()
+
+        def broken(*args):
+            raise RuntimeError("database is locked")
+        self.store.memories = broken
+        self.assertIn("/我的记忆 出错了：database is locked", await self.say("A", "/我的记忆"))
+
     async def test_memory_can_be_switched_off(self):
         self.make(memory=False)
         await self.say("A", "我在准备考研")

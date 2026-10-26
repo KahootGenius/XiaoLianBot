@@ -43,6 +43,8 @@ common:
   date: "{month}月{day}日"
   not_admin: 这个指令只有管理员能用哦～
   error: "{command} 出错了：{error}"
+  # 回复没能发出去时（多半是 QQ 没收下这段文字）补发的一句
+  send_failed: 刚才那条回复没发出去，可能被 QQ 拦下了，换个说法再试试～
   # 回复下面的按钮那条小消息（需要腾讯为机器人开通按钮，没开通时不会出现）
   buttons_hint: 点一下直接发送 👇
   buttons_unsupported: 当前 QQ 版本不支持这个按钮，请升级后再试

@@ -182,6 +182,25 @@ class ButtonsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([c["msg_type"] for c in calls], [0])               # config.yaml: buttons: false
 
 
+class UndeliverableReplyTest(unittest.IsolatedAsyncioTestCase):
+    async def test_a_refused_reply_is_followed_by_a_short_notice(self):
+        calls = []
+
+        async def post_group_message(**kwargs):
+            calls.append(kwargs)
+            if kwargs["content"] == "被拦下的话":
+                raise RuntimeError("40054017 消息内容不合规")
+        gateway = QQGateway(SimpleNamespace(post_group_message=post_group_message))
+        with self.assertRaises(RuntimeError):                  # the caller still hears about it
+            await gateway.send("G", "被拦下的话", reply_to="m1")
+        self.assertEqual([(c["content"], c.get("msg_seq")) for c in calls],
+                         [("被拦下的话", 1), ("被拦下的话", None), ("刚才那条回复没发出去，可能被 QQ 拦下了，换个说法再试试～", 2)])
+        calls.clear()
+        with self.assertRaises(RuntimeError):                  # no message to reply to: no notice
+            await gateway.send("G", "被拦下的话")
+        self.assertEqual(len(calls), 1)
+
+
 class DigestCommentTest(ManagerTestCase):
     async def test_the_digest_ends_with_a_comment(self):
         self.make(FakeGateway())

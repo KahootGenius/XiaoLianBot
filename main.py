@@ -87,6 +87,9 @@ class MyClient(botpy.Client):
         # Lets RichGroupMessage recognise the bot's own @mention inside
         # every-message events.
         events.RichGroupMessage.self_ids.update({str(self.robot.id), str(config.get("appid"))})
+        # ...and "@小蓮女神" typed as plain text, which QQ doesn't send as a mention.
+        if self.robot.name:
+            events.RichGroupMessage.self_names.add(str(self.robot.name))
         # READY can arrive again after a reconnect; background jobs must only start once.
         if self._started:
             return

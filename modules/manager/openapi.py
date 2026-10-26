@@ -73,7 +73,22 @@ class QQGateway:
                 return result
             except Exception as e:
                 _log.warning(f"[Manager] 被动回复失败，改为主动发送: {e}")
-        return await self.api.post_group_message(group_openid=group_openid, msg_type=0, content=content)
+        try:
+            return await self.api.post_group_message(group_openid=group_openid, msg_type=0, content=content)
+        except Exception as e:
+            if reply_to:
+                await self._tell_failed(group_openid, reply_to, e)
+            raise
+
+    async def _tell_failed(self, group_openid, reply_to, error):
+        """Neither the reply nor a proactive message got through, usually because QQ refused
+        the text itself. A short notice beats silence; the caller still gets the error to log."""
+        _log.warning(f"[Manager] 回复没能发出，告诉发消息的人: {error}")
+        try:
+            await self.api.post_group_message(group_openid=group_openid, msg_type=0, content=t("common.send_failed"),
+                                              msg_id=reply_to, msg_seq=self._next_seq(reply_to))
+        except Exception as e:
+            _log.warning(f"[Manager] 连提示也没发出去: {e}")
 
     @staticmethod
     def keyboard(rows):

@@ -45,6 +45,20 @@ class RichGroupMessageTest(unittest.TestCase):
         m = RichGroupMessage(None, "evt", payload, "GROUP_MESSAGE_CREATE")
         self.assertFalse(m.mentions_bot)
 
+    def test_a_typed_at_name_counts_when_it_starts_the_message(self):
+        """"@小蓮女神" typed or pasted as text, not picked from the member list, isn't a QQ mention."""
+        RichGroupMessage.self_names.add("小蓮女神")
+        self.addCleanup(RichGroupMessage.self_names.discard, "小蓮女神")
+        for content, expected in (("@小蓮女神 /我的记忆", "/我的记忆"), ("  @小蓮女神/我的记忆", "/我的记忆"),
+                                  ("@小蓮女神 你好", "你好")):
+            m = RichGroupMessage(None, "evt", dict(PAYLOAD, mentions=[], content=content), "GROUP_MESSAGE_CREATE")
+            self.assertTrue(m.mentions_bot, content)
+            self.assertEqual(m.content, expected)
+        for content in ("大家看 @小蓮女神 好可爱", "@小红 你好", "@小莲 你好"):        # not at the start / not her name
+            m = RichGroupMessage(None, "evt", dict(PAYLOAD, mentions=[], content=content), "GROUP_MESSAGE_CREATE")
+            self.assertFalse(m.mentions_bot, content)
+            self.assertEqual(m.content, content)
+
 
 if __name__ == "__main__":
     unittest.main()
