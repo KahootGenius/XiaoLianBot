@@ -1,9 +1,10 @@
 """SQLite persistence for AI chat (data/chat.db).
 
-Only conversations with the bot are stored: messages that @ it and its own
-replies, never other group chat. Raw turns are kept for ai_chat.keep_days
-(7 by default). The rolling summary and members' memories stay until they are
-reset or deleted. See docs/PRIVACY_POLICY.md.
+By default only conversations with the bot are stored: messages that @ it and
+its own replies. With ai_chat.hear_all the rest of the group's chat is stored
+too, marked as not addressed to the bot. Raw turns are kept for
+ai_chat.keep_days (7 by default). The rolling summary and members' memories
+stay until they are reset or deleted. See docs/PRIVACY_POLICY.md.
 """
 import os
 import sqlite3
@@ -17,7 +18,8 @@ CREATE TABLE IF NOT EXISTS turns (
     name TEXT NOT NULL,              -- the speaker's nickname at the time
     role TEXT NOT NULL,              -- user | assistant
     content TEXT NOT NULL,
-    ts INTEGER NOT NULL
+    ts INTEGER NOT NULL,
+    addressed INTEGER NOT NULL DEFAULT 1    -- 0: group chat that didn't @ the bot (ai_chat.hear_all)
 );
 CREATE INDEX IF NOT EXISTS idx_turns_group ON turns (group_openid, id);
 CREATE TABLE IF NOT EXISTS summaries (
@@ -48,10 +50,12 @@ class ChatStore:
             self.db.execute("PRAGMA journal_mode=WAL")
             self.db.execute("PRAGMA synchronous=NORMAL")
         self.db.executescript(SCHEMA)
-        if "kind" not in {row[1] for row in self.db.execute("PRAGMA table_info(memories)")}:
-            # A chat.db from before impressions: everything in it is a fact.
-            self.db.execute("ALTER TABLE memories ADD COLUMN kind TEXT NOT NULL DEFAULT 'fact'")
-            self.db.commit()
+        # Columns added since chat.db first shipped; older files gain them with their old meaning.
+        for table, column, definition in (("memories", "kind", "TEXT NOT NULL DEFAULT 'fact'"),
+                                          ("turns", "addressed", "INTEGER NOT NULL DEFAULT 1")):
+            if column not in {row[1] for row in self.db.execute(f"PRAGMA table_info({table})")}:
+                self.db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+                self.db.commit()
 
     def _one(self, sql, *args):
         return self.db.execute(sql, args).fetchone()
@@ -66,9 +70,10 @@ class ChatStore:
 
     # ---- turns
 
-    def add_turn(self, group, member, name, role, content, ts):
-        return self._write("INSERT INTO turns (group_openid, member_openid, name, role, content, ts) "
-                           "VALUES (?, ?, ?, ?, ?, ?)", group, member, name, role, content, ts).lastrowid
+    def add_turn(self, group, member, name, role, content, ts, addressed=True):
+        return self._write("INSERT INTO turns (group_openid, member_openid, name, role, content, ts, addressed) "
+                           "VALUES (?, ?, ?, ?, ?, ?, ?)", group, member, name, role, content, ts,
+                           int(addressed)).lastrowid
 
     def recent_turns(self, group, limit=300):
         """The group's newest turns, oldest first."""

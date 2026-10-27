@@ -1,7 +1,8 @@
 """AI chat with DeepSeek, with a memory of the conversation and of each member.
 
 Adapted from seekchat (Desktop/ai). In each group, everyone who @s the bot
-shares one conversation:
+shares one conversation; with ai_chat.hear_all the rest of the group's chat
+joins it too, marked as not addressed to the bot:
 - context window: the newest turns that fit ai_chat.context_tokens, each
   member's line labelled with their nickname;
 - rolling summary: once ai_chat.summarize_after turns have scrolled out of
@@ -25,7 +26,6 @@ import asyncio
 import functools
 import os
 import re
-from collections import deque
 from datetime import datetime
 import pytz
 import yaml
@@ -68,7 +68,6 @@ PROMPT_FIELDS = {
     "summary_prefix": set(),
     "memory_title": set(),
     "impression_title": set(),
-    "overheard": {"lines"},
     "empty_mention": {"member"},
     "summary": set(),
     "digest_comment": {"digest"},
@@ -80,8 +79,7 @@ PROMPT_FIELDS = {
 COMMANDS = ("/我的记忆", "/忘记", "/重置对话", "/服务器QA")
 FORGET_ALL_WORDS = ("全部", "所有", "all")
 FORGET_IMPRESSION_WORDS = ("印象",)
-OVERHEAR_MINUTES = 30       # overheard chat older than this is stale
-OVERHEARD_TEXT = 100        # characters of each overheard message
+HEARD_TEXT = 300            # characters kept of each message that didn't @ the bot (hear_all)
 MEMORY_SPEAKERS = 5         # members whose memories ride along: the speaker plus recent ones
 DIGEST_COMMENT_LIMIT = 120  # characters; the prompt asks for 60
 DEFAULT_TEMPERATURE = 1.0   # chat replies when dynamic_temperature is off or its judgement fails
@@ -159,10 +157,9 @@ class AIChatModule:
         picked = chat.get("temperatures") if isinstance(chat.get("temperatures"), dict) else {}
         self.register_temperatures = {register: float(picked.get(register, value))
                                       for register, value in context.REGISTERS.items()}
-        # Messages that don't @ the bot, heard and kept in memory only (0 = off; see the privacy policy).
-        self.overhear = max(0, int(chat.get("overhear", 0) or 0))
-        self.heard = {}             # group -> deque of (ts, member, nickname, text)
-        self.replied_at = {}        # group -> when the bot last replied there
+        # Every group message joins her context, not just the ones that @ her (see the privacy policy).
+        self.hear_all = bool(chat.get("hear_all", False))
+        self.heard_since = {}       # group -> messages heard since the last summary check
         # Today's team game and birthdays/poll, set by main.py: group -> what teams.today_for_ai and
         # social.today_for_ai return. Without them the bot only knows the time.
         self.teams_today = self.social_today = None
@@ -320,22 +317,21 @@ class AIChatModule:
         return "\n".join(lines)
 
     def hear(self, message):
-        """A group message that doesn't @ the bot. With ai_chat.overhear it's kept, in memory only,
-        so the bot's next reply in that group knows what was just said around it."""
-        if not (self.enabled and self.overhear) or message.is_bot:
+        """A group message that doesn't @ the bot. With ai_chat.hear_all it joins the group's
+        conversation, marked as not addressed to her, so her context has the whole chat."""
+        if not (self.enabled and self.hear_all) or message.is_bot or not message.member_openid:
             return
         text = re.sub(r"<[^>]{0,200}>", "", message.content or "").strip()   # no mention or face tags
         if not text or text.startswith("/"):
             return
-        heard = self.heard.setdefault(message.group_openid, deque(maxlen=self.overhear))
-        heard.append((self._now(), message.member_openid, message.nickname or t("common.someone"),
-                      text[:OVERHEARD_TEXT]))
-
-    def _overheard(self, group):
-        """What was said in the group without @-ing the bot since its last reply there, or None."""
-        since = max(self.replied_at.get(group, 0), self._now() - OVERHEAR_MINUTES * 60)
-        lines = [f"{nickname}：{text}" for ts, _, nickname, text in self.heard.get(group, ()) if ts > since]
-        return render(self.prompts["overheard"], lines="\n".join(lines)) if lines else None
+        group = message.group_openid
+        self.store.add_turn(group, message.member_openid, message.nickname or t("common.someone"), "user",
+                            text[:HEARD_TEXT], self._now(), addressed=False)
+        # A busy group shouldn't wait for the next @ before its old chat goes into the summary.
+        self.heard_since[group] = self.heard_since.get(group, 0) + 1
+        if self.heard_since[group] >= self.summarize_after:
+            self.heard_since[group] = 0
+            self._spawn(self.maybe_summarize(group))
 
     def _impression(self, group, member):
         row = self.store.impression(group, member)
@@ -356,7 +352,7 @@ class AIChatModule:
                         length and render(self.prompts[context.LENGTHS[length]]),
                         self._special_people(group, member, member_name, window),
                         lore and render(self.prompts["lore"], lore="\n".join(f"- {text}" for text in lore))]
-        evidence = [self._today(group, window), self._overheard(group)]
+        evidence = [self._today(group, window)]
         summary = self.store.summary(group)
         if summary:
             evidence.append(f"{render(self.prompts['summary_prefix'])}\n{summary['summary']}")
@@ -411,7 +407,6 @@ class AIChatModule:
         if not reply:
             return
         await self._reply(message, reply)
-        self.replied_at[group] = self._now()
         self.store.add_turn(group, None, current().name, "assistant", reply, self._now())
         if self.memory_on and member:
             self._spawn(self.observe(group, member, name, said, reply))
@@ -574,7 +569,7 @@ class AIChatModule:
             await self._reply(message, t("common.not_admin"))
             return
         self.store.reset_chat(message.group_openid)
-        self.heard.pop(message.group_openid, None)
+        self.heard_since.pop(message.group_openid, None)
         self._deleted(message.group_openid)
         await self._reply(message, t("ai.reset"))
 
@@ -603,16 +598,12 @@ class AIChatModule:
     def forget_member(self, group, member):
         if self.enabled:
             self.store.forget_member(group, member)
-            heard = self.heard.get(group)
-            if heard:
-                self.heard[group] = deque((h for h in heard if h[1] != member), maxlen=heard.maxlen)
             self._deleted(group)
 
     def forget_group(self, group):
         if self.enabled:
             self.store.forget_group(group)
-            self.heard.pop(group, None)
-            self.replied_at.pop(group, None)
+            self.heard_since.pop(group, None)
             self._deleted(group)
 
     async def housekeeping(self):
@@ -631,7 +622,7 @@ class AIChatModule:
         _log.info(f"[AIChat] AI 聊天：模型 {self.model}，上下文约 {self.context_tokens} token，"
                   f"长期记忆{'开启' if self.memory_on else '关闭'}，聊天记录保留 {self.keep_days} 天，"
                   f"回复温度{'每次自动判断' if self.dynamic else f'固定 {self.temperature}'}，"
-                  f"{f'带上群里最近 {self.overhear} 条没有 @ 的聊天' if self.overhear else '只看 @ 的消息'}")
+                  f"{'群里所有的聊天都进上下文' if self.hear_all else '只看 @ 的消息'}")
         if self.special:
             # The start of each ID, to check against what /我的ID says.
             _log.info(f"[AIChat] 特别的群友 {len(self.special)} 位，ID 开头：{'、'.join(o[:8] for o in self.special)}")

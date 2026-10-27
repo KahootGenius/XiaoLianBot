@@ -106,8 +106,9 @@ seekchat (`Desktop/ai`):
 - **Her voice and world come from the style.** Optional `examples` and `bad_examples` teach her
   tone; `lore` entries ride along only when their keywords come up. Try changes first with
   `python -m modules.ai.rehearse`, which plays a scripted chat against the real DeepSeek.
-- **She can overhear (off by default).** With `ai_chat.overhear`, the last few messages that didn't
-  @ her go along with the next reply, kept in memory only.
+- **She can follow the whole group (off by default).** With `ai_chat.hear_all`, every message in a
+  managed group joins her conversation, marked 「（没@你）」 when it wasn't addressed to her, and
+  the summary covers it. It stores everyone's chat for 7 days: update the privacy notice first.
 - **She knows who's who.** `ai_chat.special_people` in `config.yaml` tells her facts about
   particular members, such as who built her. She recognises them by their ID, so someone who copies
   their nickname can't pass for them.
@@ -116,7 +117,8 @@ seekchat (`Desktop/ai`):
   - Only facts members state about themselves are kept, and nothing that looks like a phone number,
     ID, account or password.
 - **Privacy:**
-  - Only messages that @ her, and her replies, are stored, for 7 days.
+  - Only messages that @ her, and her replies, are stored, for 7 days (the whole group's chat with
+    `ai_chat.hear_all`).
   - Groups never share a thread or memories.
   - Admins can wipe a group's conversation with `/重置对话`. `/删除数据 @某人` also deletes that
     person's chat and memories.

@@ -33,8 +33,12 @@ def estimate_tokens(text):
 
 
 def turn_text(turn):
-    """How a stored turn reads in the transcript: members' lines carry their nickname."""
-    return turn["content"] if turn["role"] == "assistant" else f"{turn['name']}：{turn['content']}"
+    """How a stored turn reads in the transcript: members' lines carry their nickname, and the
+    group chat that didn't @ the bot (ai_chat.hear_all) is marked so."""
+    if turn["role"] == "assistant":
+        return turn["content"]
+    heard = "addressed" in turn.keys() and not turn["addressed"]
+    return f"{turn['name']}（没@你）：{turn['content']}" if heard else f"{turn['name']}：{turn['content']}"
 
 
 def select_window(turns, budget):

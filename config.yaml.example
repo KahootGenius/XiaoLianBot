@@ -37,7 +37,7 @@ secret: "YOUR_APP_SECRET"
 # In each group everyone who @s the bot shares one conversation. Recent chat
 # is sent with every request; older chat is folded into a rolling summary;
 # after each reply the bot notes what the speaker said about themselves.
-# Only messages that @ the bot and its replies are stored, never other chat.
+# Only messages that @ the bot and its replies are stored, unless hear_all is on.
 # Before each reply a cheap call judges how it should sound (严谨/平衡/奔放) and
 # how long it should be; that picks the temperature and a length line.
 # The rules around the persona are in prompts/chat.yaml.
@@ -52,8 +52,8 @@ secret: "YOUR_APP_SECRET"
 #   game_state: true         # tell the bot today's teams, birthdays and open poll (teams.yaml hide_from_ai)
 #   dynamic_temperature: true    # judge each reply's temperature and length first (one more cheap call)
 #   temperatures: {严谨: 0.6, 平衡: 1.0, 奔放: 1.15}   # the temperature for each judgement
-#   overhear: 0              # also send the last N messages that didn't @ the bot (kept in memory only,
-#                            # 30 minutes at most). 0 = off. Read the privacy policy's note first.
+#   hear_all: false          # true: every message in a managed group joins her conversation, not just
+#                            # @s. Stores everyone's chat for keep_days; read the privacy policy first.
 #   # Who particular members are, which the bot treats as true. Key: their member_openid
 #   # (@机器人 /我的ID; one line per person, as the ID is the same in every group). It goes
 #   # by the ID, so copying someone's nickname doesn't make you them. See docs/CUSTOMIZING.md.

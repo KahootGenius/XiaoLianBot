@@ -113,7 +113,7 @@ class MyClient(botpy.Client):
             if message.mentions_bot:
                 await self._handle_command(message)
             else:
-                self.ai_chat_module.hear(message)       # only kept with ai_chat.overhear
+                self.ai_chat_module.hear(message)       # only kept with ai_chat.hear_all
 
     async def on_group_at_message_create(self, message):
         with STYLES.scope(message.group_openid):

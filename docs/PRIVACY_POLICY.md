@@ -30,7 +30,7 @@
 3. **群消息**
    - **未开启群管理的群**：仅处理用户主动 @ 本机器人的消息，**不读取、不存储**群内其他聊天记录。
    - @ 本机器人与它聊天的消息，按下面第 6 项保存。
-   - **开启群管理的群**：本机器人会读取群内的每一条消息，**仅用于判断是否属于群规所说的「有效发言」**。我们**只保存以下元数据**，不保存聊天记录：
+   - **开启群管理的群**：本机器人会读取群内的每一条消息，**仅用于判断是否属于群规所说的「有效发言」**。群管理功能**只保存以下元数据**，不保存聊天记录（运营者另外开启「AI 看全部聊天」时，AI 对话功能会保存聊天内容，见第 6 项）：
      - 消息 ID、发送者标识、发送时间；
      - 这条消息是否计为有效发言，以及判断类别（例如「表情」「签到」「复读」）；
      - 每位成员**最近一次有效发言的前 30 个字**，仅用于成员通过 `/我的状态` 查看自己的记录（群管理员可在配置中关闭）。
@@ -47,7 +47,7 @@
    - 本机器人会根据成员**亲口告诉它的、关于自己的**事情，整理少量长期记忆（每人最多 12 条，每条不超过 60 字），用于之后的聊天，例如记得某人在准备考试。不记录手机号、住址、证件号、账号密码等敏感信息。
    - 本机器人还会给每位和它聊过天的成员记一句「印象」（不超过 50 字），例如它怎么称呼对方、两人之间的玩笑，用于之后的聊天。
    - 每个群的对话和记忆分开保存，在一个群里说的话不会出现在另一个群。
-   - 若运营者开启「顺便听到的聊天」：群里最近几条没有 @ 本机器人的消息（含昵称）只暂存在内存中、不写入存储，最多保留 30 分钟，有人 @ 本机器人时一并用于生成回复。
+   - 若运营者开启「AI 看全部聊天」（仅在开启群管理的群里有效）：群里**所有**的文字消息（含发言人的昵称，不含指令）也会作为 AI 对话记录保存，和上面的对话记录一样保留 7 天、并入群聊总结，用于让它了解群里在聊什么。
 
 7. **互动功能**
    - 成员**自己登记**的生日（只有月和日），用于当天祝福和 `/本月生日`。
@@ -73,7 +73,7 @@
 
 ### 三、第三方共享
 
-**AI 对话功能（含 `/服务器QA`）：** 当用户使用该功能时，以下内容将被传输至 **DeepSeek**（api.deepseek.com）以生成回复：用户发送的**消息内容**；该群最近与机器人的对话（含发言人的昵称）和群聊总结；参与对话的成员的长期记忆和本机器人对他们的印象；若运营者开启「顺便听到的聊天」，还包括群里最近几条没有 @ 本机器人的消息（含昵称）；运营者在配置中为个别成员写的身份说明（例如“机器人的作者”），连同该成员当前的昵称；当天组队游戏的队伍名单（昵称和游戏状态）、当天过生日的成员的昵称，以及正在进行的投票（问题、选项和票数，不含投票人）。每次回复前，机器人会把这条消息和它上一条回复发给 DeepSeek，判断回复的风格和长短；每次回复后，还会把这一轮对话发给 DeepSeek（最多两次），用于整理和核对发言人的长期记忆和印象。每周小报（统计数字和上榜成员的昵称）也会发给 DeepSeek，生成一两句点评。传输内容**不包含**成员标识或群组标识（member_openid、group_openid）。`/服务器QA` 只传输问题本身。请勿通过 AI 对话功能发送敏感或私密信息。DeepSeek 的数据处理方式适用其自身隐私政策。
+**AI 对话功能（含 `/服务器QA`）：** 当用户使用该功能时，以下内容将被传输至 **DeepSeek**（api.deepseek.com）以生成回复：用户发送的**消息内容**；该群最近与机器人的对话（含发言人的昵称）和群聊总结；参与对话的成员的长期记忆和本机器人对他们的印象；若运营者开启「AI 看全部聊天」，还包括群里最近的全部聊天（含昵称），群聊总结也会包括这些聊天；运营者在配置中为个别成员写的身份说明（例如“机器人的作者”），连同该成员当前的昵称；当天组队游戏的队伍名单（昵称和游戏状态）、当天过生日的成员的昵称，以及正在进行的投票（问题、选项和票数，不含投票人）。每次回复前，机器人会把这条消息和它上一条回复发给 DeepSeek，判断回复的风格和长短；每次回复后，还会把这一轮对话发给 DeepSeek（最多两次），用于整理和核对发言人的长期记忆和印象。每周小报（统计数字和上榜成员的昵称）也会发给 DeepSeek，生成一两句点评。传输内容**不包含**成员标识或群组标识（member_openid、group_openid）。`/服务器QA` 只传输问题本身。请勿通过 AI 对话功能发送敏感或私密信息。DeepSeek 的数据处理方式适用其自身隐私政策。
 
 > 若部署时未配置 DeepSeek 密钥，AI 对话与 `/服务器QA` 功能将自动停用，届时不存在任何第三方数据传输。
 
@@ -94,7 +94,7 @@
 - **群聊总结**：保留到管理员发送 `/重置对话`，或本机器人被移出该群为止。
 - **长期记忆**：保留到成员自己用 `/忘记` 删除、管理员按要求删除，或本机器人被移出该群为止；每人超过 12 条时，最早的一条会被自动删除。
 - **印象**：每人一句，新的替换旧的；保留到成员用 `/忘记 印象` 或 `/忘记 全部` 删除、管理员按要求删除，或本机器人被移出该群为止。
-- **顺便听到的聊天**（仅在运营者开启时）：只在内存中，最多 30 分钟，机器人重启即消失。
+- **AI 看全部聊天**（仅在运营者开启时）：群里的聊天和上面的 AI 对话记录一样，保存 **7 天**后自动删除。
 - **生日**：保留到成员自己用 `/生日 删除` 删除、管理员按要求删除，或本机器人被移出该群为止。
 - **投票**：结束 **30 天**后连同投票记录一起删除；进行中的投票 7 天后自动结束。
 - **`/翻牌子` 的记录**：2 天后删除。
@@ -158,8 +158,8 @@ splits managed and unmanaged groups.
   - a rolling summary per group
   - up to 12 short memories per member, built only from what that member said about themselves
   - one short impression per member: how the bot addresses them, running jokes
-  - with `ai_chat.overhear` on: the last few messages that don't @ the bot, in memory only, for 30
-    minutes at most
+  - with `ai_chat.hear_all` on, in managed groups: every text message in the group (not commands),
+    with nicknames, kept like the messages above
 - Runtime logs.
 
 **Explicitly not collected:** QQ numbers, phone numbers, passwords, ID documents, location,
@@ -169,7 +169,8 @@ contacts, payment info.
 - the message
 - the group's recent conversation with the bot, with nicknames, and its summary
 - the memories of the members in that conversation, and the bot's impressions of them
-- with `ai_chat.overhear` on, the recent messages that didn't @ the bot, with nicknames
+- with `ai_chat.hear_all` on, the group's recent chat that didn't @ the bot, with nicknames; the
+  summary then covers it too
 - the notes the operator wrote in `ai_chat.special_people` (who someone is, such as "the bot's
   author"), with that member's current nickname, for the members known in that group
 - today's team-game rosters (nicknames and game statuses, minus any under `hide_from_ai`), the
@@ -195,7 +196,7 @@ manager leaves the server except QQ API calls.
 | AI chat summary | until `/重置对话` or the bot leaves | `ChatStore.reset_chat` / `forget_group` |
 | AI chat memories | until `/忘记`, `/删除数据` or the bot leaves; 12 per member, oldest dropped | `ai_chat.memories_per_member`, `AIChatModule.observe` |
 | AI chat impressions | one per member, replaced when it changes; until `/忘记 印象`, `/忘记 全部`, `/删除数据` or the bot leaves | `ChatStore.set_impression` |
-| Overheard chat (`ai_chat.overhear`) | in memory only: 30 minutes at most, gone on restart | `OVERHEAR_MINUTES` in `modules/ai/ai_chat.py` |
+| Group chat that didn't @ the bot (`ai_chat.hear_all`) | 7 days, like AI chat turns, after being folded into the summary | `ai_chat.keep_days`, `AIChatModule.housekeeping` |
 | Birthdays (`data/fun.db`) | until `/生日 删除`, `/删除数据` or the bot leaves | `FunStore` |
 | Polls and votes | 30 days after closing; open polls close after 7 days | `POLL_KEEP_DAYS`, `POLL_DAYS` in `modules/fun/social/module.py` |
 | `/翻牌子` marks | 2 days | `SocialModule._prune` |
@@ -214,5 +215,7 @@ manager leaves the server except QQ API calls.
 6. **AI chat numbers:** sections 一.6 and 四 say 7 days and 12 memories. If you change
    `ai_chat.keep_days` or `ai_chat.memories_per_member`, change them there too. With
    `ai_chat.memory: false`, delete the long-term memory and impression sentences.
-7. **Overheard chat:** the sentences about 「顺便听到的聊天」 are worded for when it's on. With
-   `ai_chat.overhear` at 0 (the default) they don't apply, so you can leave them or delete them.
+7. **All group chat in AI chat:** the sentences about 「AI 看全部聊天」 are worded for when it's on.
+   With `ai_chat.hear_all: false` (the default) they don't apply. Before switching it on, tell the
+   group: it stores everyone's messages for a week and sends them to DeepSeek, including messages
+   from people who never talk to the bot.

@@ -335,7 +335,7 @@ at startup** and names the line.
 | `summary` | The prompt for folding old chat into the group's summary | |
 | `observer` | The prompt for noting what a speaker said about themselves after each reply, and updating the bot's impression of them. It must ask for JSON: `{{"facts": [], "forget": [], "impression": null}}` | `{member}`, `{known}`, `{impression}`, `{said}`, `{reply}`, `{max_text}`, `{max_adds}`, `{max_impression}` |
 | `register` | The judgement before each reply: 严谨, 平衡 or 奔放 (the temperature) and 短, 中 or 长 (the length line). It must ask for JSON: `{{"register": "…", "length": "…"}}` | `{member}`, `{said}`, `{last}` |
-| `impression_title`, `overheard` | The headings for the impressions and, with `ai_chat.overhear`, the chat she overheard | `{lines}` for `overheard` |
+| `impression_title` | The heading for the impressions | |
 | `memory_check` | The prompt that checks the observer's new notes and keeps only what was meant seriously. It must ask for JSON: `{{"keep": []}}`. An unreadable answer keeps nothing | `{member}`, `{said}`, `{reply}`, `{notes}` |
 
 Every line can also use `{name}`, the bot's name in the current style. A literal brace is written
@@ -360,13 +360,16 @@ ai_chat:
   game_state: true           # tell her today's teams, birthdays and open poll
   dynamic_temperature: true  # judge each reply's temperature and length first (one more cheap call)
   temperatures: {严谨: 0.6, 平衡: 1.0, 奔放: 1.15}
-  overhear: 0                # also send the last N messages that didn't @ her; 0 = off (privacy policy!)
+  hear_all: false            # true: the whole group's chat joins her conversation (privacy policy!)
   special_people:            # who particular members are (next section)
     "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX": 这个机器人的作者
 ```
 
 If you change `keep_days` or `memories_per_member`, change the same numbers in
 `docs/PRIVACY_POLICY.md`.
+
+With `hear_all`, everyone's chat fills the window, so her own exchanges scroll out sooner; raise
+`context_tokens` (to 6000, say) if she loses the thread. The summary catches what scrolls out.
 
 `helper_model` stays deepseek-flash even if you switch `model` to deepseek-v4-pro for replies, so
 the extra calls stay cheap. At 1.3, flash garbled about one reply in ten during rehearsals, which is

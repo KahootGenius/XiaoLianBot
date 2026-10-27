@@ -401,44 +401,69 @@ class ImpressionTest(AIChatTestCase):
         self.assertIsNone(store.impression(G, "A"))
 
 
-class OverhearTest(AIChatTestCase):
-    """ai_chat.overhear: recent messages that don't @ the bot, kept in memory only."""
+class HearAllTest(AIChatTestCase):
+    """ai_chat.hear_all: every group message joins her context, marked when it didn't @ her."""
 
     def hear(self, member, text, group=G, is_bot=False):
         self.ai.hear(FakeMessage(group, member, NAMES.get(member, member), text, content=text, is_bot=is_bot))
 
-    async def test_what_was_said_around_her_rides_along_once(self):
-        self.make(overhear=3)
+    def transcript(self):
+        return [m for m in self.last_chat() if m["role"] != "system"]
+
+    async def test_the_whole_group_chat_is_in_her_thread(self):
+        self.make(hear_all=True)
         self.hear("B", "今天好热")
         self.hear("B", "/排行")                                  # commands aren't chat
         self.hear("C", "我是机器人", is_bot=True)
         self.hear("A", "有人去 <@XYZ> 那边吗")
-        self.hear("B", "我去")
-        self.hear("A", "那走吧")                                 # the oldest one falls out
         await self.say("A", "小莲你也来吗")
-        evidence = self.last_chat()[1]["content"]
-        self.assertIn("群里最近的聊天（没有 @ 你，只是你听到的）：\n小明：有人去  那边吗\n小红：我去\n小明：那走吧", evidence)
-        self.assertNotIn("今天好热", evidence)
-        self.assertNotIn("XYZ", evidence)
-        await self.say("A", "快点")                               # already heard: not sent again
-        self.assertNotIn("群里最近的聊天", self.last_chat()[1]["content"])
-        self.hear("B", "等等我")
-        self.now += timedelta(minutes=31)                         # stale
-        await self.say("A", "人呢")
-        self.assertNotIn("等等我", self.last_chat()[1]["content"])
+        self.assertEqual(self.transcript(), [{"role": "user", "content":
+                         "小红（没@你）：今天好热\n小明（没@你）：有人去  那边吗\n小明：小莲你也来吗"}])
+        self.assertNotIn("XYZ", json.dumps(self.last_chat(), ensure_ascii=False))
+        self.assertEqual(len(self.ai_client.requests("observer")), 1)     # memory notes: the @ message only
+        self.hear("B", "她来不来？")
+        await self.say("A", "快说")
+        self.assertEqual(self.transcript()[-1]["content"], "小红（没@你）：她来不来？\n小明：快说")
+
+    async def test_a_busy_group_is_summarized_without_waiting_for_an_at(self):
+        self.make(hear_all=True, context_tokens=12, summarize_after=2)
+        for i in range(5):
+            self.hear("B", f"第{i}句群聊说来话长")
+        await self.ai.settle()
+        summary = self.ai_client.requests("summary")
+        self.assertTrue(summary)
+        self.assertIn("小红：第0句群聊说来话长", summary[0]["messages"][1]["content"])
+        self.assertIn("也可能有群友之间的聊天", summary[0]["messages"][0]["content"])
+        self.assertEqual(self.ai_client.requests("chat"), [])             # she said nothing herself
 
     async def test_off_by_default_and_forgotten_on_request(self):
         self.make()
         self.hear("B", "今天好热")
-        await self.say("A", "在吗")
-        self.assertNotIn("群里最近的聊天", self.last_chat()[1]["content"])
-        self.make(overhear=5)
+        self.assertEqual(self.store.recent_turns(G), [])
+        self.make(hear_all=True)
         self.hear("B", "小红的秘密")
         self.hear("C", "小刚的话")
         self.ai.forget_member(G, "B")
         await self.say("A", "在吗")
-        self.assertNotIn("小红的秘密", self.last_chat()[1]["content"])
-        self.assertIn("小刚的话", self.last_chat()[1]["content"])
+        everything = json.dumps(self.last_chat(), ensure_ascii=False)
+        self.assertNotIn("小红的秘密", everything)
+        self.assertIn("C（没@你）：小刚的话", everything)
+
+    def test_an_older_database_gains_the_column(self):
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder)
+        path = os.path.join(folder, "chat.db")
+        db = sqlite3.connect(path)
+        db.execute("CREATE TABLE turns (id INTEGER PRIMARY KEY AUTOINCREMENT, group_openid TEXT NOT NULL, "
+                   "member_openid TEXT, name TEXT NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, "
+                   "ts INTEGER NOT NULL)")
+        db.execute("INSERT INTO turns (group_openid, member_openid, name, role, content, ts) "
+                   "VALUES ('G', 'A', '小明', 'user', '旧的', 0)")
+        db.commit()
+        db.close()
+        store = ChatStore(path)
+        self.addCleanup(store.db.close)
+        self.assertEqual(context.turn_text(store.recent_turns(G)[0]), "小明：旧的")       # @-ed, as before
 
 
 class SpecialPeopleTest(AIChatTestCase):
@@ -543,6 +568,11 @@ class PureTest(unittest.TestCase):
         self.assertEqual([t["id"] for t in window], [4, 5])
         self.assertEqual([t["id"] for t in context.select_window(turns, 1)], [5])     # never empty
         self.assertEqual([t["id"] for t in context.unsummarized(turns, window, 1)], [2, 3])
+
+    def test_lines_that_did_not_at_her_are_marked(self):
+        self.assertEqual(context.turn_text({"role": "user", "name": "小明", "content": "热", "addressed": 0}),
+                         "小明（没@你）：热")
+        self.assertEqual(context.turn_text({"role": "user", "name": "小明", "content": "热"}), "小明：热")
 
     def test_recent_actions_come_from_the_last_replies_only(self):
         window = [{"role": "assistant", "content": "（很久以前的动作）"}] + [
