@@ -107,6 +107,10 @@ seekchat (`Desktop/ai`):
 - **Her voice and world come from the style.** Optional `examples` and `bad_examples` teach her
   tone; `lore` entries ride along only when their keywords come up. Try changes first with
   `python -m modules.ai.rehearse`, which plays a scripted chat against the real DeepSeek.
+- **She sends stickers.** Put images and a `stickers.yaml` (label and when to use each) in the
+  private `local/stickers/`. She writes 「[表情:标签]」 as in seekchat, and the bot sends that image
+  right under her reply, uploaded straight from the server. `python -m modules.ai.stickers` checks
+  the folder; `… import stickers.zip` brings in a seekchat pack.
 - **She can follow the whole group (off by default).** With `ai_chat.hear_all`, every message in a
   managed group joins her conversation, marked 「（没@你）」 when it wasn't addressed to her, and
   the summary covers it. It stores everyone's chat for 7 days: update the privacy notice first.
@@ -175,7 +179,8 @@ core/                   config loading; style.py loads the style files
 modules/
   ai/                   AI chat: ai_chat.py runs it, context.py builds each request,
                         memory.py reads the memory notes and checks, store.py keeps data/chat.db,
-                        memory_admin.py lists and edits memories, rehearse.py tries a persona; /deepseek
+                        memory_admin.py lists and edits memories, stickers.py reads the sticker
+                        folder, rehearse.py tries a persona; /deepseek
   fun/                  blackjack, dice, 发癫, sleep
   info/                 Epic, Steam, Minecraft
   fun/teams/            the team game: rules.py reads prompts/teams.yaml, roster.py keeps
@@ -187,7 +192,7 @@ modules/
     module.py           intake, commands, daily check, removal flow, digest
     dashboard.py        the member table web page
     events.py           teaches botpy about every-message events
-    openapi.py          member-list / removal APIs, capability probing
+    openapi.py          member-list / removal APIs, capability probing, image uploads
   help.py
 styles/小莲.yaml         every line the bot says (the complete default style)
 styles/_示例.yaml        an example to start a new style from

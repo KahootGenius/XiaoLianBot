@@ -308,6 +308,30 @@ one-line impression of each member is listed too, marked `[impression]`.
   sudo /home/xiaolian/XiaoLianBot/deploy/memories.sh edit 12 下周要考四级
   ```
 
+## Stickers
+
+Stickers live in `local/stickers/` ([CUSTOMIZING](CUSTOMIZING.md)), so step 7 brings them along.
+To send a new or changed folder later, run this in the bot's folder on your computer, with the same
+user as in step 1:
+
+```bash
+scp -r local/stickers root@SERVER_IP:
+```
+
+Then, on the server, swap it in for the old folder, check it and restart:
+
+```bash
+sudo mkdir -p /home/xiaolian/XiaoLianBot/local && sudo rm -rf /home/xiaolian/XiaoLianBot/local/stickers && sudo mv ~/stickers /home/xiaolian/XiaoLianBot/local/ && sudo chown -R xiaolian:xiaolian /home/xiaolian/XiaoLianBot/local
+```
+```bash
+sudo -u xiaolian -H bash -c 'cd /home/xiaolian/XiaoLianBot && .venv/bin/python -m modules.ai.stickers'
+```
+```bash
+sudo systemctl restart xiaolian
+```
+
+If a sticker doesn't arrive, `journalctl -u xiaolian -n 50` says why: look for `表情包` or `[Stickers]`.
+
 ## Backups
 
 Everything except `config.yaml`, `data/` and `local/` is on GitHub. Back up `data/` now and then. For a clean

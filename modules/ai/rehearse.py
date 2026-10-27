@@ -12,6 +12,7 @@ Nothing is saved: the chat and any memories vanish when it ends.
 """
 import argparse
 import asyncio
+import os
 import re
 import sys
 from collections import Counter
@@ -36,6 +37,9 @@ class Gateway:
 
     async def send(self, group, content, reply_to=None, buttons=None):
         self.sent.append(content)
+
+    async def send_image(self, group, path, reply_to=None, url=None):
+        self.sent.append(f"[sticker {os.path.basename(path)}]")
 
 
 def split_line(line):
@@ -104,7 +108,7 @@ async def play(script, config, run, model=None, remember=False, out=sys.stdout):
         with STYLES.scope(GROUP):
             await ai.handle_ai_chat(message)
             await ai.settle()
-        reply = gateway.sent[-1] if len(gateway.sent) > before else "（没有回复）"
+        reply = " + ".join(gateway.sent[before:]) or "（没有回复）"
         register, length = judged[-1] if len(judged) > i else (None, None)
         temperature = ai.register_temperatures.get(register, ai.temperature)
         tag = f"{register or '默认'}·{length or '-'} {temperature}" if ai.dynamic else f"{temperature}"

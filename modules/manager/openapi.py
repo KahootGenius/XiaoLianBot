@@ -4,10 +4,13 @@ botpy 1.2.1 predates the group-management APIs Tencent added on 2026-09-03
 (member list, batch removal), and its error handling throws away the
 platform's error code, which we need to tell "this bot isn't whitelisted yet"
 (11253) apart from ordinary failures. So those calls go through `_call` here,
-reusing botpy's HTTP session and access token. Tests replace this class with a fake.
+reusing botpy's HTTP session and access token. So do images (stickers), whose
+direct upload botpy doesn't know. Tests replace this class with a fake.
 """
 import asyncio
+import base64
 import itertools
+import os
 import time
 from collections import OrderedDict
 from botpy import logging
@@ -24,6 +27,7 @@ TRACE_HEADER = "X-Tps-trace-Id"
 # After QQ refuses buttons (a custom layout needs Tencent to switch it on for the
 # bot), replies go out as plain text only for this long before trying again.
 BUTTON_RETRY_SECONDS = 6 * 3600
+IMAGE = 1                   # file_type of an image upload
 
 
 class OpenAPIError(Exception):
@@ -47,6 +51,9 @@ class QQGateway:
         # msg_id -> next msg_seq. QQ rejects a second reply with the same
         # (msg_id, msg_seq) pair as a duplicate (error 40054005).
         self._seq = OrderedDict()
+        # (group, file, size, mtime) -> (file_info, when it expires or 0 for never): an image is
+        # uploaded once and reused until QQ says the upload has expired.
+        self._uploads = {}
 
     def _next_seq(self, msg_id):
         counter = self._seq.get(msg_id)
@@ -89,6 +96,38 @@ class QQGateway:
                                               msg_id=reply_to, msg_seq=self._next_seq(reply_to))
         except Exception as e:
             _log.warning(f"[Manager] 连提示也没发出去: {e}")
+
+    async def send_image(self, group_openid, path, reply_to=None, url=None):
+        """An image, as a passive reply when `reply_to` is a message id. It's uploaded straight
+        from this machine; if QQ won't take it that way and `url` is given, QQ fetches it from
+        there instead. Raises OpenAPIError when it can't be sent."""
+        file_info = await self._upload_image(group_openid, path, url)
+        body = {"msg_type": 7, "media": {"file_info": file_info}}
+        if reply_to:
+            body.update(msg_id=reply_to, msg_seq=self._next_seq(reply_to))
+        return await self._call("POST", "/v2/groups/{group_openid}/messages", body=body, group_openid=group_openid)
+
+    async def _upload_image(self, group_openid, path, url=None):
+        stat = os.stat(path)
+        key = (group_openid, path, stat.st_size, stat.st_mtime)
+        cached = self._uploads.get(key)
+        if cached and (cached[1] == 0 or cached[1] > time.time() + 60):
+            return cached[0]
+        try:
+            with open(path, "rb") as f:
+                data = base64.b64encode(f.read()).decode("ascii")
+            result = await self._call("POST", "/v2/groups/{group_openid}/files", body={
+                "file_type": IMAGE, "file_data": data, "file_name": os.path.basename(path), "srv_send_msg": False,
+            }, group_openid=group_openid)
+        except Exception as e:
+            if not url:
+                raise
+            _log.warning(f"[Stickers] 直接上传没成功，改让 QQ 从链接取: {e}")
+            result = await self._call("POST", "/v2/groups/{group_openid}/files", body={
+                "file_type": IMAGE, "url": url, "srv_send_msg": False}, group_openid=group_openid)
+        ttl = int(result.get("ttl") or 0)
+        self._uploads[key] = (result["file_info"], 0 if ttl <= 0 else time.time() + ttl)
+        return result["file_info"]
 
     @staticmethod
     def keyboard(rows):

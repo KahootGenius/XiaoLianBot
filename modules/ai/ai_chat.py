@@ -26,6 +26,7 @@ import asyncio
 import functools
 import os
 import re
+from urllib.parse import quote
 from datetime import datetime
 import pytz
 import yaml
@@ -33,7 +34,7 @@ from botpy import logging
 from openai import OpenAI
 from core.config import content_path, load_config, root_path
 from core.style import current, join, placeholders, render, t
-from modules.ai import context, memory
+from modules.ai import context, memory, stickers
 from modules.ai.store import ChatStore
 
 
@@ -52,6 +53,7 @@ PROMPT_FIELDS = {
     "length_medium": set(),
     "length_long": set(),
     "lore": {"lore"},
+    "stickers": {"stickers", "max"},
     "special_people": {"people"},
     "special_line": {"member", "note"},
     "special_speaker": {"member", "note"},
@@ -131,7 +133,7 @@ def read_special_people(value):
 
 class AIChatModule:
     def __init__(self, gateway, config=None, store=None, client=None, is_admin=None, clock=None,
-                 prompts_path=CHAT_PROMPTS_FILE, nickname_of=None):
+                 prompts_path=CHAT_PROMPTS_FILE, nickname_of=None, stickers_dir=None):
         self.gw = gateway
         self.config = load_config() if config is None else config
         deepseek = self.config.get("deepseek") or {}
@@ -164,6 +166,12 @@ class AIChatModule:
         # Every group message joins her context, not just the ones that @ her (see the privacy policy).
         self.hear_all = bool(chat.get("hear_all", False))
         self.heard_since = {}       # group -> messages heard since the last summary check
+        # Stickers she can send under a reply (local/stickers/); a URL to fetch them from, if QQ
+        # won't take a direct upload.
+        self.stickers, problems = stickers.load(stickers_dir) if chat.get("stickers", True) else ({}, [])
+        for problem in problems:
+            _log.warning(f"[AIChat] 表情包：{problem}")
+        self.stickers_url = str(chat.get("stickers_url") or "")
         # Today's team game and birthdays/poll, set by main.py: group -> what teams.today_for_ai and
         # social.today_for_ai return. Without them the bot only knows the time.
         self.teams_today = self.social_today = None
@@ -354,6 +362,8 @@ class AIChatModule:
                         render(self.prompts["group_rules"], member=member_name),
                         render(self.prompts["reply_shape"]),
                         length and render(self.prompts[context.LENGTHS[length]]),
+                        self.stickers and render(self.prompts["stickers"], stickers=stickers.listing(self.stickers),
+                                                 max=stickers.MAX_PER_REPLY),
                         self._special_people(group, member, member_name, window),
                         lore and render(self.prompts["lore"], lore="\n".join(f"- {text}" for text in lore))]
         evidence = [self._today(group, window)]
@@ -410,7 +420,7 @@ class AIChatModule:
             return
         if not reply:
             return
-        await self._reply(message, reply)
+        reply = await self._send_reply(message, reply)
         self.store.add_turn(group, None, current().name, "assistant", reply, self._now())
         if self.memory_on and member:
             self._spawn(self.observe(group, member, name, said, reply))
@@ -419,6 +429,27 @@ class AIChatModule:
     def _notes(self, group, member):
         """A member's memories as they're numbered everywhere: long-term facts, then recent notes."""
         return list(self.store.memories(group, member)) + list(self.store.episodes(group, member))
+
+    async def _send_reply(self, message, reply):
+        """Send a reply, with any [表情:标签] in it sent as the sticker right under the text.
+        Returns the reply as it went out, for the transcript."""
+        clean, labels = stickers.extract(reply, self.stickers) if self.stickers else (reply, [])
+        if clean:
+            await self._reply(message, clean)
+        sent = []
+        for label in labels:
+            sticker = self.stickers[label]
+            url = f"{self.stickers_url.rstrip('/')}/{quote(os.path.basename(sticker.path))}" if self.stickers_url else None
+            try:
+                await self.gw.send_image(message.group_openid, sticker.path, reply_to=message.id, url=url)
+                sent.append(label)
+            except Exception as e:
+                _log.warning(f"[AIChat] 表情包「{label}」没发出去: {e}")
+        if not clean and not sent:          # nothing went out: say it in words instead
+            clean = stickers.as_text(reply)
+            if clean:
+                await self._reply(message, clean)
+        return "\n".join([clean] + [f"[表情:{label}]" for label in sent]).strip()
 
     async def observe(self, group, member, name, said, reply):
         """After a reply, like attention after a conversation: what the speaker said about themselves

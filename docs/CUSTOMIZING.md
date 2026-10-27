@@ -362,6 +362,8 @@ ai_chat:
   dynamic_temperature: true  # judge each reply's temperature and length first (one more cheap call)
   temperatures: {严谨: 0.6, 平衡: 1.0, 奔放: 1.15}
   hear_all: false            # true: the whole group's chat joins her conversation (privacy policy!)
+  stickers: true             # stickers from local/stickers/ (next sections)
+  stickers_url: ""           # where QQ can fetch them if a direct upload fails
   special_people:            # who particular members are (next section)
     "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX": 这个机器人的作者
 ```
@@ -417,6 +419,30 @@ lore:                     # "关键词、关键词：内容": sent only when a k
   answer with the sample. Leave greetings and "are you a bot" to the persona.
 - **Lore keeps the persona short.** An entry rides along only when one of its keywords appears in
   the last four turns, three entries at most.
+
+### Stickers
+
+Put the images and a `stickers.yaml` in `local/stickers/`, which never goes to GitHub:
+
+```yaml
+- file: happy.png       # png, jpg or gif, up to 5 MB each
+  label: 开心            # she writes [表情:开心] to send it; up to 20 characters, no repeats
+  desc: 开心、得意的时候  # when to use it, for her
+```
+
+- **Check the folder** after every change, then restart the bot:
+  `.venv/bin/python -m modules.ai.stickers`.
+- **A seekchat sticker pack** comes in with
+  `.venv/bin/python -m modules.ai.stickers import stickers.zip`. seekchat's labels are often file
+  names, so each sticker's description becomes its label.
+- **How they go out.** Her prompt lists the labels. When she writes 「[表情:标签]」, the bot takes the
+  marker out of the text and sends that image right under the reply, at most one per reply. The image
+  is uploaded straight from the server once and reused for as long as QQ allows.
+- **If QQ won't take a direct upload,** put the same files somewhere public, such as a Cloudflare R2
+  bucket connected to `stickers.example.com`, and set `ai_chat.stickers_url` to that address. QQ then
+  fetches each file from there.
+- **Choose with care.** She picks them herself, in front of the whole group, and QQ reviews images
+  too. Leave out anything explicit.
 
 ### Trying changes before the group sees them
 

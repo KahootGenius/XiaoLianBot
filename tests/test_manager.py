@@ -41,11 +41,18 @@ class FakeGateway:
         self.sent = []          # (group, content, reply_to)
         self.buttons = []       # (group, rows of (label, command)) sent under replies
         self.removed = []       # (group, [openids])
+        self.images = []        # (group, path, reply_to, url): stickers sent
+        self.refuse_images = False
 
     async def send(self, group, content, reply_to=None, buttons=None):
         self.sent.append((group, content, reply_to))
         if buttons:
             self.buttons.append((group, buttons))
+
+    async def send_image(self, group, path, reply_to=None, url=None):
+        if self.refuse_images:
+            raise OpenAPIError(400, 304080, "富媒体文件格式不支持")
+        self.images.append((group, path, reply_to, url))
 
     async def probe(self, group):
         return {"member_list": self.member_list, "remove": self.remove}
