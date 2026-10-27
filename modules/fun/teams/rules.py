@@ -22,6 +22,10 @@ EFFECT_HELP = "grab（把人抓进队）、kick（移出队伍）、roll（从 f
 # them under `commands:`; actions can't take these words.
 FIXED_COMMANDS = {"teams": "队伍", "disband": "解散队伍", "clear": "清空队伍"}
 FIXED_HELP = "teams（查看队伍）、disband（解散队伍）、clear（清空队伍）"
+# What the game calls itself, its captains and its teams, in the server log and in
+# load_rules' messages. teams.yaml may change them under `names:`.
+NAMES = {"game": "组队游戏", "captain": "队长", "team": "队伍"}
+NAMES_HELP = "game（游戏名）、captain（队长的叫法）、team（队伍的叫法）"
 # What an action's `say` line may use; {name} is the style's name.
 SAY_FIELDS = ("actor", "members", "count", "captain", "action", "status", "name")
 
@@ -48,6 +52,7 @@ class Rules:
     reset_time: dtime = dtime(5, 0)
     commands: dict = None   # built-in command -> its word, see FIXED_COMMANDS
     hidden: tuple = ()      # statuses AI chat is never told about (hide_from_ai)
+    names: dict = None      # what the game calls itself, its captains and teams, see NAMES
 
     def column_of(self, status):
         return next(column for column, statuses in self.columns.items() if status in statuses)
@@ -136,6 +141,16 @@ def load_rules(path=RULES_FILE, reserved=()):
     entries = data.get("actions") or []
     if not isinstance(entries, list):
         raise ValueError("teams.yaml 的 actions 要写成列表，每个操作以「- name:」开头")
+    raw = data.get("names") or {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"teams.yaml 的 names 要写成「叫法: 名字」，可用的有：{NAMES_HELP}")
+    names = dict(NAMES)
+    for key, name in raw.items():
+        if key not in NAMES:
+            raise ValueError(f"teams.yaml 的 names 里没有「{key}」，可用的有：{NAMES_HELP}")
+        names[key] = str(name if name is not None else "").strip()
+        if not names[key]:
+            raise ValueError(f"teams.yaml 的 names.{key} 不能是空的")
     raw = data.get("commands") or {}
     if not isinstance(raw, dict):
         raise ValueError(f"teams.yaml 的 commands 要写成「内置指令: 名字」，可用的有：{FIXED_HELP}")
@@ -162,7 +177,7 @@ def load_rules(path=RULES_FILE, reserved=()):
         words = [name] + [_word(alias, where) for alias in _names(entry.get("aliases"))]
         for word in words:
             if word in fixed:
-                raise ValueError(f"{where}：/{word} 是组队游戏的内置指令，换个名字吧")
+                raise ValueError(f"{where}：/{word} 是{names['game']}的内置指令，换个名字吧")
             if word in taken:
                 raise ValueError(f"{where}：/{word} 和「{taken[word]}」重复了")
             clash = next((r for r in reserved if f"/{word}".startswith(r)), None)
@@ -236,4 +251,4 @@ def load_rules(path=RULES_FILE, reserved=()):
     except (TypeError, ValueError):
         raise ValueError("teams.yaml 的 reset_time 要写成 \"05:00\" 这样的时间")
     return Rules(columns=columns, icons=icons, actions=tuple(actions), max_members=max_members,
-                 reset_time=reset_time, commands=commands, hidden=tuple(hidden))
+                 reset_time=reset_time, commands=commands, hidden=tuple(hidden), names=names)

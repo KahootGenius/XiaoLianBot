@@ -21,6 +21,16 @@ commands:
   disband: 解散队伍
   clear: 清空队伍
 
+# 游戏自己的叫法，用在服务器日志和这个文件的出错提示里，可省略（省略就用下面这些）。
+# 群里看到的说法在风格文件里改。
+#   game     游戏的名字
+#   captain  队长的叫法
+#   team     队伍的叫法
+names:
+  game: 组队游戏
+  captain: 队长
+  team: 队伍
+
 # 每队最多几人（不算队长），0 = 不限
 max_members: 0
 

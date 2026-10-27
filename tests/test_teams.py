@@ -1,4 +1,6 @@
 """The team game (/抓): rules file checks and simulated game nights with a fake QQ."""
+import asyncio
+import contextlib
 import os
 import re
 import shutil
@@ -7,6 +9,7 @@ import unittest
 from datetime import timedelta
 from core.config import root_path
 from modules.fun.teams import TeamsModule
+from modules.fun.teams.module import _log as teams_log
 from modules.fun.teams.rules import load_rules
 from tests.test_manager import GROUP, START, FakeGateway, FakeMessage
 
@@ -265,11 +268,31 @@ class RenamedCommandsTest(TeamGameTestCase):
         self.assertEqual(await self.say("ADMIN", "/清场"), "已清空本群的 1 支队伍，大家都恢复自由啦。")
         self.assertIn("/看队 查看今天的队伍", self.teams.help_block())
 
+    async def test_the_log_uses_the_games_own_names(self):
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder)
+        rules = os.path.join(folder, "teams.yaml")
+        with open(rules, "w", encoding="utf-8") as f:
+            f.write(shipped_rules().replace("game: 组队游戏", "game: 寻宝游戏").replace("captain: 队长", "captain: 船长")
+                    .replace("  team: 队伍", "  team: 船队"))
+        self.make(rules_path=rules)
+        await self.say("CA", "/抓 @M1")
+        self.now += timedelta(days=1)                       # the next game day: yesterday's team goes
+        with self.assertLogs(teams_log, "INFO") as logged:
+            scheduler = asyncio.create_task(self.teams.run_scheduler())
+            await asyncio.sleep(0)
+            scheduler.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await scheduler
+        self.assertIn("寻宝游戏已开启：3 位船长，所有群，6 个操作，每天 05:00 清空船队", logged.output[0])
+        self.assertIn("新的一天，已清空 1 个群的船队", logged.output[1])
+
 
 class RulesFileTest(unittest.TestCase):
     """Mistakes in teams.yaml stop the bot at startup with a message its editor can act on."""
 
     GOOD = shipped_rules()
+    SHIPPED_NAMES = "names:\n  game: 组队游戏\n  captain: 队长\n  team: 队伍\n"
 
     def check(self, text, reserved=()):
         folder = tempfile.mkdtemp()
@@ -289,6 +312,14 @@ class RulesFileTest(unittest.TestCase):
         rules = self.check(self.GOOD)
         self.assertEqual(rules.action("阵亡").status, "死亡")
         self.assertEqual(rules.starting(), {"职位": "队员", "生死": "存活"})
+
+    def test_the_games_own_names(self):
+        shipped = {"game": "组队游戏", "captain": "队长", "team": "队伍"}
+        self.assertEqual(self.check(self.GOOD).names, shipped)
+        self.assertEqual(self.check(self.GOOD.replace(self.SHIPPED_NAMES, "")).names, shipped)   # may be left out
+        renamed = self.GOOD.replace("game: 组队游戏", "game: 寻宝游戏")
+        self.assertEqual(self.check(renamed).names, {**shipped, "game": "寻宝游戏"})
+        self.assertRefused(renamed.replace("aliases: [阵亡]", "aliases: [队伍]"), "是寻宝游戏的内置指令")
 
     def test_a_new_status_and_action_need_only_yaml(self):
         rules = self.check(self.GOOD.replace("生死: [存活, 死亡]", "生死: [存活, 受伤, 死亡]") + """
@@ -312,6 +343,9 @@ class RulesFileTest(unittest.TestCase):
         self.assertRefused(self.GOOD.replace("clear: 清空队伍", "clear: 阵亡"), "/阵亡", "内置指令")
         self.assertRefused(self.GOOD.replace("clear: 清空队伍", "clear: 队伍"), "同一个名字")
         self.assertRefused(self.GOOD.replace("clear: 清空队伍", "wipe: 清空队伍"), "「wipe」")
+        self.assertRefused(self.GOOD.replace("game: 组队游戏", "boss: 老大"), "names", "「boss」")
+        self.assertRefused(self.GOOD.replace("  team: 队伍\n", "  team:\n"), "names.team", "不能是空的")
+        self.assertRefused(self.GOOD.replace(self.SHIPPED_NAMES, "names: [寻宝游戏]\n"), "names 要写成")
         self.assertRefused(self.GOOD.replace("{actor} 抓到了", "{who} 抓到了"), "{who}")
         self.assertRefused(self.GOOD.replace("effect: grab", "set: 小队长"), "effect: grab")
         self.assertRefused(self.GOOD.replace('reset_time: "05:00"', "reset_time: 早上五点"), "reset_time")

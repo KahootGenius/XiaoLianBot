@@ -295,6 +295,9 @@ The existing `/复活` sets 存活, so it also heals the injured.
 - `hide_from_ai`: statuses AI chat is never told about. With a DeepSeek key, every chat request
   carries today's teams and each member's statuses, so the bot can play along; list here any status
   that shouldn't go to the AI, for example `hide_from_ai: [死亡]`. A member's other statuses still go.
+- `names`: what the server log and these error messages call the game, its captains and its teams.
+  The defaults are `{game: 组队游戏, captain: 队长, team: 队伍}`. What the group sees comes from the
+  style file.
 
 ### With code: a new kind of effect
 

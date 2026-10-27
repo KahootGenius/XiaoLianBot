@@ -143,6 +143,7 @@ This file is game data, written in Chinese for the group:
 - **status names** (队员, 小队长, 存活, 死亡), shown in `/队伍`
 - **action names and aliases,** which are also the command words captains type
 - **each action's `say` line**, sent after the action works
+- **the game's own names** (`names`): what the server log calls the game, its captains and teams
 
 Renaming an action renames its command.
 

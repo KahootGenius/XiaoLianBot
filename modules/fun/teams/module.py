@@ -391,14 +391,15 @@ class TeamsModule:
         """Clear yesterday's teams at reset_time, even in groups nobody plays in today."""
         if not self.enabled:
             return
+        names = self.rules.names        # the game's own words for itself, from teams.yaml
         where = f"{len(self.groups)} 个群" if self.groups else "所有群"
-        _log.info(f"[Teams] 组队游戏已开启：{len(self.captains)} 位队长，{where}，"
-                  f"{len(self.rules.actions)} 个操作，每天 {self.rules.reset_time.strftime('%H:%M')} 清空队伍")
+        _log.info(f"[Teams] {names['game']}已开启：{len(self.captains)} 位{names['captain']}，{where}，"
+                  f"{len(self.rules.actions)} 个操作，每天 {self.rules.reset_time.strftime('%H:%M')} 清空{names['team']}")
         while True:
             try:
                 cleared = self.roster.reset_stale(self._day())
                 if cleared:
-                    _log.info(f"[Teams] 新的一天，已清空 {cleared} 个群的队伍")
+                    _log.info(f"[Teams] 新的一天，已清空 {cleared} 个群的{names['team']}")
             except Exception as e:
-                _log.error(f"[Teams] 清空队伍出错: {e}")
+                _log.error(f"[Teams] 清空{names['team']}出错: {e}")
             await asyncio.sleep(60)
