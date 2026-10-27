@@ -189,16 +189,21 @@ class QQGateway:
 
     @staticmethod
     def keyboard(rows):
-        """QQ's custom keyboard for rows of (label, command). Tapping a button sends "@bot command"
-        for the member; a command ending in a space is only typed in, for them to finish (e.g. "/抓 ")."""
+        """QQ's custom keyboard for rows of (label, command) or (label, command, question). Tapping a
+        button sends "@bot command" for the member; a command ending in a space is only typed in, for
+        them to finish (e.g. "/抓 "). With a question (40 characters at most), QQ asks it first and
+        the button is red, for the ones that change something for good."""
         buttons, n = [], itertools.count(1)
         for row in rows[:5]:
-            buttons.append({"buttons": [{
-                "id": str(next(n)),
-                "render_data": {"label": label, "visited_label": label, "style": 1},
-                "action": {"type": 2, "permission": {"type": 2}, "data": command.strip(),
-                           "enter": not command.endswith(" "), "unsupport_tips": t("common.buttons_unsupported")},
-            } for label, command in row[:5]]})
+            line = []
+            for label, command, *question in row[:5]:
+                action = {"type": 2, "permission": {"type": 2}, "data": command.strip(),
+                          "enter": not command.endswith(" "), "unsupport_tips": t("common.buttons_unsupported")}
+                if question:
+                    action["modal"] = {"content": question[0][:40]}
+                line.append({"id": str(next(n)), "action": action,
+                             "render_data": {"label": label, "visited_label": label, "style": 3 if question else 1}})
+            buttons.append({"buttons": line})
         return {"content": {"rows": buttons}}
 
     async def send_buttons(self, group_openid, reply_to, rows):

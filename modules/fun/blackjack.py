@@ -1,10 +1,16 @@
 import random
+from core.reply import reply
 from core.style import t
 
 
+# Under each hand: draw or stand. Once the game is over: another one.
+PLAYING = [[("抽卡", "/抽卡"), ("停止", "/停止")]]
+
+
 class BlackjackModule:
-    def __init__(self, api_client):
+    def __init__(self, api_client, gateway=None):
         self.api = api_client
+        self.gw = gateway       # replies through it can carry buttons
         self.game_status = {}
         self.player_cards = {}
         self.bot_cards = {}
@@ -34,15 +40,19 @@ class BlackjackModule:
         # the user (or a platform reviewer) gets an unrelated reply.
         elif "/抽卡" in message.content:
             if not self.game_status.get(message.group_openid):
-                await message.reply(content=t("games.blackjack.no_game"))
+                await reply(message, t("games.blackjack.no_game"), self.gw, self._again())
                 return True
             return await self._draw_card(message)
         elif "/停止" in message.content:
             if not self.game_status.get(message.group_openid):
-                await message.reply(content=t("games.blackjack.no_game"))
+                await reply(message, t("games.blackjack.no_game"), self.gw, self._again())
                 return True
             return await self._stop_game(message)
         return False
+
+    @staticmethod
+    def _again():
+        return [[(t("games.blackjack.again"), "/21点")]]
 
     async def _start_game(self, message):
         self.game_status[message.group_openid] = True
@@ -52,8 +62,8 @@ class BlackjackModule:
         self.player_cards[message.group_openid].append(random.choice(cards))
         self.bot_cards[message.group_openid].append(random.choice(cards))
         hand = self.player_cards[message.group_openid]
-        await message.reply(content=t("games.blackjack.start", hand=', '.join(hand), points=self.calculate_points(hand),
-                                      dealer=self.bot_cards[message.group_openid][0]))
+        await reply(message, t("games.blackjack.start", hand=', '.join(hand), points=self.calculate_points(hand),
+                               dealer=self.bot_cards[message.group_openid][0]), self.gw, PLAYING)
         return True
 
     async def _draw_card(self, message):
@@ -63,10 +73,11 @@ class BlackjackModule:
         player_points = self.calculate_points(hand)
         if player_points > 21:
             self.game_status[message.group_openid] = False
-            await message.reply(content=t("games.blackjack.bust", hand=', '.join(hand), points=player_points))
+            await reply(message, t("games.blackjack.bust", hand=', '.join(hand), points=player_points),
+                        self.gw, self._again())
         else:
-            await message.reply(content=t("games.blackjack.hand", hand=', '.join(hand), points=player_points,
-                                          dealer=self.bot_cards[message.group_openid][0]))
+            await reply(message, t("games.blackjack.hand", hand=', '.join(hand), points=player_points,
+                                   dealer=self.bot_cards[message.group_openid][0]), self.gw, PLAYING)
         return True
 
     async def _stop_game(self, message):
@@ -85,8 +96,8 @@ class BlackjackModule:
             outcome = t("games.blackjack.lose")
         else:
             outcome = t("games.blackjack.draw")
-        await message.reply(content=t("games.blackjack.result", hand=', '.join(hand), points=player_points,
-                                      dealer_hand=', '.join(dealer_hand), dealer_points=bot_points,
-                                      outcome=outcome))
         self.game_status[message.group_openid] = False
+        await reply(message, t("games.blackjack.result", hand=', '.join(hand), points=player_points,
+                               dealer_hand=', '.join(dealer_hand), dealer_points=bot_points, outcome=outcome),
+                    self.gw, self._again())
         return True

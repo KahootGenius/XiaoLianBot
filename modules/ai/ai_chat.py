@@ -253,9 +253,9 @@ class AIChatModule:
     def _now(self):
         return int(self.clock().timestamp())
 
-    async def _reply(self, message, text):
+    async def _reply(self, message, text, buttons=None):
         try:
-            await self.gw.send(message.group_openid, text, reply_to=message.id)
+            await self.gw.send(message.group_openid, text, reply_to=message.id, buttons=buttons)
         except Exception as e:
             _log.error(f"[AIChat] 回复失败: {e}")
 
@@ -664,7 +664,10 @@ class AIChatModule:
         if seen:
             lines.append(t("ai.memory.impression", text=seen))
         lines.append(t("ai.memory.footer"))
-        await self._reply(message, "\n".join(lines))
+        buttons = [(t("ai.memory.forget_button"), "/忘记 ")] if facts or recent else []    # typed in, for the number
+        if seen:
+            buttons.append((t("ai.memory.forget_impression_button"), "/忘记 印象"))
+        await self._reply(message, "\n".join(lines), buttons=[buttons])
 
     async def cmd_forget(self, message, args):
         """/忘记 序号…, /忘记 印象 or /忘记 全部: delete my own memories, or the bot's impression of me."""

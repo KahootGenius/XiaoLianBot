@@ -3,6 +3,7 @@ import json
 import random
 from botpy import logging
 from core.config import root_path
+from core.reply import reply
 from core.style import t
 
 
@@ -10,8 +11,9 @@ _log = logging.get_logger()
 
 
 class CrazyTalkModule:
-    def __init__(self, api):
+    def __init__(self, api, gateway=None):
         self.api = api
+        self.gw = gateway       # replies through it can carry buttons
         self.json_folder = root_path("assets", "quotes")
         self.all_quotes = self._load_json("all.json")
         self.psycho_quotes = self._load_json("psycho.json")
@@ -52,7 +54,7 @@ class CrazyTalkModule:
                     return True
                 quote_type = random.choice(["all", "psycho"])
                 quote = self.get_random_quote(target_name, quote_type)
-                await message.reply(content=quote)
+                await reply(message, quote, self.gw, [[(t("games.crazy_talk.again"), f"/发癫 {target_name}")]])
                 return True
             else:
                 await message.reply(content=t("games.crazy_talk.usage"))

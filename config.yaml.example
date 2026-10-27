@@ -14,10 +14,9 @@ secret: "YOUR_APP_SECRET"
 # group_styles:          # optional: a different style for particular groups
 #   "GROUP_OPENID": 桃子  # which group this is (@机器人 /群ID shows the ID)
 
-# --- Optional: buttons under some replies (/帮助, /今日运势, polls ...) ---
-# Tapping one sends the command for the member. QQ only shows them once Tencent
-# has switched custom buttons on for the bot; until then the bot notices the
-# refusal and quietly sends text only. Set false to never try.
+# --- Optional: buttons under replies with a next step (/帮助, 21点, polls, removal lists ...) ---
+# Tapping one sends the command for the member. If QQ refuses them, the bot notices
+# and sends text only for six hours. Set false to never try.
 # buttons: true
 
 # --- Optional: DeepSeek (https://platform.deepseek.com) ---

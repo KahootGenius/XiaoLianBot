@@ -178,6 +178,9 @@ class AutoModeWithFullAccessTest(ManagerTestCase):
         self.at(30, 21)
         await self.post("A", "/排行", command=True)
         self.assertIn("小A", self.gw.texts(GROUP)[-1])
+        self.assertEqual(self.gw.buttons[-1], (GROUP, [[("看本月", "/排行 月"), ("我的状态", "/我的状态")]]))
+        await self.post("A", "/排行 月", command=True)
+        self.assertEqual(self.gw.buttons[-1][1][0][0], ("看本周", "/排行"))
         await self.post("D", "/我的状态", command=True)
         self.assertIn("请假中", self.gw.texts(GROUP)[-1])
 
@@ -202,6 +205,11 @@ class ConfirmModeWithoutAccessTest(ManagerTestCase):
         self.assertIn("小B", manual[0])
         self.assertIn("/已移出", manual[0])
 
+        await self.post("ADMIN", "/待移出", group=ADMIN_GROUP, command=True)
+        batch = self.store.open_batches(GROUP)[0]["id"]
+        self.assertEqual(self.gw.buttons[-1], (ADMIN_GROUP, [[
+            (f"已移出 #{batch}", f"/已移出 {batch}", f"名单 #{batch} 的 1 人都已经手动移出了吗？"),
+            (f"取消 #{batch}", f"/取消移出 {batch}")]]))
         await self.post("SOMEONE", "/已移出", group=ADMIN_GROUP, command=True)
         self.assertEqual(self.status("B"), "removed")
         self.assertIn("已记为移出", self.gw.texts(ADMIN_GROUP)[-1])
@@ -229,7 +237,13 @@ class ConfirmModeWithRemovalAccessTest(ManagerTestCase):
         self.assertEqual(len(pending), 1)
         self.assertEqual(self.gw.removed, [])
 
+        await self.post("ADMIN", "/待移出", group=ADMIN_GROUP, command=True)
+        batch = self.store.open_batches(GROUP)[0]["id"]
+        confirm = (f"确认移出 #{batch}", f"/确认移出 {batch}", f"确定把名单 #{batch} 的 2 人移出群吗？")
+        rest = [("排除…", f"/排除 #{batch} "), (f"取消 #{batch}", f"/取消移出 {batch}")]
+        self.assertEqual(self.gw.buttons[-1], (ADMIN_GROUP, [[confirm] + rest]))
         await self.post("ADMIN", "/排除 1", group=ADMIN_GROUP, command=True)
+        self.assertEqual(self.gw.buttons[-1][1][0][0][2], f"确定把名单 #{batch} 的 1 人移出群吗？")   # one left
         await self.post("ADMIN", "/确认移出", group=ADMIN_GROUP, command=True)
         self.assertEqual(len(self.gw.removed), 1)
         self.assertEqual(len(self.gw.removed[0][1]), 1)
@@ -311,6 +325,8 @@ class SafetyTest(ManagerTestCase):
         for command in ("/管理帮助", "/管理状态", "/管理模式", "/不活跃", "/不活跃 3", "/豁免名单", "/请假名单",
                         "/待移出", "/小报", "/艾特测试", "/立即检查", "/成就", "/排行 月", "/群规"):
             await self.post("ADMIN", command, command=True)
+        labels = {label for _, rows in self.gw.buttons for row in rows for label, *_ in row}
+        self.assertTrue({"待移出", "请假名单", "我的状态", "看本周"} <= labels)      # /管理帮助, /成就, /排行 月
         await self.post("ADMIN", "/管理模式 确认", command=True)
         self.assertIn("已切换为「确认」模式", self.gw.texts(GROUP)[-1])
 

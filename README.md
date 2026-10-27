@@ -164,9 +164,11 @@ For the group's games, where a few captains pick teams:
   posted; once a day each. @ a few people to draw among them instead.
 - **The weekly digest** ends with a short in-character comment written by DeepSeek from the
   digest's numbers.
-- **Buttons:** `/帮助`, `/今日运势`, `/我的状态`, the team list and polls offer tap-to-send buttons.
-  QQ shows them only once Tencent switches custom buttons on for the bot; until then replies
-  are plain text.
+- **Buttons:** replies with an obvious next step offer tap-to-send buttons: `/帮助`, `/今日运势`,
+  `/我的状态`, `/排行` and `/成就`, the team list, polls, 21点, dice, 发癫, `/翻牌子`, birthdays,
+  `/我的记忆` and `/mc状态`. Admins get them under `/管理帮助` and the removal lists, where QQ asks
+  before 「确认移出」 or 「已移出」 goes through. If QQ refuses buttons, replies are plain text for
+  six hours.
 
 ### Inherited from Castorice
 Epic and Steam free-game pushes, Minecraft server status, blackjack, dice, 发癫 quotes, and

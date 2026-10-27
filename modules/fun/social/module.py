@@ -171,19 +171,21 @@ class SocialModule:
             return
         month, day = parsed
         self.store.set_birthday(group, member, message.nickname, month, day)
-        await self._reply(message, t("social.birthday.saved", date=t("common.date", month=month, day=day)))
+        await self._reply(message, t("social.birthday.saved", date=t("common.date", month=month, day=day)),
+                          buttons=[[("本月生日", "/本月生日")]])
 
     async def cmd_month(self, message, args):
         """/本月生日: everyone in this group who shared a birthday in this month."""
         month = self._now().month
         rows = self.store.birthdays_in(message.group_openid, month)
+        register = [[(t("social.birthday.register_button"), "/生日 ")]]      # typed in, for the date
         if not rows:
-            await self._reply(message, t("social.birthday.month_none", month=month))
+            await self._reply(message, t("social.birthday.month_none", month=month), buttons=register)
             return
         lines = [t("social.birthday.month_title", month=month, count=len(rows))]
         lines += [t("social.birthday.month_row", date=t("common.date", month=r["month"], day=r["day"]),
                     member=r["nickname"] or t("common.someone")) for r in rows]
-        await self._reply(message, "\n".join(lines))
+        await self._reply(message, "\n".join(lines), buttons=register)
 
     def today_for_ai(self, group):
         """For AI chat: today's birthdays, and the open poll as (question, [(label, option, votes)]).
@@ -308,7 +310,8 @@ class SocialModule:
                 return
         target = self.rng.choices([name for name, _ in pool], weights=[n for _, n in pool])[0]
         self.store.mark_daily(group, member, "flip", today, target)
-        await self._reply(message, t("social.flip.result", member=self._name(message), target=target))
+        await self._reply(message, t("social.flip.result", member=self._name(message), target=target),
+                          buttons=[[(t("social.flip.button"), "/翻牌子")]])
 
     # ------------------------------------------------------------------ housekeeping
 

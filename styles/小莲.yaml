@@ -233,6 +233,8 @@ manager:
     other: "{n}."
     you: "你：第 {rank} 名 · {count} 条"
     empty: "这周大家都好安静……{name}有点寂寞。"
+    month_button: 看本月
+    week_button: 看本周
 
   # /成就
   badges:
@@ -383,6 +385,13 @@ manager:
     failed_api: "移出失败：{error}（trace_id: {trace}）。名单 #{id} 保留，稍后可以再试 /确认移出 {id}。"
     failed: "移出失败：{error}。名单 #{id} 保留，稍后可以再试。"
     waiting: 移出名单已经在等管理员处理了（/待移出）。
+    # 名单下面的按钮。确认和「已移出」点了以后 QQ 会先弹出 ask_ 这句问一下（不超过 40 个字）
+    button_confirm: "确认移出 #{id}"
+    button_exclude: 排除…
+    button_cancel: "取消 #{id}"
+    button_done: "已移出 #{id}"
+    ask_confirm: "确定把名单 #{id} 的 {count} 人移出群吗？"
+    ask_done: "名单 #{id} 的 {count} 人都已经手动移出了吗？"
 
   # 每日检查的汇报
   daily:
@@ -420,6 +429,7 @@ manager:
 # ---------------------------------------------------------------- 娱乐
 games:
   dice: "你投出了: {number} 点 "
+  dice_again: 再摇一次
   blackjack:
     start: "游戏开始！\n你的手牌: {hand} (点数: {points})\n机器人的明牌: {dealer}\n你可以输入 /抽卡 继续要牌，或输入 /停止 停止要牌"
     no_game: 当前没有进行中的游戏，请先输入 /21点 开始游戏。
@@ -430,9 +440,11 @@ games:
     win: 恭喜你赢了！
     lose: 很遗憾，你输了！
     draw: 平局！
+    again: 再来一局
   crazy_talk:
     usage: 请输入对象名称，例如：/发癫 小明
     no_quotes: "没有找到{type}类型的语录"
+    again: 再来一条
   sleep:
     good_night: "晚安！现在是{time}，祝你好梦~ 🌙"
     good_morning: "早安！现在是{time}。\n你睡了{hours}小时{minutes}分钟。\n{comment}"
@@ -513,6 +525,7 @@ info:
     no_players: 无
     unreachable: 无法连接到服务器，请检查服务器地址是否正确或服务器是否在线
     failed: "查询失败：{error}"
+    refresh: 刷新
 
 # ---------------------------------------------------------------- AI
 ai:
@@ -536,6 +549,8 @@ ai:
     impression: "💭 {name}对你的印象：{text}（/忘记 印象 可以删掉）"
     forgot_impression: "好，对你的印象删掉了，重新认识一下吧～"
     no_impression: "{name}对你还没有什么特别的印象哦。"
+    forget_button: 忘记一条
+    forget_impression_button: 忘记印象
   # /重置对话（管理员）
   reset: "好的，本群和{name}的聊天记录、总结都清空了，从头开始～（群友记忆还在，各自可以用 /忘记 删除）"
 
@@ -571,6 +586,7 @@ social:
     month_title: "🎂 {month} 月过生日的群友（{count} 位）："
     month_row: "{date} {member}"
     month_none: "{month} 月还没有人登记生日～用 /生日 月-日 登记一下吧"
+    register_button: 登记我的生日
 
   # /投票、/投、/结束投票。每个群同时只有一个投票，7 天后自动结束
   poll:
@@ -595,4 +611,5 @@ social:
     again: "今天已经翻过牌子啦，翻到的是 {target}。明天再来～"
     need_mentions: "这个群没开群管理，我不知道谁最近活跃；@ 几个人，我从里面帮你翻"
     empty: 这周还没有别人有效发言过，牌子都是空的……
+    button: 我也翻一张
 

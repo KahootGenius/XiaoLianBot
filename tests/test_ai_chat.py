@@ -390,6 +390,7 @@ class ImpressionTest(AIChatTestCase):
         listing = await self.say("A", "/我的记忆")
         self.assertIn("1. 在准备考研", listing)
         self.assertIn("💭 小莲对你的印象：嘴硬心软的考研人", listing)
+        self.assertEqual(self.gw.buttons[-1], (G, [[("忘记一条", "/忘记 "), ("忘记印象", "/忘记 印象")]]))
         self.assertIn("对你的印象删掉了", await self.say("A", "/忘记 印象"))
         self.assertIsNone(self.store.impression(G, "A"))
         self.assertIn("还没有什么特别的印象", await self.say("A", "/忘记 印象"))

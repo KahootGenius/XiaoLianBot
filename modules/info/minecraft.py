@@ -1,12 +1,14 @@
 import asyncio
 import socket
 from mcstatus import JavaServer
+from core.reply import reply
 from core.style import t
 
 
 class MinecraftModule:
-    def __init__(self, api_client):
+    def __init__(self, api_client, gateway=None):
         self.api = api_client
+        self.gw = gateway       # replies through it can carry buttons
         self.mc_servers = {}
 
     async def handle_minecraft(self, message):
@@ -37,9 +39,9 @@ class MinecraftModule:
                     players = "\n".join([p.name for p in status.players.sample])
                 else:
                     players = t("info.minecraft.no_players")
-                await message.reply(content=t("info.minecraft.status", latency=f"{status.latency:.1f}",
-                                              online=status.players.online, max=status.players.max,
-                                              players=players))
+                await reply(message, t("info.minecraft.status", latency=f"{status.latency:.1f}",
+                                       online=status.players.online, max=status.players.max, players=players),
+                            self.gw, [[(t("info.minecraft.refresh"), "/mc状态")]])
                 return True
             except (socket.timeout, ConnectionRefusedError, ConnectionError):
                 await message.reply(content=t("info.minecraft.unreachable"))

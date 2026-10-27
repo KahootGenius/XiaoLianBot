@@ -554,7 +554,9 @@ class ManagerModule:
         rank, count = self._rank(rows, message.member_openid)
         if rank and rank > 10:
             lines.append(t("manager.leaderboard.you", rank=rank, count=count))
-        await self._reply(message, "\n".join(lines))
+        other = (t("manager.leaderboard.week_button"), "/排行") if days == 30 else \
+            (t("manager.leaderboard.month_button"), "/排行 月")
+        await self._reply(message, "\n".join(lines), buttons=[[other, ("我的状态", "/我的状态")]])
 
     async def cmd_achievements(self, message, group, args):
         earned = {r["code"]: r["earned_at"] for r in self.store.achievements(group, message.member_openid)}
@@ -566,7 +568,7 @@ class ManagerModule:
                                date=self._date(earned[badge.code])))
         locked = [b.name for b in achievements.BADGES if b.code not in earned]
         lines.append(t("manager.badges.locked", names=join(locked)) if locked else t("manager.badges.all_done"))
-        await self._reply(message, "\n".join(lines))
+        await self._reply(message, "\n".join(lines), buttons=[[("我的状态", "/我的状态"), ("排行", "/排行")]])
 
     async def cmd_leave(self, message, group, args):
         requester = message.member_openid
@@ -633,7 +635,8 @@ class ManagerModule:
     # ---- admin commands ----
 
     async def cmd_admin_help(self, message, group, args):
-        await self._reply(message, t("manager.admin_help"))
+        await self._reply(message, t("manager.admin_help"), buttons=[[
+            ("待移出", "/待移出"), ("不活跃", "/不活跃"), ("请假名单", "/请假名单"), ("管理状态", "/管理状态")]])
 
     async def cmd_manager_status(self, message, group, args):
         now = self.clock()
@@ -927,12 +930,30 @@ class ManagerModule:
             lines.append(t("manager.batch.how_pending", id=batch["id"], grace=EXCLUDE_GRACE_DAYS))
         return "\n".join(lines)
 
+    @staticmethod
+    def _batch_buttons(batches):
+        """A row under each removal list: confirm it (QQ asks first), take some people off it (typed in,
+        for their numbers), or drop it. A list to remove by hand gets "done" instead of confirm."""
+        rows = []
+        for batch in batches[:5]:
+            id_, count = batch["id"], len(json.loads(batch["members"]))
+            drop = (t("manager.batch.button_cancel", id=id_), f"/取消移出 {id_}")
+            if batch["status"] == "manual":
+                rows.append([(t("manager.batch.button_done", id=id_), f"/已移出 {id_}",
+                              t("manager.batch.ask_done", id=id_, count=count)), drop])
+            else:
+                rows.append([(t("manager.batch.button_confirm", id=id_), f"/确认移出 {id_}",
+                              t("manager.batch.ask_confirm", id=id_, count=count)),
+                             (t("manager.batch.button_exclude"), f"/排除 #{id_} "), drop])
+        return rows
+
     async def cmd_pending(self, message, group, args):
         batches = self.store.open_batches(group)
         if not batches:
             await self._reply(message, t("manager.batch.none_open"))
             return
-        await self._reply(message, "\n\n".join(self._format_batch(b) for b in batches))
+        await self._reply(message, "\n\n".join(self._format_batch(b) for b in batches),
+                          buttons=self._batch_buttons(batches))
 
     async def cmd_confirm(self, message, group, args):
         batch = self._pick_batch(group, args, statuses=("pending",))
@@ -973,7 +994,8 @@ class ManagerModule:
         remaining = [o for o in openids if o not in excluded]
         if remaining:
             self.store.update_batch(batch["id"], members=remaining)
-            await self._reply(message, self._format_batch(self.store.batch(batch["id"])))
+            batch = self.store.batch(batch["id"])
+            await self._reply(message, self._format_batch(batch), buttons=self._batch_buttons([batch]))
         else:
             self.store.update_batch(batch["id"], members=[], status="cancelled", decided_by=message.member_openid, ts=ts)
             await self._reply(message, t("manager.batch.all_excluded", id=batch["id"]))

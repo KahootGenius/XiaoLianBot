@@ -1,4 +1,5 @@
-"""今日运势, birthdays, polls and 翻牌子; buttons; the digest's AI comment; rolls in the team game."""
+"""今日运势, birthdays, polls and 翻牌子; buttons, under these and the games; the digest's AI comment;
+rolls in the team game."""
 import os
 import random
 import shutil
@@ -10,6 +11,9 @@ from core.config import root_path
 from core.style import DEFAULT_STYLE, STYLES
 from modules.ai.ai_chat import AIChatModule
 from modules.ai.store import ChatStore
+from modules.fun.blackjack import BlackjackModule
+from modules.fun.crazy_talk import CrazyTalkModule
+from modules.fun.dice import DiceModule
 from modules.fun.social import SocialModule
 from modules.fun.social.module import parse_birthday
 from modules.fun.social.store import FunStore
@@ -73,6 +77,7 @@ class BirthdayTest(SocialTestCase):
         self.assertIn("还没有登记", await self.say("A", "/生日"))
         self.assertIn("写成「月-日」", await self.say("A", "/生日 13-40"))
         self.assertIn("11月2日", await self.say("A", "/生日 11-2"))
+        self.assertEqual(self.gw.buttons[-1], (GROUP, [[("本月生日", "/本月生日")]]))
         self.assertEqual(await self.say("A", "今天上课好累"), "")             # not the day yet
         self.now = START + timedelta(days=1)
         wish = await self.say("A", "早上好")                               # either of the style's two wishes
@@ -82,6 +87,7 @@ class BirthdayTest(SocialTestCase):
         self.assertIn("11 月过生日的群友（1 位）：\n11月2日 小明", await self.say("B", "/本月生日"))
         self.assertIn("删掉了", await self.say("A", "/生日 删除"))
         self.assertIn("还没有人登记", await self.say("B", "/本月生日"))
+        self.assertEqual(self.gw.buttons[-1], (GROUP, [[("登记我的生日", "/生日 ")]]))     # typed in, for the date
 
     async def test_leap_day_birthdays_come_on_the_28th(self):
         self.make()
@@ -141,6 +147,7 @@ class FlipTest(SocialTestCase):
                 {"member_openid": "A", "nickname": "小明", "n": 5000}]
         self.make(activity=lambda group, since: rows)
         self.assertIn("小红", await self.say("A", "/翻牌子"))                 # 1000 messages against 1; never themself
+        self.assertEqual(self.gw.buttons[-1], (GROUP, [[("我也翻一张", "/翻牌子")]]))
         self.assertIn("今天已经翻过牌子啦，翻到的是 小红", await self.say("A", "/翻牌子"))
         self.now = START + timedelta(days=1)
         self.assertNotIn("已经翻过", await self.say("A", "/翻牌子"))
@@ -170,6 +177,29 @@ class ButtonsTest(unittest.IsolatedAsyncioTestCase):
         buttons = calls[1]["keyboard"]["content"]["rows"][0]["buttons"]
         self.assertEqual([(b["action"]["data"], b["action"]["enter"]) for b in buttons],
                          [("/今日运势", True), ("/抓", False)])            # "/抓 " is only typed in
+
+    def test_a_button_that_changes_things_asks_first(self):
+        rows = QQGateway.keyboard([[("确认移出 #3", "/确认移出 3", "确定把名单 #3 的 2 人移出群吗？"),
+                                    ("取消 #3", "/取消移出 3")]])["content"]["rows"]
+        confirm, cancel = rows[0]["buttons"]
+        self.assertEqual((confirm["action"]["modal"], confirm["render_data"]["style"]),
+                         ({"content": "确定把名单 #3 的 2 人移出群吗？"}, 3))
+        self.assertEqual(("modal" in cancel["action"], cancel["render_data"]["style"]), (False, 1))
+
+    async def test_the_games_offer_the_next_move(self):
+        gw = FakeGateway()
+
+        async def play(module, handle, text):
+            await getattr(module, handle)(FakeMessage(GROUP, "A", "小明", text, content=text))
+            return gw.buttons[-1][1]
+
+        blackjack = BlackjackModule(None, gateway=gw)
+        self.assertEqual(await play(blackjack, "handle_blackjack", "/21点"), [[("抽卡", "/抽卡"), ("停止", "/停止")]])
+        self.assertEqual(await play(blackjack, "handle_blackjack", "/停止"), [[("再来一局", "/21点")]])
+        self.assertEqual(await play(blackjack, "handle_blackjack", "/抽卡"), [[("再来一局", "/21点")]])   # no game
+        self.assertEqual(await play(DiceModule(None, gateway=gw), "handle_dice", "/摇骰子"), [[("再摇一次", "/摇骰子")]])
+        self.assertEqual(await play(CrazyTalkModule(None, gateway=gw), "handle_crazy_talk", "/发癫 小红"),
+                         [[("再来一条", "/发癫 小红")]])
 
     async def test_refused_buttons_fall_back_to_text_for_a_while(self):
         api, calls = self.make_api(refuse=True)
