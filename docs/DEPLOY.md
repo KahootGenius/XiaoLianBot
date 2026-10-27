@@ -330,7 +330,8 @@ sudo -u xiaolian -H bash -c 'cd /home/xiaolian/XiaoLianBot && .venv/bin/python -
 sudo systemctl restart xiaolian
 ```
 
-If a sticker doesn't arrive, `journalctl -u xiaolian -n 50` says why: look for `表情包` or `[Stickers]`.
+If a sticker doesn't arrive, or arrives as a message of its own, `journalctl -u xiaolian -n 50` says
+why: look for `表情包` or `[Stickers]`.
 
 ## Backups
 

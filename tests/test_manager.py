@@ -41,8 +41,13 @@ class FakeGateway:
         self.sent = []          # (group, content, reply_to)
         self.buttons = []       # (group, rows of (label, command)) sent under replies
         self.removed = []       # (group, [openids])
-        self.images = []        # (group, path, reply_to, url): stickers sent
+        self.images = []        # (group, path, reply_to, url): stickers sent as messages of their own
         self.refuse_images = False
+        self.markdowns = []     # (group, content, reply_to)
+        self.refuse_markdown = False
+        self.library = {}       # image_id -> file name: QQ's image library
+        self.library_room = 100
+        self.uploads = 0
 
     async def send(self, group, content, reply_to=None, buttons=None):
         self.sent.append((group, content, reply_to))
@@ -53,6 +58,26 @@ class FakeGateway:
         if self.refuse_images:
             raise OpenAPIError(400, 304080, "富媒体文件格式不支持")
         self.images.append((group, path, reply_to, url))
+
+    async def send_markdown(self, group, content, reply_to=None):
+        if self.refuse_markdown:
+            raise OpenAPIError(400, 40034011, "markdown 内容不合法")
+        self.markdowns.append((group, content, reply_to))
+
+    async def upload_library_image(self, path):
+        if len(self.library) >= self.library_room:
+            raise OpenAPIError(400, 40035007, "图片数量超过上限")
+        self.uploads += 1
+        image_id = f"img{self.uploads}"
+        self.library[image_id] = path.rsplit("/", 1)[-1]
+        return image_id, f"qqbot-media://image/v1/{image_id}", 7776000
+
+    async def list_library_images(self):
+        return [{"image_id": image_id, "file_name": name} for image_id, name in self.library.items()]
+
+    async def delete_library_image(self, image_id):
+        if self.library.pop(image_id, None) is None:
+            raise OpenAPIError(400, 40035008, "图片不存在")
 
     async def probe(self, group):
         return {"member_list": self.member_list, "remove": self.remove}

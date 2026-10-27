@@ -5,14 +5,17 @@ botpy 1.2.1 predates the group-management APIs Tencent added on 2026-09-03
 platform's error code, which we need to tell "this bot isn't whitelisted yet"
 (11253) apart from ordinary failures. So those calls go through `_call` here,
 reusing botpy's HTTP session and access token. So do images (stickers), whose
-direct upload botpy doesn't know. Tests replace this class with a fake.
+direct upload botpy doesn't know, the image library (素材管理, 2026-10-21) and
+markdown. Tests replace this class with a fake.
 """
 import asyncio
 import base64
+import hashlib
 import itertools
 import os
 import time
 from collections import OrderedDict
+import aiohttp
 from botpy import logging
 from botpy.http import Route
 from core.style import t
@@ -28,6 +31,11 @@ TRACE_HEADER = "X-Tps-trace-Id"
 # bot), replies go out as plain text only for this long before trying again.
 BUTTON_RETRY_SECONDS = 6 * 3600
 IMAGE = 1                   # file_type of an image upload
+# Where QQ's API has lived since 2026-08-10. botpy still calls the old address, which serves the older
+# APIs; newer ones (the image library, markdown's force_verify_image_resource) go here.
+API_DOMAIN = "api.bot.qq.com"
+LIBRARY_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif",
+                 ".webp": "image/webp"}
 
 
 class OpenAPIError(Exception):
@@ -129,6 +137,56 @@ class QQGateway:
         self._uploads[key] = (result["file_info"], 0 if ttl <= 0 else time.time() + ttl)
         return result["file_info"]
 
+    async def send_markdown(self, group_openid, content, reply_to=None):
+        """Markdown, as a passive reply when `reply_to` is a message id. If an image in it won't load,
+        QQ refuses the whole message rather than sending it without (force_verify_image_resource),
+        so the caller can fall back. Raises OpenAPIError."""
+        body = {"msg_type": 2, "markdown": {"content": content, "force_verify_image_resource": True}}
+        if reply_to:
+            body.update(msg_id=reply_to, msg_seq=self._next_seq(reply_to))
+        return await self._call("POST", "/v2/groups/{group_openid}/messages", body=body, domain=API_DOMAIN,
+                                group_openid=group_openid)
+
+    async def upload_library_image(self, path):
+        """Put an image in the bot's image library (素材管理), where markdown can show it at any size.
+        Returns (image_id, its qqbot-media:// link, how many seconds it lasts unsent). The library
+        holds 100 images per bot; delete_library_image frees a place."""
+        with open(path, "rb") as f:
+            data = f.read()
+        kind = LIBRARY_TYPES[os.path.splitext(path)[1].lower()]
+        md5 = hashlib.md5(data).hexdigest()
+        prepared = await self._call("POST", "/v2/media-images/prepare", domain=API_DOMAIN, body={
+            "file_name": os.path.basename(path), "file_size": len(data), "content_type": kind,
+            "md5": md5, "sha1": hashlib.sha1(data).hexdigest()})
+        etag = await self._put(prepared["presigned_url"], data, kind)
+        done = await self._call("POST", "/v2/media-images/complete", domain=API_DOMAIN,
+                                body={"upload_id": prepared["upload_id"], "md5": etag or md5})
+        return done["image_id"], done["url"], int(done.get("ttl") or 0)
+
+    @staticmethod
+    async def _put(url, data, kind):
+        """The bytes go straight to Tencent's storage at a signed address, without the bot's token.
+        Returns the ETag, which completes the upload."""
+        async with aiohttp.ClientSession() as session:
+            async with session.put(url, data=data, headers={"Content-Type": kind}) as resp:
+                if resp.status not in (200, 204):
+                    raise OpenAPIError(resp.status, None, (await resp.text())[:200])
+                return resp.headers.get("ETag", "").strip('"')
+
+    async def list_library_images(self):
+        """Everything in the bot's image library, following the cursor."""
+        images, cursor = [], ""
+        while True:
+            data = await self._call("GET", "/v2/media-images", query={"cursor": cursor} if cursor else None,
+                                    domain=API_DOMAIN)
+            images.extend(data.get("images") or [])
+            cursor = data.get("next_cursor") or ""
+            if not cursor:
+                return images
+
+    async def delete_library_image(self, image_id):
+        await self._call("DELETE", "/v2/media-images/{image_id}/delete", domain=API_DOMAIN, image_id=image_id)
+
     @staticmethod
     def keyboard(rows):
         """QQ's custom keyboard for rows of (label, command). Tapping a button sends "@bot command"
@@ -160,12 +218,13 @@ class QQGateway:
             self.buttons_off_until = time.monotonic() + BUTTON_RETRY_SECONDS
             _log.info(f"[Buttons] QQ 没有接受按钮（{e}），{BUTTON_RETRY_SECONDS // 3600} 小时内只发文字")
 
-    async def _call(self, method, path, body=None, query=None, **params):
+    async def _call(self, method, path, body=None, query=None, domain=None, **params):
         http = self.api._http
         await http.check_session()
         route = Route(method, path, **params)
         route.is_sandbox = http.is_sandbox
-        async with http._session.request(method, route.url, headers=http._headers, json=body, params=query) as resp:
+        url = route.url.replace(Route.DOMAIN, domain, 1) if domain and not http.is_sandbox else route.url
+        async with http._session.request(method, url, headers=http._headers, json=body, params=query) as resp:
             trace_id = resp.headers.get(TRACE_HEADER)
             try:
                 data = await resp.json(content_type=None)

@@ -366,6 +366,8 @@ ai_chat:
   temperatures: {严谨: 0.6, 平衡: 1.0, 奔放: 1.15}
   hear_all: false            # true: the whole group's chat joins her conversation (privacy policy!)
   stickers: true             # stickers from local/stickers/ (next sections)
+  stickers_inline: true      # inside her reply; false: as a message of their own
+  sticker_size: 160          # how big they show inside a reply, in px
   stickers_url: ""           # where QQ can fetch them if a direct upload fails
   special_people:            # who particular members are (next section)
     "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX": 这个机器人的作者
@@ -439,11 +441,19 @@ Put the images and a `stickers.yaml` in `local/stickers/`, which never goes to G
   `.venv/bin/python -m modules.ai.stickers import stickers.zip`. seekchat's labels are often file
   names, so each sticker's description becomes its label.
 - **How they go out.** Her prompt lists the labels. When she writes 「[表情:标签]」, the bot takes the
-  marker out of the text and sends that image right under the reply, at most one per reply. The image
-  is uploaded straight from the server once and reused for as long as QQ allows.
-- **If QQ won't take a direct upload,** put the same files somewhere public, such as a Cloudflare R2
-  bucket connected to `stickers.example.com`, and set `ai_chat.stickers_url` to that address. QQ then
-  fetches each file from there.
+  marker out of the text, at most one per reply, and sends the reply as one markdown message with the
+  sticker small at the end: `sticker_size` px on its longer side, its shape kept. Her words show as
+  she wrote them; characters markdown would act on, like `*` or `#`, become their full-width forms.
+- **QQ's image library holds the pictures.** Markdown shows images from QQ's image library (素材管理),
+  so each sticker is uploaded there once, the first time she sends it. The bot keeps the links in
+  `data/stickers.json`, and a changed image goes up again in place of the old one. QQ keeps an image
+  for 90 days after it was last sent and holds 100 per bot. When the library is full, the bot deletes
+  the images no sticker uses any more.
+- **If QQ refuses that,** the reply goes out as before, for an hour: the text, then the sticker as an
+  image message of its own, uploaded straight from the server. `stickers_inline: false` keeps it that
+  way. If QQ won't take a direct upload either, put the same files somewhere public, such as a
+  Cloudflare R2 bucket connected to `stickers.example.com`, and set `ai_chat.stickers_url` to that
+  address. QQ then fetches each file from there.
 - **Choose with care.** She picks them herself, in front of the whole group, and QQ reviews images
   too. Leave out anything explicit.
 

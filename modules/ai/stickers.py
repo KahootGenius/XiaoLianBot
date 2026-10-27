@@ -1,8 +1,10 @@
 """Stickers for AI chat: images she can send under a reply by writing [表情:标签].
 
 As in seekchat: a manifest gives each sticker a short label and when to use it,
-her prompt lists them, and a marker in her reply becomes the image, sent right
-under the text. Stickers are private, in local/stickers/, never on GitHub:
+her prompt lists them, and a marker in her reply becomes the image. It goes out
+inside the reply, small, as markdown showing a picture from QQ's image library
+(Library below); if that fails, as its own message right under the text.
+Stickers are private, in local/stickers/, never on GitHub:
 
     local/stickers/stickers.yaml        - file: happy.png
                                           label: 开心
@@ -12,16 +14,23 @@ under the text. Stickers are private, in local/stickers/, never on GitHub:
     python -m modules.ai.stickers                          # check the folder
     python -m modules.ai.stickers import stickers.zip      # bring in a seekchat sticker pack
 
-Uploading to QQ is QQGateway.send_image's job.
+Talking to QQ is QQGateway's job: send_markdown, upload_library_image, send_image.
 """
+import hashlib
 import json
 import os
 import re
+import struct
 import sys
+import time
 import zipfile
 from dataclasses import dataclass
 import yaml
-from core.config import LOCAL_DIR, use_local
+from botpy import logging
+from core.config import LOCAL_DIR, root_path, use_local
+
+
+_log = logging.get_logger()
 
 
 STICKER_DIR = os.path.join(LOCAL_DIR, "stickers")
@@ -30,6 +39,10 @@ FORMATS = (".png", ".jpg", ".jpeg", ".gif")
 MAX_BYTES = 5 * 1024 * 1024     # the most QQ takes in a direct upload
 MAX_LABEL = 20
 MAX_PER_REPLY = 1               # a group chat, not a sticker war
+SIZE = 160                      # how big a sticker shows inside a reply: its longer side, in px
+LIBRARY_FILE = root_path("data", "stickers.json")
+LIBRARY_FULL = 40035007         # QQ's image library holds 100 images per bot
+LIBRARY_TTL = 90 * 86400        # and keeps each one this long after it was last sent
 
 # Tolerant like seekchat's: the model drifts into [表情包:X], [发送了表情包:X] and 【表情：X】,
 # so every variant counts. Each opener pairs with its own closer, and nothing crosses a line.
@@ -116,6 +129,148 @@ def as_text(text):
 def listing(stickers):
     """The lines her prompt gets: "- 标签：什么时候用"."""
     return "\n".join(f"- {s.label}：{s.desc}" if s.desc else f"- {s.label}" for s in stickers.values())
+
+
+def image_size(path):
+    """(width, height) of a PNG, GIF or JPEG, read from its header; None if it can't tell."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(24)
+            if head.startswith(b"\x89PNG\r\n\x1a\n") and len(head) == 24:
+                return struct.unpack(">II", head[16:24])
+            if head[:6] in (b"GIF87a", b"GIF89a") and len(head) >= 10:
+                return struct.unpack("<HH", head[6:10])
+            if head[:2] == b"\xff\xd8":
+                f.seek(2)
+                return _jpeg_size(f)
+    except (OSError, struct.error):
+        pass
+    return None
+
+
+def _jpeg_size(f):
+    """Walk a JPEG's segments to the frame header, which holds the size."""
+    while True:
+        if f.read(1) != b"\xff":
+            return None
+        code = f.read(1)
+        while code == b"\xff":                     # padding before a marker
+            code = f.read(1)
+        if not code:
+            return None
+        if code[0] == 0x01 or 0xD0 <= code[0] <= 0xD8:     # markers without a length
+            continue
+        length, = struct.unpack(">H", f.read(2))
+        if 0xC0 <= code[0] <= 0xCF and code[0] not in (0xC4, 0xC8, 0xCC):
+            height, width = struct.unpack(">xHH", f.read(5))
+            return width, height
+        f.seek(length - 2, 1)
+
+
+def display_size(path, size=SIZE):
+    """(width, height) to show an image at: its longer side `size` px, the shape kept."""
+    found = image_size(path)
+    if not found or not all(found):
+        return size, size
+    width, height = found
+    scale = size / max(width, height)
+    return max(1, round(width * scale)), max(1, round(height * scale))
+
+
+# Characters markdown would act on, swapped for full-width look-alikes so her words show as written
+# (QQ's markdown doesn't promise backslash escapes). Line starts that would make a list or a rule too.
+_PLAIN = str.maketrans({"*": "＊", "_": "＿", "~": "～", "`": "｀", "#": "＃", ">": "＞", "<": "＜",
+                        "[": "［", "]": "］", "|": "｜", "\\": "＼"})
+_LINE_START = re.compile(r"^(?:([-+=])|(\d+)([.)]))")
+_WIDE = {"-": "－", "+": "＋", "=": "＝", ".": "．", ")": "）"}
+
+
+def as_markdown(text):
+    """Plain text as markdown that shows the same: each line a paragraph, nothing read as syntax."""
+    lines = (_LINE_START.sub(lambda m: _WIDE[m.group(1)] if m.group(1) else m.group(2) + _WIDE[m.group(3)],
+                             line.strip())
+             for line in text.translate(_PLAIN).splitlines())
+    return "\n\n".join(line for line in lines if line)
+
+
+def markdown_image(link, width, height):
+    return f"![表情 #{width}px #{height}px]({link})"
+
+
+class Library:
+    """Stickers in QQ's image library (素材管理), for markdown to show. Each image is uploaded once:
+    its qqbot-media:// link is kept in data/stickers.json (path None: in memory only), under the
+    image's sha1, so a changed file goes up again and its old version is deleted. QQ forgets an
+    image 90 days after it was last sent and holds 100 per bot; when the library is full, images no
+    current sticker uses are deleted to make room."""
+
+    def __init__(self, gateway, files=(), path=LIBRARY_FILE, clock=time.time):
+        self.gw, self.path, self.clock = gateway, path, clock
+        self.files = set(files)             # the sticker folder's images, the ones worth keeping
+        self.entries = {}                   # sha1 -> {"id", "link", "file", "ttl", "used"}
+        if path and os.path.exists(path):
+            try:
+                with open(path, encoding="utf-8") as f:
+                    self.entries = json.load(f)
+            except (OSError, ValueError) as e:
+                _log.warning(f"[Stickers] {path} 读不了，表情包会重新上传: {e}")
+
+    async def link(self, sticker):
+        """The sticker's qqbot-media:// link, uploading it first if the library doesn't have it."""
+        with open(sticker.path, "rb") as f:
+            digest = hashlib.sha1(f.read()).hexdigest()
+        now = self.clock()
+        entry = self.entries.get(digest)
+        if entry and now - entry["used"] < entry["ttl"] - 86400:
+            entry["used"] = now
+            self._save()
+            return entry["link"]
+        if entry:                               # unsent for nearly 90 days: QQ is about to forget it
+            await self._delete(digest)
+        try:
+            image_id, link, ttl = await self.gw.upload_library_image(sticker.path)
+        except Exception as e:
+            if getattr(e, "code", None) != LIBRARY_FULL:
+                raise
+            await self._tidy()
+            image_id, link, ttl = await self.gw.upload_library_image(sticker.path)
+        file = os.path.basename(sticker.path)
+        for old in [d for d, e in self.entries.items() if e["file"] == file]:      # its older versions
+            await self._delete(old)
+        self.entries[digest] = {"id": image_id, "link": link, "file": file, "ttl": ttl or LIBRARY_TTL, "used": now}
+        self._save()
+        return link
+
+    async def _tidy(self):
+        """The library is full: delete what no current sticker uses, including images it has that
+        this bot has lost track of."""
+        _log.info("[Stickers] QQ 图片库满了（每个机器人 100 张），清理不再用的图")
+        for digest in [d for d, e in self.entries.items() if e["file"] not in self.files]:
+            await self._delete(digest)
+        ours = {entry["id"] for entry in self.entries.values()}
+        for image in await self.gw.list_library_images():
+            if image.get("image_id") and image["image_id"] not in ours:
+                await self._delete_image(image["image_id"], image.get("file_name"))
+
+    async def _delete(self, digest):
+        entry = self.entries.pop(digest)
+        self._save()
+        await self._delete_image(entry["id"], entry["file"])
+
+    async def _delete_image(self, image_id, name):
+        try:
+            await self.gw.delete_library_image(image_id)
+        except Exception as e:
+            _log.warning(f"[Stickers] 图片库里的旧图 {name} 没删掉: {e}")
+
+    def _save(self):
+        if not self.path:
+            return
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        temp = self.path + ".tmp"
+        with open(temp, "w", encoding="utf-8") as f:
+            json.dump(self.entries, f, ensure_ascii=False, indent=1)
+        os.replace(temp, self.path)
 
 
 def import_pack(source, directory=STICKER_DIR, out=sys.stdout):

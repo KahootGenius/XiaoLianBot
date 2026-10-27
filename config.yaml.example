@@ -53,6 +53,8 @@ secret: "YOUR_APP_SECRET"
 #   dynamic_temperature: true    # judge each reply's temperature and length first (one more cheap call)
 #   temperatures: {严谨: 0.6, 平衡: 1.0, 奔放: 1.15}   # the temperature for each judgement
 #   stickers: true           # send stickers from local/stickers/ when she writes [表情:标签]
+#   stickers_inline: true    # inside her reply as markdown; false: as a message of its own under it
+#   sticker_size: 160        # how big a sticker shows inside a reply: its longer side, in px
 #   stickers_url: ""         # optional: where QQ can fetch the same files if a direct upload fails,
 #                            # e.g. "https://stickers.example.com"
 #   hear_all: false          # true: every message in a managed group joins her conversation, not just

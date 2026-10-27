@@ -26,6 +26,7 @@ import asyncio
 import functools
 import os
 import re
+import time
 from urllib.parse import quote
 from datetime import datetime
 import pytz
@@ -43,6 +44,8 @@ _log = logging.get_logger()
 # DeepSeek discontinued "deepseek-chat" on 2026-07-24; V4.1 Flash is "deepseek-flash".
 DEFAULT_MODEL = "deepseek-flash"
 CHAT_PROMPTS_FILE = content_path("prompts", "chat.yaml")
+# After QQ refuses a sticker inside a reply, stickers go out as their own messages for this long.
+INLINE_RETRY_SECONDS = 3600
 # What each line of prompts/chat.yaml may fill in, besides {name} (the style's name).
 PROMPT_FIELDS = {
     "group_rules": {"member"},
@@ -133,7 +136,8 @@ def read_special_people(value):
 
 class AIChatModule:
     def __init__(self, gateway, config=None, store=None, client=None, is_admin=None, clock=None,
-                 prompts_path=CHAT_PROMPTS_FILE, nickname_of=None, stickers_dir=None):
+                 prompts_path=CHAT_PROMPTS_FILE, nickname_of=None, stickers_dir=None,
+                 library_path=stickers.LIBRARY_FILE):
         self.gw = gateway
         self.config = load_config() if config is None else config
         deepseek = self.config.get("deepseek") or {}
@@ -172,6 +176,13 @@ class AIChatModule:
         for problem in problems:
             _log.warning(f"[AIChat] 表情包：{problem}")
         self.stickers_url = str(chat.get("stickers_url") or "")
+        # Inside the reply, small, as markdown showing the image from QQ's image library; switched
+        # off, or for a while after QQ refused that, as a message of its own under the text.
+        self.stickers_inline = bool(chat.get("stickers_inline", True))
+        self.sticker_size = int(chat.get("sticker_size", stickers.SIZE))
+        self.inline_off_until = 0.0
+        self.library = stickers.Library(gateway, {os.path.basename(s.path) for s in self.stickers.values()},
+                                        library_path) if self.stickers else None
         # Today's team game and birthdays/poll, set by main.py: group -> what teams.today_for_ai and
         # social.today_for_ai return. Without them the bot only knows the time.
         self.teams_today = self.social_today = None
@@ -431,9 +442,16 @@ class AIChatModule:
         return list(self.store.memories(group, member)) + list(self.store.episodes(group, member))
 
     async def _send_reply(self, message, reply):
-        """Send a reply, with any [表情:标签] in it sent as the sticker right under the text.
-        Returns the reply as it went out, for the transcript."""
+        """Send a reply, with any [表情:标签] in it as that sticker: inside the reply when QQ takes
+        that, otherwise right under the text. Returns the reply as it went out, for the transcript."""
         clean, labels = stickers.extract(reply, self.stickers) if self.stickers else (reply, [])
+        if labels and self.stickers_inline and time.monotonic() >= self.inline_off_until:
+            try:
+                await self._send_inline(message, clean, labels)
+                return "\n".join([clean] + [f"[表情:{label}]" for label in labels]).strip()
+            except Exception as e:
+                self.inline_off_until = time.monotonic() + INLINE_RETRY_SECONDS
+                _log.warning(f"[Stickers] 表情包没能放进回复里，{INLINE_RETRY_SECONDS // 3600} 小时内改成单独发图: {e}")
         if clean:
             await self._reply(message, clean)
         sent = []
@@ -450,6 +468,16 @@ class AIChatModule:
             if clean:
                 await self._reply(message, clean)
         return "\n".join([clean] + [f"[表情:{label}]" for label in sent]).strip()
+
+    async def _send_inline(self, message, text, labels):
+        """The reply and its stickers as one markdown message, each sticker sticker_size px."""
+        body = stickers.as_markdown(text)
+        parts = [body] if body else []
+        for label in labels:
+            sticker = self.stickers[label]
+            link = await self.library.link(sticker)
+            parts.append(stickers.markdown_image(link, *stickers.display_size(sticker.path, self.sticker_size)))
+        await self.gw.send_markdown(message.group_openid, "\n\n".join(parts), reply_to=message.id)
 
     async def observe(self, group, member, name, said, reply):
         """After a reply, like attention after a conversation: what the speaker said about themselves

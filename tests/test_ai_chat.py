@@ -70,7 +70,8 @@ class AIChatTestCase(unittest.IsolatedAsyncioTestCase):
         config = {"ai_chat": chat_config, "deepseek": deepseek or {}}
         self.ai = AIChatModule(self.gw, config, store=self.store, client=self.ai_client,
                                is_admin=lambda group, member, role=None: member == "ADMIN",
-                               clock=lambda: self.now, nickname_of=nickname_of, stickers_dir=stickers_dir)
+                               clock=lambda: self.now, nickname_of=nickname_of, stickers_dir=stickers_dir,
+                               library_path=None)
         return self.ai
 
     async def say(self, member, text, group=G, name=None):

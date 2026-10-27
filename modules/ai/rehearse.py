@@ -41,6 +41,13 @@ class Gateway:
     async def send_image(self, group, path, reply_to=None, url=None):
         self.sent.append(f"[sticker {os.path.basename(path)}]")
 
+    async def send_markdown(self, group, content, reply_to=None):
+        content = re.sub(r"!\[[^\]]*\]\(rehearsal://([^)]+)\)", r"[sticker \1]", content)
+        self.sent.append(content.replace("\n\n", "\n"))
+
+    async def upload_library_image(self, path):
+        return "-", f"rehearsal://{os.path.basename(path)}", 0
+
 
 def split_line(line):
     """("昵称", "消息") from "昵称：消息"."""
@@ -86,7 +93,7 @@ async def play(script, config, run, model=None, remember=False, out=sys.stdout):
     names = {openid: name for name, openid in ids.items()}
     gateway, store = Gateway(), ChatStore(":memory:")
     ai = AIChatModule(gateway, config, store=store, clock=lambda: clock.now,
-                      nickname_of=lambda group, member: names.get(member))
+                      nickname_of=lambda group, member: names.get(member), library_path=None)
     ai.teams_today, ai.social_today = today_from(script)
     judged = []
     perceive = ai.perceive

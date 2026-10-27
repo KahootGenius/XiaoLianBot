@@ -108,8 +108,9 @@ seekchat (`Desktop/ai`):
   tone; `lore` entries ride along only when their keywords come up. Try changes first with
   `python -m modules.ai.rehearse`, which plays a scripted chat against the real DeepSeek.
 - **She sends stickers.** Put images and a `stickers.yaml` (label and when to use each) in the
-  private `local/stickers/`. She writes 「[表情:标签]」 as in seekchat, and the bot sends that image
-  right under her reply, uploaded straight from the server. `python -m modules.ai.stickers` checks
+  private `local/stickers/`. She writes 「[表情:标签]」 as in seekchat, and the sticker shows small
+  inside her reply: one markdown message, with the image kept in QQ's image library. If QQ won't
+  take that, it goes out as its own message under the text. `python -m modules.ai.stickers` checks
   the folder; `… import stickers.zip` brings in a seekchat pack.
 - **She can follow the whole group (off by default).** With `ai_chat.hear_all`, every message in a
   managed group joins her conversation, marked 「（没@你）」 when it wasn't addressed to her, and
