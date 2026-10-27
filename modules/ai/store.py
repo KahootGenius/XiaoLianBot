@@ -34,7 +34,10 @@ CREATE TABLE IF NOT EXISTS memories (
     member_openid TEXT NOT NULL,
     text TEXT NOT NULL,
     created_at INTEGER NOT NULL,
-    kind TEXT NOT NULL DEFAULT 'fact'    -- fact: what they said about themselves; impression: the bot's view
+    kind TEXT NOT NULL DEFAULT 'fact',   -- fact: long-term; episode: a recent note; impression: the bot's view
+    importance INTEGER NOT NULL DEFAULT 6,   -- 1-10, scored when it was noted (modules/ai/memory.py)
+    reinforced INTEGER NOT NULL DEFAULT 0,   -- times the topic came up again
+    reinforced_at INTEGER                    -- when it last did; NULL: never, count from created_at
 );
 CREATE INDEX IF NOT EXISTS idx_memories_member ON memories (group_openid, member_openid, id);
 """
@@ -52,9 +55,16 @@ class ChatStore:
         self.db.executescript(SCHEMA)
         # Columns added since chat.db first shipped; older files gain them with their old meaning.
         for table, column, definition in (("memories", "kind", "TEXT NOT NULL DEFAULT 'fact'"),
+                                          ("memories", "importance", "INTEGER NOT NULL DEFAULT 6"),
+                                          ("memories", "reinforced", "INTEGER NOT NULL DEFAULT 0"),
+                                          ("memories", "reinforced_at", "INTEGER"),
                                           ("turns", "addressed", "INTEGER NOT NULL DEFAULT 1")):
             if column not in {row[1] for row in self.db.execute(f"PRAGMA table_info({table})")}:
                 self.db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+                if column == "importance":
+                    # Memories from before consolidation were many specific facts: make them recent
+                    # notes, so the first night folds them into a few general ones.
+                    self.db.execute("UPDATE memories SET kind = 'episode' WHERE kind = 'fact'")
                 self.db.commit()
 
     def _one(self, sql, *args):
@@ -114,9 +124,35 @@ class ChatStore:
     # ---- memories
 
     def memories(self, group, member):
-        """A member's facts, oldest first. Their impression is separate: impression()."""
-        return self._all("SELECT * FROM memories WHERE group_openid = ? AND member_openid = ? AND kind = 'fact' "
-                         "ORDER BY id", group, member)
+        """A member's long-term facts, oldest first. Recent notes and the impression are separate."""
+        return self._kind(group, member, "fact")
+
+    def episodes(self, group, member):
+        """A member's recent notes, not yet consolidated into facts, oldest first."""
+        return self._kind(group, member, "episode")
+
+    def _kind(self, group, member, kind):
+        return self._all("SELECT * FROM memories WHERE group_openid = ? AND member_openid = ? AND kind = ? "
+                         "ORDER BY id", group, member, kind)
+
+    def members_with(self, kind):
+        """[(group, member)] of everyone with at least one memory of this kind."""
+        return [(r["group_openid"], r["member_openid"]) for r in self._all(
+            "SELECT DISTINCT group_openid, member_openid FROM memories WHERE kind = ?", kind)]
+
+    def reinforce(self, memory_id, ts):
+        """The topic came up again: the memory holds longer."""
+        self._write("UPDATE memories SET reinforced = reinforced + 1, reinforced_at = ? WHERE id = ?", ts, memory_id)
+
+    def raise_importance(self, memory_id):
+        """A recent note that came up again weighs a little more when it's consolidated."""
+        self._write("UPDATE memories SET importance = MIN(10, importance + 1) WHERE id = ?", memory_id)
+
+    def last_name(self, group, member):
+        """The nickname a member last spoke under in AI chat, or None."""
+        row = self._one("SELECT name FROM turns WHERE group_openid = ? AND member_openid = ? ORDER BY id DESC LIMIT 1",
+                        group, member)
+        return row["name"] if row else None
 
     def impression(self, group, member):
         return self._one("SELECT * FROM memories WHERE group_openid = ? AND member_openid = ? "
@@ -129,9 +165,9 @@ class ChatStore:
         self._write("INSERT INTO memories (group_openid, member_openid, text, created_at, kind) "
                     "VALUES (?, ?, ?, ?, 'impression')", group, member, text, ts)
 
-    def add_memory(self, group, member, text, ts):
-        self._write("INSERT INTO memories (group_openid, member_openid, text, created_at) VALUES (?, ?, ?, ?)",
-                    group, member, text, ts)
+    def add_memory(self, group, member, text, ts, kind="fact", importance=6):
+        self._write("INSERT INTO memories (group_openid, member_openid, text, created_at, kind, importance) "
+                    "VALUES (?, ?, ?, ?, ?, ?)", group, member, text, ts, kind, importance)
 
     def delete_memory(self, memory_id):
         self._write("DELETE FROM memories WHERE id = ?", memory_id)

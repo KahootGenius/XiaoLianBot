@@ -333,7 +333,8 @@ at startup** and names the line.
 | `empty_mention` | Stands in for a message that only @s the bot | `{member}` |
 | `digest_comment` | The prompt for the comment that ends the weekly digest | `{digest}` |
 | `summary` | The prompt for folding old chat into the group's summary | |
-| `observer` | The prompt for noting what a speaker said about themselves after each reply, and updating the bot's impression of them. It must ask for JSON: `{{"facts": [], "forget": [], "impression": null}}` | `{member}`, `{known}`, `{impression}`, `{said}`, `{reply}`, `{max_text}`, `{max_adds}`, `{max_impression}` |
+| `observer` | After each reply: what the speaker said about themselves, each scored 1–10 for importance (below 4 isn't kept), which memories came up again, which are outdated, and her impression of them. It must ask for JSON: `{{"notes": [], "reinforce": [], "forget": [], "impression": null}}` | `{member}`, `{known}`, `{impression}`, `{said}`, `{reply}`, `{max_text}`, `{max_adds}`, `{max_impression}` |
+| `consolidation` | Each night, like sleep: fold a member's recent notes and long-term memories into a few general facts. It must ask for JSON: `{{"add": [], "update": [], "forget": []}}` | `{member}`, `{facts}`, `{notes}`, `{max_text}`, `{max_facts}` |
 | `register` | The judgement before each reply: 严谨, 平衡 or 奔放 (the temperature) and 短, 中 or 长 (the length line). It must ask for JSON: `{{"register": "…", "length": "…"}}` | `{member}`, `{said}`, `{last}` |
 | `impression_title` | The heading for the impressions | |
 | `memory_check` | The prompt that checks the observer's new notes and keeps only what was meant seriously. It must ask for JSON: `{{"keep": []}}`. An unreadable answer keeps nothing | `{member}`, `{said}`, `{reply}`, `{notes}` |
@@ -354,7 +355,7 @@ ai_chat:
   summarize_after: 20        # turns that left the window before they're summarized
   keep_days: 7               # raw chat is deleted after this many days
   memory: true               # long-term memory about each member
-  memories_per_member: 12    # a full notebook drops its oldest entries
+  memories_per_member: 8     # long-term facts per member; the weakest go first
   memory_check: true         # check each new memory with one more cheap call; jokes aren't kept
   digest_comment: true       # end the weekly digest with a short comment
   game_state: true           # tell her today's teams, birthdays and open poll
@@ -374,6 +375,29 @@ With `hear_all`, everyone's chat fills the window, so her own exchanges scroll o
 `helper_model` stays deepseek-flash even if you switch `model` to deepseek-v4-pro for replies, so
 the extra calls stay cheap. At 1.3, flash garbled about one reply in ten during rehearsals, which is
 why 奔放 defaults to 1.15 rather than seekchat's 1.3.
+
+### How her memory works
+
+It's modelled loosely on human memory. The numbers are constants at the top of
+`modules/ai/memory.py`.
+
+1. **Only what matters is encoded.** After each reply the observer scores each thing the speaker
+   said about themselves, 1 to 10, as in *Generative Agents* (Park et al., 2023). Below 4
+   (`ENCODE_AT_LEAST`), it's trivia and isn't kept.
+2. **New things wait as recent notes,** specific and short-lived, like the hippocampus in
+   complementary learning systems (McClelland, McNaughton & O'Reilly, 1995).
+3. **Consolidation keeps the gist.** At 04:00 Beijing time, or as soon as someone's notes add up to
+   20 (`CONSOLIDATE_AT`), a flash call folds them into a few general facts, the way sleep turns
+   episodes into schemas (Lewis & Durrant, 2011) and the gist outlives the details (fuzzy-trace
+   theory). Short-lived things are let go.
+4. **Facts fade unless they come up again.** A fact loses 0.5 a week from its importance
+   (`WEEKLY_DECAY`) and gains 2 each time the topic comes up again (`REPETITION_BONUS`, the spacing
+   effect); below 3 it's forgotten (Ebbinghaus; Anderson & Schooler, 1991). An importance-6 fact
+   nobody mentions lasts about six weeks; 10 (`CORE`) never fades.
+5. **At most `memories_per_member` facts,** the weakest dropped first.
+
+Memories from before this design are turned into recent notes on the first start, so the first
+night consolidates them too.
 
 ### Her voice and her world: samples and a lorebook
 

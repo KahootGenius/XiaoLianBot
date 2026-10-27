@@ -74,11 +74,14 @@ PROMPT_FIELDS = {
     "observer": {"member", "known", "impression", "said", "reply", "max_text", "max_adds", "max_impression"},
     "register": {"member", "said", "last"},
     "memory_check": {"member", "said", "reply", "notes"},
+    "consolidation": {"member", "facts", "notes", "max_text", "max_facts"},
 }
 # Commands this module answers before chatting. Listed so team-game actions can't take them.
 COMMANDS = ("/我的记忆", "/忘记", "/重置对话", "/服务器QA")
 FORGET_ALL_WORDS = ("全部", "所有", "all")
 FORGET_IMPRESSION_WORDS = ("印象",)
+CONSOLIDATE_HOUR = 4        # Beijing time: when the night's consolidation runs, like sleep
+NOTES_LEFT_DAYS = 2         # recent notes this old are consolidated whenever housekeeping runs
 HEARD_TEXT = 300            # characters kept of each message that didn't @ the bot (hear_all)
 MEMORY_SPEAKERS = 5         # members whose memories ride along: the speaker plus recent ones
 DIGEST_COMMENT_LIMIT = 120  # characters; the prompt asks for 60
@@ -148,7 +151,8 @@ class AIChatModule:
         self.summarize_after = int(chat.get("summarize_after", 20))
         self.keep_days = int(chat.get("keep_days", 7))
         self.memory_on = bool(chat.get("memory", True))
-        self.memories_per_member = int(chat.get("memories_per_member", 12))
+        self.memories_per_member = int(chat.get("memories_per_member", 8))     # long-term facts each
+        self.consolidated_on = None     # the day the nightly consolidation last ran
         self.memory_check = bool(chat.get("memory_check", True))
         self.digest_comment = bool(chat.get("digest_comment", True))
         self.game_state = bool(chat.get("game_state", True))
@@ -364,7 +368,7 @@ class AIChatModule:
                     speakers[turn["member_openid"]] = turn["name"]
             chosen = list(speakers.items())[:MEMORY_SPEAKERS]
             facts = memory.evidence(render(self.prompts["memory_title"]),
-                                    [(name, [m["text"] for m in self.store.memories(group, openid)])
+                                    [(name, [m["text"] for m in self._notes(group, openid)])
                                      for openid, name in chosen])
             views = memory.impressions(render(self.prompts["impression_title"]),
                                        [(name, self._impression(group, openid)) for openid, name in chosen])
@@ -412,13 +416,19 @@ class AIChatModule:
             self._spawn(self.observe(group, member, name, said, reply))
         self._spawn(self.maybe_summarize(group))
 
+    def _notes(self, group, member):
+        """A member's memories as they're numbered everywhere: long-term facts, then recent notes."""
+        return list(self.store.memories(group, member)) + list(self.store.episodes(group, member))
+
     async def observe(self, group, member, name, said, reply):
-        """Note what `member` just said about themselves. Failures only cost a missed note."""
+        """After a reply, like attention after a conversation: what the speaker said about themselves
+        that matters becomes a recent note, memories that came up again hold longer, outdated ones go,
+        and the impression of them is updated. Failures only cost a missed note."""
         lock = self.observing.setdefault((group, member), asyncio.Lock())
         async with lock:
             try:
                 generation = self.generation.get(group, 0)
-                known = self.store.memories(group, member)
+                known = self._notes(group, member)
                 texts = [m["text"] for m in known]
                 seen = self._impression(group, member)
                 prompt = render(self.prompts["observer"], member=name, said=memory.excerpt(said),
@@ -432,23 +442,79 @@ class AIChatModule:
                 impression = memory.parse_impression(raw)
                 if impression and impression != seen:
                     self.store.set_impression(group, member, impression, self._now())
-                facts, forget = memory.parse_observation(raw, texts)
+                notes, reinforce, forget = memory.parse_observation(raw, texts)
                 for n in forget:
                     self.store.delete_memory(known[n - 1]["id"])
-                if not facts:
-                    return
-                if self.memory_check:
-                    facts = await self.check_notes(name, said, reply, facts)
-                    if not facts or self.generation.get(group, 0) != generation:
+                for n in reinforce:
+                    row = known[n - 1]
+                    if row["kind"] == "fact":
+                        self.store.reinforce(row["id"], self._now())
+                    else:
+                        self.store.raise_importance(row["id"])
+                if notes and self.memory_check:
+                    serious = await self.check_notes(name, said, reply, [text for text, _ in notes])
+                    if self.generation.get(group, 0) != generation:
                         return
-                # A full notebook drops its oldest entries to make room.
-                kept = [m for i, m in enumerate(known, 1) if i not in forget]
-                for old in kept[:max(0, len(kept) + len(facts) - self.memories_per_member)]:
-                    self.store.delete_memory(old["id"])
-                for fact in facts:
-                    self.store.add_memory(group, member, fact, self._now())
+                    notes = [(text, importance) for text, importance in notes if text in serious]
+                for text, importance in notes:
+                    self.store.add_memory(group, member, text, self._now(), kind="episode", importance=importance)
+                # Like Generative Agents' reflection: once recent notes add up, consolidate now.
+                if sum(row["importance"] for row in self.store.episodes(group, member)) >= memory.CONSOLIDATE_AT:
+                    self._spawn(self.consolidate(group, member))
             except Exception as e:
                 _log.warning(f"[AIChat] 整理记忆失败: {e}")
+
+    def _nickname(self, group, member):
+        return self.nickname_of(group, member) or self.store.last_name(group, member) or t("common.someone")
+
+    async def consolidate(self, group, member):
+        """Like a night's sleep: fold a member's recent notes and older memories into a few general
+        long-term facts, then let faded ones go. Runs nightly, or early when recent notes add up.
+        A failed call keeps the notes for next time."""
+        lock = self.observing.setdefault((group, member), asyncio.Lock())
+        async with lock:
+            try:
+                generation = self.generation.get(group, 0)
+                facts, notes = self.store.memories(group, member), self.store.episodes(group, member)
+                if notes:
+                    day = lambda ts: datetime.fromtimestamp(ts, self.tz)
+                    prompt = render(
+                        self.prompts["consolidation"], member=self._nickname(group, member),
+                        facts=memory.numbered([f"{f['text']}（重要度 {f['importance']}）" for f in facts], "（还没有）"),
+                        notes="\n".join(f"- {n['text']}（重要度 {n['importance']}，"
+                                        f"{t('common.date', month=day(n['created_at']).month, day=day(n['created_at']).day)}）"
+                                        for n in notes),
+                        max_text=memory.MAX_MEMORY_TEXT, max_facts=self.memories_per_member)
+                    raw = await self._complete(self.client, self.helper_model, [{"role": "user", "content": prompt}])
+                    if self.generation.get(group, 0) != generation:
+                        return
+                    adds, updates, forget = memory.parse_consolidation(raw, len(facts), self.memories_per_member)
+                    # A general fact can matter a little more than its notes did, not a lot more.
+                    ceiling = max(n["importance"] for n in notes) + 1
+                    adds = [(text, min(importance, ceiling)) for text, importance in adds]
+                    now = self._now()
+                    for n in forget:
+                        self.store.delete_memory(facts[n - 1]["id"])
+                    for n, text in updates:     # merged with something new: the topic came up again
+                        self.store.set_memory_text(facts[n - 1]["id"], text)
+                        self.store.reinforce(facts[n - 1]["id"], now)
+                    kept = {f["text"] for i, f in enumerate(facts, 1) if i not in forget}
+                    for text, importance in adds:
+                        if text not in kept:
+                            self.store.add_memory(group, member, text, now, kind="fact", importance=importance)
+                    for note in notes:          # folded in or let go, either way done with
+                        self.store.delete_memory(note["id"])
+                self.fade(group, member)
+            except Exception as e:
+                _log.warning(f"[AIChat] 整理长期记忆失败: {e}")
+
+    def fade(self, group, member):
+        """Forget the long-term facts that have faded, and the weakest past memories_per_member."""
+        now = self._now()
+        facts = sorted(self.store.memories(group, member), key=lambda row: memory.fact_strength(row, now), reverse=True)
+        for i, row in enumerate(facts):
+            if i >= self.memories_per_member or memory.fact_strength(row, now) < memory.FORGET_BELOW:
+                self.store.delete_memory(row["id"])
 
     async def check_notes(self, name, said, reply, facts):
         """The candidate notes `name` meant seriously, judged by one more cheap call on the
@@ -525,13 +591,17 @@ class AIChatModule:
         if not self.memory_on:
             await self._reply(message, t("ai.memory.disabled"))
             return
-        rows = self.store.memories(message.group_openid, message.member_openid)
-        seen = self._impression(message.group_openid, message.member_openid)
-        if not rows and not seen:
+        group, member = message.group_openid, message.member_openid
+        facts, recent = self.store.memories(group, member), self.store.episodes(group, member)
+        seen = self._impression(group, member)
+        if not facts and not recent and not seen:
             await self._reply(message, t("ai.memory.empty"))
             return
-        lines = [t("ai.memory.title", member=message.nickname or t("common.someone"), count=len(rows))]
-        lines += [t("ai.memory.row", n=i, text=row["text"]) for i, row in enumerate(rows, 1)]
+        lines = [t("ai.memory.title", member=message.nickname or t("common.someone"), count=len(facts) + len(recent))]
+        lines += [t("ai.memory.row", n=i, text=row["text"]) for i, row in enumerate(facts, 1)]
+        if recent:
+            lines.append(t("ai.memory.recent"))
+            lines += [t("ai.memory.row", n=i, text=row["text"]) for i, row in enumerate(recent, len(facts) + 1)]
         if seen:
             lines.append(t("ai.memory.impression", text=seen))
         lines.append(t("ai.memory.footer"))
@@ -554,7 +624,7 @@ class AIChatModule:
         if not numbers:
             await self._reply(message, t("ai.memory.usage"))
             return
-        rows = self.store.memories(group, member)
+        rows = self._notes(group, member)
         missing = [n for n in numbers if not 1 <= n <= len(rows)]
         if missing:
             await self._reply(message, t("ai.memory.no_such", n=join([str(n) for n in missing])))
@@ -615,6 +685,19 @@ class AIChatModule:
             if last_old is not None:
                 await self.maybe_summarize(group, up_to_id=last_old)
         self.store.prune(cutoff)
+        if not self.memory_on:
+            return
+        # The night's consolidation, like sleep; notes left over from a missed night go too.
+        now = self.clock()
+        night = now.hour == CONSOLIDATE_HOUR and self.consolidated_on != now.date()
+        if night:
+            self.consolidated_on = now.date()
+        for group, member in self.store.members_with("episode"):
+            oldest = min(row["created_at"] for row in self.store.episodes(group, member))
+            if night or self._now() - oldest >= NOTES_LEFT_DAYS * DAY:
+                await self.consolidate(group, member)
+        for group, member in self.store.members_with("fact"):
+            self.fade(group, member)
 
     async def run_scheduler(self):
         if not self.enabled:

@@ -5,7 +5,7 @@ config.yaml and style, and print her replies. For tuning a persona with evidence
     python -m modules.ai.rehearse my_script.yaml
     python -m modules.ai.rehearse --model deepseek-v4-pro   # the reply model; helper calls unchanged
     python -m modules.ai.rehearse --times 3                 # play it three times
-    python -m modules.ai.rehearse --memory                  # also take memory notes, listed at the end
+    python -m modules.ai.rehearse --memory                  # also take memory notes, then consolidate them
 
 Each line costs two small DeepSeek calls (the pre-reply judgement and the reply).
 Nothing is saved: the chat and any memories vanish when it ends.
@@ -116,9 +116,17 @@ async def play(script, config, run, model=None, remember=False, out=sys.stdout):
     print(f"-- {len(replies)} replies, about {average} characters each, {len(actions)} bracketed actions, "
           f"repeated: {'、'.join(repeated) or 'none'}", file=out)
     if remember:
-        for row in store.all_memories():
-            who = names.get(row["member_openid"], row["member_openid"].removeprefix("R-"))
-            print(f"   memory · {who} · {row['kind']}: {row['text']}", file=out)
+        show_memories(store, names, "noted during the chat", out)
+        for group, member in store.members_with("episode"):
+            await ai.consolidate(group, member)
+        show_memories(store, names, "after a night's consolidation", out)
+
+
+def show_memories(store, names, when, out):
+    print(f"-- memories {when}:", file=out)
+    for row in store.all_memories():
+        who = names.get(row["member_openid"], row["member_openid"].removeprefix("R-"))
+        print(f"   {who} · {row['kind']} · importance {row['importance']}: {row['text']}", file=out)
 
 
 def main(argv=None):

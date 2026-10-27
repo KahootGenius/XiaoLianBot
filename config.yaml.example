@@ -46,7 +46,7 @@ secret: "YOUR_APP_SECRET"
 #   summarize_after: 20      # turns that scrolled out of the window before they're summarized
 #   keep_days: 7             # raw chat is deleted after this many days
 #   memory: true             # long-term memory about each member (/我的记忆, /忘记)
-#   memories_per_member: 12  # a full notebook drops its oldest entries
+#   memories_per_member: 8   # long-term facts per member; the weakest go first (see modules/ai/memory.py)
 #   memory_check: true       # check each new memory with one more cheap call, so jokes aren't kept
 #   digest_comment: true     # end the weekly digest with a short in-character comment
 #   game_state: true         # tell the bot today's teams, birthdays and open poll (teams.yaml hide_from_ai)

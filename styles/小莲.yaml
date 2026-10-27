@@ -524,6 +524,7 @@ ai:
   memory:
     title: "📒 {name}记得的关于 {member} 的事（{count} 条）："
     row: "{n}. {text}"
+    recent: 最近听你说的，还在整理：     # 还没整理成长期记忆的片段，接在长期记忆后面
     footer: "删掉某条：/忘记 序号 · 全部删掉：/忘记 全部"
     empty: "{name}还没有记下关于你的事哦～多聊聊就会记住啦。"
     disabled: 长期记忆没有开启哦。

@@ -90,13 +90,14 @@ seekchat (`Desktop/ai`):
     so she can follow a discussion between several people.
   - The newest chat that fits `ai_chat.context_tokens` goes with every request.
   - Older chat is folded into a rolling summary by a cheap second call.
-- **She remembers people.** After each reply, another cheap call notes what the speaker said about
-  themselves: their plans, situation and likes. A third cheap call checks each new note and drops
-  jokes, banter and game talk, so 「我是你爸爸」 isn't kept as a fact. She keeps at most 12 short
-  entries per member per group, plus a one-line impression of each person: what she calls them and
-  your running jokes. Members see theirs with `/我的记忆` and delete them with `/忘记 序号`,
-  `/忘记 印象` or `/忘记 全部`. On the server, [deploy/memories.sh](deploy/memories.sh) lists,
-  rewrites and deletes anyone's.
+- **She remembers people the way people do.** After each reply, a cheap call scores how much
+  what the speaker said about themselves matters (1–10); trivia is never kept. What's kept waits
+  as a recent note, and each night, like sleep, another call folds the notes into a few general
+  facts (「周一复习高数」「周三背单词」 → 「在准备考研」). Facts fade unless they come up again; only
+  life-defining ones last for good. At most 8 per member per group, plus a one-line impression of
+  each person. Jokes and banter are checked out, so 「我是你爸爸」 isn't kept as a fact. Members see
+  theirs with `/我的记忆` and delete them with `/忘记 序号`, `/忘记 印象` or `/忘记 全部`. On the
+  server, [deploy/memories.sh](deploy/memories.sh) lists, rewrites and deletes anyone's.
 - **She knows what's going on.** Each request carries the Beijing time, today's teams in the team
   game, whose birthday it is and the open poll, so she can tease the night owls and play along.
   Statuses listed under `hide_from_ai` in `teams.yaml` are left out.
