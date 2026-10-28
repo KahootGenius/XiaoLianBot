@@ -53,6 +53,7 @@
 7. **互动功能**
    - 成员**自己登记**的生日（只有月和日），用于当天祝福和 `/本月生日`。
    - 投票的问题、选项，以及每位投票者的成员标识、昵称和所选的选项；投票结果会公开显示投票者的昵称。
+   - 意见征集的主题，以及每条意见的内容、提意见的成员的成员标识和昵称；征集结束时会公开列出每条意见和提意见的人的昵称。
    - `/翻牌子` 当天翻到了谁，用于每人每天只能翻一次。
 
 8. **运行日志**
@@ -74,7 +75,7 @@
 
 ### 三、第三方共享
 
-**AI 对话功能（含 `/服务器QA`）：** 当用户使用该功能时，以下内容将被传输至 **DeepSeek**（api.deepseek.com）以生成回复：用户发送的**消息内容**；该群最近与机器人的对话（含发言人的昵称）和群聊总结；参与对话的成员的长期记忆和本机器人对他们的印象；若运营者开启「AI 看全部聊天」，还包括群里最近的全部聊天（含昵称），群聊总结也会包括这些聊天；运营者在配置中为个别成员写的身份说明（例如“机器人的作者”），连同该成员当前的昵称；当天组队游戏的队伍名单（昵称和游戏状态）、当天过生日的成员的昵称，以及正在进行的投票（问题、选项和票数，不含投票人）。每次回复前，机器人会把这条消息和它上一条回复发给 DeepSeek，判断回复的风格和长短；每次回复后，还会把这一轮对话发给 DeepSeek（最多两次），用于整理和核对发言人的长期记忆和印象；每天整理记忆时，会把这位成员最近的片段和现有的长期记忆发给 DeepSeek 归纳。每周小报（统计数字和上榜成员的昵称）也会发给 DeepSeek，生成一两句点评。在开启「主动开话题」的群里，群里安静一段时间后，机器人会把该群最近与它的对话和群聊总结发给 DeepSeek，由它主动说一句话。传输内容**不包含**成员标识或群组标识（member_openid、group_openid）。`/服务器QA` 只传输问题本身。请勿通过 AI 对话功能发送敏感或私密信息。DeepSeek 的数据处理方式适用其自身隐私政策。
+**AI 对话功能（含 `/服务器QA`）：** 当用户使用该功能时，以下内容将被传输至 **DeepSeek**（api.deepseek.com）以生成回复：用户发送的**消息内容**；该群最近与机器人的对话（含发言人的昵称）和群聊总结；参与对话的成员的长期记忆和本机器人对他们的印象；若运营者开启「AI 看全部聊天」，还包括群里最近的全部聊天（含昵称），群聊总结也会包括这些聊天；运营者在配置中为个别成员写的身份说明（例如“机器人的作者”），连同该成员当前的昵称；当天组队游戏的队伍名单（昵称和游戏状态）、当天过生日的成员的昵称、正在进行的投票（问题、选项和票数，不含投票人），以及正在进行的意见征集（主题和已收到的条数）。每次回复前，机器人会把这条消息和它上一条回复发给 DeepSeek，判断回复的风格和长短；每次回复后，还会把这一轮对话发给 DeepSeek（最多两次），用于整理和核对发言人的长期记忆和印象；每天整理记忆时，会把这位成员最近的片段和现有的长期记忆发给 DeepSeek 归纳。每周小报（统计数字和上榜成员的昵称）也会发给 DeepSeek，生成一两句点评。意见征集结束时，若收到 3 条以上意见，会把征集的主题和全部意见（不含提意见的人）发给 DeepSeek，生成一段总结。在开启「主动开话题」的群里，群里安静一段时间后，机器人会把该群最近与它的对话和群聊总结发给 DeepSeek，由它主动说一句话。传输内容**不包含**成员标识或群组标识（member_openid、group_openid）。`/服务器QA` 只传输问题本身。请勿通过 AI 对话功能发送敏感或私密信息。DeepSeek 的数据处理方式适用其自身隐私政策。
 
 > 若部署时未配置 DeepSeek 密钥，AI 对话与 `/服务器QA` 功能将自动停用，届时不存在任何第三方数据传输。
 
@@ -102,8 +103,9 @@
 - **主动开话题**（仅在运营者开启的群）：每个群只保留最后一条消息的时间，新的替换旧的；本机器人被移出该群时删除。
 - **生日**：保留到成员自己用 `/生日 删除` 删除、管理员按要求删除，或本机器人被移出该群为止。
 - **投票**：结束 **30 天**后连同投票记录一起删除；进行中的投票 7 天后自动结束。
+- **意见征集**：结束 **30 天**后连同全部意见一起删除；没人结束的征集 30 天后自动关闭。
 - **`/翻牌子` 的记录**：2 天后删除。
-- **本机器人被移出某个群时**：立即删除该群的全部群管理数据、队伍名单、AI 对话记录、群聊总结、长期记忆、生日和投票。
+- **本机器人被移出某个群时**：立即删除该群的全部群管理数据、队伍名单、AI 对话记录、群聊总结、长期记忆、生日、投票和意见征集。
 - 群组绑定、订阅状态、游戏状态、睡眠记录**仅保存在服务器内存中**，机器人重启后即全部清除；睡眠记录在记录后 **24 小时**自动删除。
 - 运行日志保留期不超过 **30 天**，到期自动删除。
 - **服务终止时**，我们将在 **24 小时内**删除全部用户数据，包括运行日志。
@@ -167,6 +169,8 @@ splits managed and unmanaged groups.
   - with `ai_chat.hear_all` on, in managed groups: every text message in the group (not commands),
     with nicknames, kept like the messages above
   - in groups listed under `ai_chat.topics`: the time of the last message there, nothing else
+- For the social features (`data/fun.db`): birthdays members register, polls with who voted for
+  what, 征集意见 with each opinion and who wrote it, and whom each member drew in `/翻牌子` today.
 - Runtime logs.
 
 **Explicitly not collected:** QQ numbers, phone numbers, passwords, ID documents, location,
@@ -182,15 +186,17 @@ only the line she's about to say: her own words, nothing from members. Each repl
 - the notes the operator wrote in `ai_chat.special_people` (who someone is, such as "the bot's
   author"), with that member's current nickname, for the members known in that group
 - today's team-game rosters (nicknames and game statuses, minus any under `hide_from_ai`), the
-  nicknames of members whose birthday is today, and the open poll (question, options and counts,
-  not who voted)
+  nicknames of members whose birthday is today, the open poll (question, options and counts,
+  not who voted), and the open 征集意见 (its topic and how many opinions it has)
 
 Before each reply, one call sends the message and the bot's previous reply, to judge how the reply
 should sound and how long it should be. After each reply, one or two more calls send that one
 exchange, to note memories and the impression and to check the memories were meant seriously.
 Each night, a member's recent notes and memories are sent once to be consolidated. The
 weekly digest
-(counts and top talkers' nicknames) is sent for its closing comment. In groups under
+(counts and top talkers' nicknames) is sent for its closing comment. When a 征集意见 ends with 3
+or more opinions, its topic and the opinions, without who wrote them, are sent for her summary
+(`ai_chat.opinion_summary`). In groups under
 `ai_chat.topics`, when the group has been quiet a while, the group's recent conversation with her
 and its summary are sent so she can speak up. Her day is planned from the persona alone. No openids are sent. `/服务器QA` sends only the question. The classifier runs locally, so nothing from the
 manager leaves the server except QQ API calls.
@@ -213,9 +219,10 @@ manager leaves the server except QQ API calls.
 | Her day, and when she spoke up or sent a voice message | 7 days, like AI chat turns | `ChatStore.prune` |
 | Birthdays (`data/fun.db`) | until `/生日 删除`, `/删除数据` or the bot leaves | `FunStore` |
 | Polls and votes | 30 days after closing; open polls close after 7 days | `POLL_KEEP_DAYS`, `POLL_DAYS` in `modules/fun/social/module.py` |
+| 征集意见 and their opinions | 30 days after ending; one nobody ends closes after 30 days | `OPINION_KEEP_DAYS`, `OPINION_DAYS` |
 | `/翻牌子` marks | 2 days | `SocialModule._prune` |
 | A group's data after the bot is removed | deleted immediately (manager data, rosters, AI chat) | `on_group_del_robot` in `main.py` |
-| Deletion on request | when an admin runs it (also takes them off every team and deletes their AI chat turns and memories, and the group's summary) | `/删除数据 @某人` |
+| Deletion on request | when an admin runs it (also takes them off every team; deletes their AI chat turns and memories, the group's summary, and their birthday, votes and opinions) | `/删除数据 @某人` |
 | botpy logs | 7 rotated files (< 30 days) | botpy's own `TimedRotatingFileHandler` |
 
 ### Before you submit, check these

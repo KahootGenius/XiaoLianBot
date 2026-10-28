@@ -83,7 +83,10 @@ Admins can use every action except `/抓` on any team.
 | `/投票 问题 选项…`, `/投票` | "Poll": start one, or show the open one |
 | `/投 A` | "Vote" for option A; voting again changes the vote |
 | `/结束投票` | "End the poll" (its starter or an admin) |
-| `/翻牌子` | "Flip a name tag": a joke draw among this week's active members, once a day | Teams clear daily at 05:00 Beijing time.
+| `/征集意见 主题`, `/征集意见` | "Call for opinions": an admin starts one, or anyone shows the open one (also `/意见征集`) |
+| `/意见 内容`, `/意见 撤回` | "Opinion": add one (up to 3 each), or take back my latest |
+| `/结束征集` | "End the call": lists every opinion, then her summary (its starter or an admin; also `/结束征集意见`) |
+| `/翻牌子` | "Flip a name tag": a joke draw among this week's active members, once a day (admins: as often as they like) | Teams clear daily at 05:00 Beijing time.
 
 ### Inherited from Castorice
 

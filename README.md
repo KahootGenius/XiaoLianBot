@@ -174,12 +174,18 @@ For the group's games, where a few captains pick teams:
   wishes them a happy birthday. `/本月生日` lists the month's birthdays.
 - **Polls:** `/投票 问题 选项1 选项2 …`, then `/投 A`; `/结束投票` closes it. There's one open poll
   per group, results show who voted for what, and polls close themselves after 7 days.
+- **征集意见:** an admin asks the group with `/征集意见 主题`, and members answer with
+  `/意见 你的想法`: up to 3 each, and `/意见 撤回` takes back the latest. `/结束征集` lists every
+  opinion with who wrote it; with AI chat on, she then sums them up. One is open per group at a
+  time, and one nobody ends closes by itself after 30 days.
 - **`/翻牌子`:** a joke lucky draw among the week's active members, weighted by how much they
-  posted; once a day each. @ a few people to draw among them instead.
+  posted; once a day each, while admins can flip as often as they like. @ a few people to draw
+  among them instead. `social.flip.special` in `config.yaml` can give a member their own chances
+  of drawing particular people.
 - **The weekly digest** ends with a short in-character comment written by DeepSeek from the
   digest's numbers.
 - **Buttons:** replies with an obvious next step offer tap-to-send buttons: `/帮助`, `/今日运势`,
-  `/我的状态`, `/排行` and `/成就`, the team list, polls, 21点, dice, 发癫, `/翻牌子`, birthdays,
+  `/我的状态`, `/排行` and `/成就`, the team list, polls, 征集意见, 21点, dice, 发癫, `/翻牌子`, birthdays,
   `/我的记忆` and `/mc状态`. Admins get them under `/管理帮助` and the removal lists, where QQ asks
   before 「确认移出」 or 「已移出」 goes through. If QQ refuses buttons, replies are plain text for
   six hours.

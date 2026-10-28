@@ -165,6 +165,13 @@ class ManagerModule:
         row = self.store.member(group, member)
         return row["nickname"] if row else None
 
+    def current_nickname(self, group, member):
+        """The nickname of someone still in a managed group ("" when they have none), or None."""
+        row = self.store.member(group, member)
+        if row is None or row["status"] != "active":
+            return None
+        return row["nickname"] or ""
+
     def mode(self, group):
         row = self.store.group(group)
         return (row["mode"] if row and row["mode"] else None) or self.settings.mode

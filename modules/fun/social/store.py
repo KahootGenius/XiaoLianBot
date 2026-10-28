@@ -1,6 +1,6 @@
-"""SQLite persistence for the social features (data/fun.db): birthdays, polls, and
-once-a-day marks (birthday wishes, 翻牌子). See docs/PRIVACY_POLICY.md for how
-long each is kept.
+"""SQLite persistence for the social features (data/fun.db): birthdays, polls,
+征集意见 with their opinions, and once-a-day marks (birthday wishes, 翻牌子). See
+docs/PRIVACY_POLICY.md for how long each is kept.
 """
 import json
 import os
@@ -35,6 +35,25 @@ CREATE TABLE IF NOT EXISTS votes (
     voted_at INTEGER NOT NULL,
     PRIMARY KEY (poll_id, member_openid)
 );
+CREATE TABLE IF NOT EXISTS opinion_calls (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_openid TEXT NOT NULL,
+    topic TEXT NOT NULL,
+    creator TEXT NOT NULL,           -- member_openid
+    creator_name TEXT,
+    created_at INTEGER NOT NULL,
+    closed_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_opinion_calls_group ON opinion_calls (group_openid, closed_at);
+CREATE TABLE IF NOT EXISTS opinions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    call_id INTEGER NOT NULL,
+    member_openid TEXT NOT NULL,
+    nickname TEXT,
+    text TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_opinions_call ON opinions (call_id);
 CREATE TABLE IF NOT EXISTS daily (
     group_openid TEXT NOT NULL,
     member_openid TEXT NOT NULL,
@@ -120,6 +139,35 @@ class FunStore:
     def votes(self, poll_id):
         return self._all("SELECT * FROM votes WHERE poll_id = ? ORDER BY voted_at", poll_id)
 
+    # ---- 征集意见
+
+    def open_call(self, group):
+        return self._one("SELECT * FROM opinion_calls WHERE group_openid = ? AND closed_at IS NULL "
+                         "ORDER BY id DESC LIMIT 1", group)
+
+    def create_call(self, group, topic, creator, creator_name, ts):
+        return self._write("INSERT INTO opinion_calls (group_openid, topic, creator, creator_name, created_at) "
+                           "VALUES (?, ?, ?, ?, ?)", group, topic, creator, creator_name, ts).lastrowid
+
+    def close_call(self, call_id, ts):
+        self._write("UPDATE opinion_calls SET closed_at = ? WHERE id = ? AND closed_at IS NULL", ts, call_id)
+
+    def add_opinion(self, call_id, member, nickname, text, ts):
+        self._write("INSERT INTO opinions (call_id, member_openid, nickname, text, created_at) VALUES (?, ?, ?, ?, ?)",
+                    call_id, member, nickname, text, ts)
+
+    def opinions(self, call_id):
+        return self._all("SELECT * FROM opinions WHERE call_id = ? ORDER BY id", call_id)
+
+    def take_back(self, call_id, member):
+        """Deletes the member's latest opinion in this call; returns its text, or None."""
+        row = self._one("SELECT id, text FROM opinions WHERE call_id = ? AND member_openid = ? ORDER BY id DESC LIMIT 1",
+                        call_id, member)
+        if row is None:
+            return None
+        self._write("DELETE FROM opinions WHERE id = ?", row["id"])
+        return row["text"]
+
     # ---- once a day
 
     def daily(self, group, member, kind):
@@ -135,24 +183,35 @@ class FunStore:
 
     # ---- retention and deletion
 
-    def prune(self, before_day, closed_before_ts):
-        """Once-a-day marks from earlier days, and polls closed long ago with their votes."""
+    def prune(self, before_day, closed_before_ts, calls_closed_before_ts):
+        """Once-a-day marks from earlier days, polls closed long ago with their votes, and
+        征集意见 closed long ago with their opinions."""
         self._write("DELETE FROM daily WHERE day < ?", before_day)
         old = [r["id"] for r in self._all("SELECT id FROM polls WHERE closed_at < ?", closed_before_ts)]
         for poll_id in old:
             self._write("DELETE FROM votes WHERE poll_id = ?", poll_id)
             self._write("DELETE FROM polls WHERE id = ?", poll_id)
+        old = [r["id"] for r in self._all("SELECT id FROM opinion_calls WHERE closed_at < ?", calls_closed_before_ts)]
+        for call_id in old:
+            self._write("DELETE FROM opinions WHERE call_id = ?", call_id)
+            self._write("DELETE FROM opinion_calls WHERE id = ?", call_id)
 
     def forget_member(self, group, member):
-        """Their birthday, their votes and marks. Polls they started stay, without their name."""
+        """Their birthday, votes, opinions and marks. Polls and 征集意见 they started stay,
+        without their name."""
         self.delete_birthday(group, member)
         self._write("DELETE FROM daily WHERE group_openid = ? AND member_openid = ?", group, member)
         self._write("DELETE FROM votes WHERE member_openid = ? AND poll_id IN "
                     "(SELECT id FROM polls WHERE group_openid = ?)", member, group)
         self._write("UPDATE polls SET creator = '', creator_name = NULL WHERE group_openid = ? AND creator = ?",
                     group, member)
+        self._write("DELETE FROM opinions WHERE member_openid = ? AND call_id IN "
+                    "(SELECT id FROM opinion_calls WHERE group_openid = ?)", member, group)
+        self._write("UPDATE opinion_calls SET creator = '', creator_name = NULL WHERE group_openid = ? AND creator = ?",
+                    group, member)
 
     def forget_group(self, group):
         self._write("DELETE FROM votes WHERE poll_id IN (SELECT id FROM polls WHERE group_openid = ?)", group)
-        for table in ("polls", "birthdays", "daily"):
+        self._write("DELETE FROM opinions WHERE call_id IN (SELECT id FROM opinion_calls WHERE group_openid = ?)", group)
+        for table in ("polls", "opinion_calls", "birthdays", "daily"):
             self._write(f"DELETE FROM {table} WHERE group_openid = ?", group)

@@ -48,7 +48,8 @@ secret: "YOUR_APP_SECRET"
 #   memories_per_member: 8   # long-term facts per member; the weakest go first (see modules/ai/memory.py)
 #   memory_check: true       # check each new memory with one more cheap call, so jokes aren't kept
 #   digest_comment: true     # end the weekly digest with a short in-character comment
-#   game_state: true         # tell the bot today's teams, birthdays and open poll (teams.yaml hide_from_ai)
+#   opinion_summary: true    # after /结束征集 lists the opinions, she sums them up (3 or more)
+#   game_state: true         # tell the bot today's teams, birthdays, open poll and 征集意见 (teams.yaml hide_from_ai)
 #   dynamic_temperature: true    # judge each reply's temperature and length first (one more cheap call)
 #   temperatures: {严谨: 0.6, 平衡: 1.0, 奔放: 1.15}   # the temperature for each judgement
 #   stickers: true           # send stickers from local/stickers/ when she writes [表情:标签]
@@ -81,6 +82,19 @@ secret: "YOUR_APP_SECRET"
 #   model: speech-2.8-turbo
 #   speed: 1.0
 #   per_day: 5                    # voice messages per group per day
+
+# --- Optional: social features ---
+# A member with their own /翻牌子 chances. Key: the flipper's member_openid (@机器人 /我的ID);
+# under it, the members they may draw and each one's chance in percent (60 or "60%").
+# What the chances leave over goes to the usual draw among the week's active members,
+# without the people listed; at 100 or more in total it's only among them. Someone listed
+# who has left the group isn't drawn. See docs/CUSTOMIZING.md.
+# social:
+#   flip:
+#     special:
+#       "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX":        # 张三 flips...
+#         "YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY": 60   # ...李四 six times in ten
+#         "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ": 20   # ...王五 twice in ten
 
 # --- Optional: outbound proxy for the Steam scraper ---
 # Only needed if store.steampowered.com is unreachable from your host.

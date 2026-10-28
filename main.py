@@ -58,12 +58,15 @@ class MyClient(botpy.Client):
         if self.ai_chat_module.enabled:
             self.manager_module.digest_commenter = self.ai_chat_module.comment_on_digest
         self.social_module = SocialModule(self.gateway, is_admin=self.manager_module.is_admin,
-                                          activity=self.manager_module.active_members)
+                                          activity=self.manager_module.active_members, config=config,
+                                          nickname_of=self.manager_module.current_nickname)
+        if self.ai_chat_module.enabled:
+            self.social_module.opinion_summarizer = self.ai_chat_module.summarize_opinions
         reserved = (HelpModule.TRIGGERS + CASTORICE_COMMANDS + ai_chat.COMMANDS + social.COMMANDS
                     + tuple(name for name, *_ in self.manager_module.commands))
         self.teams_module = TeamsModule(self.gateway, config, is_admin=self.manager_module.is_admin,
                                         nickname_of=self.manager_module.known_nickname, reserved=reserved)
-        # AI chat knows today's teams, birthdays and poll, so she can play along.
+        # AI chat knows today's teams, birthdays, poll and 征集意见, so she can play along.
         self.ai_chat_module.teams_today = self.teams_module.today_for_ai
         self.ai_chat_module.social_today = self.social_module.today_for_ai
         # /删除数据 @某人 also clears their team place and what AI chat kept about them.

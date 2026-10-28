@@ -88,6 +88,7 @@ PROMPT_FIELDS = {
     "team_line": {"captain", "members"},
     "today_birthdays": {"members"},
     "today_poll": {"question", "options"},
+    "today_opinions": {"topic", "count"},
     "recent_actions": {"actions"},
     "her_day": {"events"},
     "summary_prefix": set(),
@@ -98,6 +99,7 @@ PROMPT_FIELDS = {
     "topic_cue": {"hours"},
     "summary": set(),
     "digest_comment": {"digest"},
+    "opinion_summary": {"topic", "opinions"},
     "day": {"date", "weekday"},
     "observer": {"member", "known", "impression", "said", "reply", "max_text", "max_adds", "max_impression"},
     "register": {"member", "said", "last"},
@@ -113,6 +115,8 @@ NOTES_LEFT_DAYS = 2         # recent notes this old are consolidated whenever ho
 HEARD_TEXT = 300            # characters kept of each message that didn't @ the bot (hear_all)
 MEMORY_SPEAKERS = 5         # members whose memories ride along: the speaker plus recent ones
 DIGEST_COMMENT_LIMIT = 120  # characters; the prompt asks for 60
+OPINION_SUMMARY_MIN = 3     # a 征集意见 with fewer opinions than this ends without her summary
+OPINION_SUMMARY_LIMIT = 300  # characters; the prompt asks for 150
 DEFAULT_TEMPERATURE = 1.0   # chat replies when dynamic_temperature is off or its judgement fails
 WEEKDAYS = "一二三四五六日"
 DAY = 86400
@@ -184,6 +188,7 @@ class AIChatModule:
         self.consolidated_on = None     # the day the nightly consolidation last ran
         self.memory_check = bool(chat.get("memory_check", True))
         self.digest_comment = bool(chat.get("digest_comment", True))
+        self.opinion_summary = bool(chat.get("opinion_summary", True))
         self.game_state = bool(chat.get("game_state", True))
         # seekchat's 动态想象力: one cheap call before each reply picks its temperature and length.
         self.dynamic = bool(chat.get("dynamic_temperature", True))
@@ -398,6 +403,9 @@ class AIChatModule:
                 question, options = today["poll"]
                 lines.append(render(self.prompts["today_poll"], question=question,
                                     options=join([f"{label}. {option}：{votes}" for label, option, votes in options])))
+            if today.get("opinions"):
+                topic, count = today["opinions"]
+                lines.append(render(self.prompts["today_opinions"], topic=topic, count=count))
         actions = context.recent_actions(window)
         if actions:
             lines.append(render(self.prompts["recent_actions"], actions="".join(f"「{a}」" for a in actions)))
@@ -767,6 +775,26 @@ class AIChatModule:
             return None
         text = text.strip().strip("“”\"")
         return text[:DIGEST_COMMENT_LIMIT] or None
+
+    async def summarize_opinions(self, topic, opinions):
+        """A few in-character lines on what members said in a 征集意见 that just ended, or None.
+
+        Only the topic and the opinions go to DeepSeek, not who wrote them. A failure just means
+        the list goes out without her summary.
+        """
+        if not (self.enabled and self.opinion_summary) or len(opinions) < OPINION_SUMMARY_MIN:
+            return None
+        listed = "\n".join(f"{i}. {text}" for i, text in enumerate(opinions, 1))
+        try:
+            text = await self._complete(self.client, self.helper_model, [
+                {"role": "system", "content": current().system_prompt},
+                {"role": "user", "content": render(self.prompts["opinion_summary"], topic=topic, opinions=listed)},
+            ])
+        except Exception as e:
+            _log.warning(f"[AIChat] 意见征集的总结没写成: {e}")
+            return None
+        text = stickers.extract(voice.as_text(text.strip()), {})[0]
+        return text[:OPINION_SUMMARY_LIMIT] or None
 
     # ------------------------------------------------------------------ her day, and speaking up
 

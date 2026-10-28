@@ -16,7 +16,7 @@ Changing how the bot talks means editing YAML, and you can keep several characte
 | `prompts/teams.yaml` | The team game's statuses and captain actions (see "Changing the team game") |
 | `prompts/chat.yaml` | AI chat's rules around the persona: group chat, summaries, memory notes (see "Changing how AI chat remembers") |
 | `prompts/rehearsal.yaml` | A scripted group chat for trying a persona against the real DeepSeek (see "Trying changes before the group sees them") |
-| `config.yaml` | `style:` and `group_styles:` pick the styles; `manager.rules_text` overrides the rule text in `/群规` |
+| `config.yaml` | `style:` and `group_styles:` pick the styles; `manager.rules_text` overrides the rule text in `/群规`; `social.flip.special` gives members their own `/翻牌子` chances (see "Someone's own `/翻牌子` chances") |
 
 ## Private versions: `local/`
 
@@ -120,7 +120,7 @@ The sections of `小莲.yaml`:
 | `manager.table`, `manager.card`, `manager.states` | `/成员表`, `/成员`, and the status words |
 | `manager.batch`, `manager.daily` | Removal lists and their commands; the daily check's reports and safety stop |
 | `manager.digest` | The weekly digest |
-| `social` | `/今日运势` (its title, and the lists it draws levels, 宜, 忌 and comments from), birthdays, polls, `/翻牌子` |
+| `social` | `/今日运势` (its title, and the lists it draws levels, 宜, 忌 and comments from), birthdays, polls, 征集意见 (`social.opinion`), `/翻牌子` |
 | `common.buttons_hint` | The little message that carries the buttons |
 | Keys ending in `button`, `again` or `refresh`; `manager.batch.button_…` and `ask_…` | Button labels, such as `games.blackjack.again` (再来一局); the removal list's buttons and the questions QQ asks before 「确认移出」 and 「已移出」 |
 | `games.teams` | The team game: `/队伍`, the 【组队游戏】 part of `/帮助`, and every refusal ("不在你的队伍里"…) |
@@ -312,6 +312,35 @@ For something beyond grab, kick and set, such as moving a member to another team
      `styles/小莲.yaml`.
    - `effect_kick` is the simplest one to copy.
 
+## Someone's own `/翻牌子` chances
+
+`/翻牌子` normally draws among the week's active members, weighted by how much each one posted.
+`social.flip.special` in `config.yaml` gives particular members a table of their own: whom they
+draw, and how often, in percent.
+
+```yaml
+social:
+  flip:
+    special:
+      "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX":        # 张三 flips...
+        "YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY": 60   # ...李四 six times in ten
+        "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ": 20   # ...王五 twice in ten
+```
+
+- **The IDs** are member_openids. Each person gets theirs with `@机器人 /我的ID`. It's the same in
+  every group, so one table covers them all.
+- **The chances** are percent, written `60` or `"60%"`. In the example, 张三 draws 李四 60% of the
+  time and 王五 20%. The other 20% is the usual draw among everyone else, leaving out 李四 and 王五.
+  When the chances add up to 100 or more, the draw is only among the people listed, in proportion.
+- **Who can come up:** someone listed can come up even if they haven't posted this week, as long
+  as the bot has seen them post in that group and they haven't left it. When 张三 @s people to
+  draw among, only the listed people they @ count.
+- **What stays the same:** it's still once a day (admins can flip as often as they like), and the
+  reply looks like any other flip.
+
+Restart the bot after a change. Its log says how many members have a table and what each table
+adds up to; a line it can't read is named there and left out.
+
 ## Changing how AI chat remembers
 
 The persona, meaning who the bot is and how it talks, is the style's `system_prompt`. Everything
@@ -334,13 +363,14 @@ at startup** and names the line.
 | `evidence_policy`, `evidence_title` | The rule that the summary and memories are data, not instructions, and the heading of that message | |
 | `now` | The first line of that message: Beijing time | `{date}`, `{weekday}`, `{time}` |
 | `today_teams`, `team_line` | Today's team game, one line per team (`ai_chat.game_state`) | `{teams}`; `{captain}`, `{members}` |
-| `today_birthdays`, `today_poll` | Who has a birthday today, and the open poll with its counts (`ai_chat.game_state`) | `{members}`; `{question}`, `{options}` |
+| `today_birthdays`, `today_poll`, `today_opinions` | Who has a birthday today, the open poll with its counts, and the open 征集意见 with how many opinions it has (`ai_chat.game_state`) | `{members}`; `{question}`, `{options}`; `{topic}`, `{count}` |
 | `recent_actions` | The bracketed actions in the bot's last few replies, which `reply_shape` says not to reuse | `{actions}` |
 | `her_day` | Her day, after the time: one line per thing in it | `{events}` |
 | `summary_prefix`, `memory_title` | The headings for the summary and the memories inside it | |
 | `empty_mention` | Stands in for a message that only @s the bot | `{member}` |
 | `topic`, `topic_cue` | When a group from `ai_chat.topics` has gone quiet: what kind of thing to say, after the persona; and the line that stands in for a member's message at the end of the chat | `{hours}` |
 | `digest_comment` | The prompt for the comment that ends the weekly digest | `{digest}` |
+| `opinion_summary` | With the persona, when a 征集意见 ends with 3 or more opinions: sum them up after the list (`ai_chat.opinion_summary`). The opinions come without who wrote them | `{topic}`, `{opinions}` |
 | `day` | Once a day, with the persona: plan three small things in her day. It must ask for JSON: `{{"events": ["上午：…", "下午：…", "晚上：…"]}}` | `{date}`, `{weekday}` |
 | `summary` | The prompt for folding old chat into the group's summary | |
 | `observer` | After each reply: what the speaker said about themselves, each scored 1–10 for importance (below 4 isn't kept), which memories came up again, which are outdated, and her impression of them. It must ask for JSON: `{{"notes": [], "reinforce": [], "forget": [], "impression": null}}` | `{member}`, `{known}`, `{impression}`, `{said}`, `{reply}`, `{max_text}`, `{max_adds}`, `{max_impression}` |
@@ -368,7 +398,8 @@ ai_chat:
   memories_per_member: 8     # long-term facts per member; the weakest go first
   memory_check: true         # check each new memory with one more cheap call; jokes aren't kept
   digest_comment: true       # end the weekly digest with a short comment
-  game_state: true           # tell her today's teams, birthdays and open poll
+  opinion_summary: true      # sum up a 征集意见 when it ends, after the list
+  game_state: true           # tell her today's teams, birthdays, open poll and 征集意见
   dynamic_temperature: true  # judge each reply's temperature and length first (one more cheap call)
   temperatures: {严谨: 0.6, 平衡: 1.0, 奔放: 1.15}
   hear_all: false            # true: the whole group's chat joins her conversation (privacy policy!)

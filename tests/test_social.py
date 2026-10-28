@@ -1,5 +1,5 @@
-"""今日运势, birthdays, polls and 翻牌子; buttons, under these and the games; the digest's AI comment;
-rolls in the team game."""
+"""今日运势, birthdays, polls, 征集意见 and 翻牌子; buttons, under these and the games; the digest's AI
+comment; rolls in the team game."""
 import os
 import random
 import shutil
@@ -15,7 +15,7 @@ from modules.fun.blackjack import BlackjackModule
 from modules.fun.crazy_talk import CrazyTalkModule
 from modules.fun.dice import DiceModule
 from modules.fun.social import SocialModule
-from modules.fun.social.module import parse_birthday
+from modules.fun.social.module import parse_birthday, read_flip_special
 from modules.fun.social.store import FunStore
 from modules.fun.teams.rules import load_rules
 from modules.manager.openapi import QQGateway
@@ -26,15 +26,27 @@ from tests.test_teams import TeamGameTestCase, shipped_rules
 NAMES = {"A": "小明", "B": "小红", "C": "小刚", "ADMIN": "管理员"}
 
 
+class Roll(random.Random):
+    """A random source that always rolls the same number, choices() included."""
+
+    def __init__(self, roll):
+        super().__init__()
+        self.roll = roll
+
+    def random(self):
+        return self.roll
+
+
 class SocialTestCase(unittest.IsolatedAsyncioTestCase):
-    def make(self, activity=None):
+    def make(self, activity=None, config=None, nickname_of=None, rng=None):
         self.now = START
         self.gw = FakeGateway()
         self.store = FunStore(":memory:")
         self.addCleanup(self.store.db.close)
         self.social = SocialModule(self.gw, store=self.store, clock=lambda: self.now,
                                    is_admin=lambda group, member, role=None: member == "ADMIN",
-                                   activity=activity, rng=random.Random(7))
+                                   activity=activity, rng=rng or random.Random(7), config=config,
+                                   nickname_of=nickname_of)
         return self.social
 
     async def say(self, member, text, mentions=(), group=GROUP):
@@ -99,15 +111,25 @@ class BirthdayTest(SocialTestCase):
 class TodayForAITest(SocialTestCase):
     async def test_ai_chat_hears_of_todays_birthdays_and_the_open_poll(self):
         self.make()
-        self.assertEqual(self.social.today_for_ai(GROUP), {"birthdays": [], "poll": None})
+        self.assertEqual(self.social.today_for_ai(GROUP), {"birthdays": [], "poll": None, "opinions": None})
         await self.say("A", "/生日 11-1")                     # today
         await self.say("B", "/生日 11-2")
         await self.say("A", "/投票 周六几点开？ 19点 20点")
         await self.say("B", "/投 A")
         self.assertEqual(self.social.today_for_ai(GROUP),
-                         {"birthdays": ["小明"], "poll": ("周六几点开？", [("A", "19点", 1), ("B", "20点", 0)])})
+                         {"birthdays": ["小明"], "poll": ("周六几点开？", [("A", "19点", 1), ("B", "20点", 0)]),
+                          "opinions": None})
         self.now += timedelta(days=8)                         # the poll has run out of time
-        self.assertEqual(self.social.today_for_ai(GROUP), {"birthdays": [], "poll": None})
+        self.assertEqual(self.social.today_for_ai(GROUP), {"birthdays": [], "poll": None, "opinions": None})
+
+    async def test_and_of_the_open_call_for_opinions(self):
+        self.make()
+        await self.say("ADMIN", "/征集意见 下个月玩什么？")
+        await self.say("A", "/意见 狼人杀")
+        self.assertEqual(self.social.today_for_ai(GROUP)["opinions"], ("下个月玩什么？", 1))
+        self.now += timedelta(days=30)                        # nobody ended it: it closes by itself
+        self.assertIsNone(self.social.today_for_ai(GROUP)["opinions"])
+        self.assertIn("没有在征集意见", await self.say("A", "/征集意见"))
 
 
 class PollTest(SocialTestCase):
@@ -141,6 +163,96 @@ class PollTest(SocialTestCase):
         self.assertIn("📊 再来", await self.say("B", "/投票 再来 甲 乙"))
 
 
+class OpinionTest(SocialTestCase):
+    async def test_a_call_for_opinions_from_start_to_end(self):
+        self.make()
+        self.assertIn("没有在征集意见", await self.say("A", "/征集意见"))
+        self.assertIn("只有管理员", await self.say("A", "/征集意见 下个月玩什么？"))
+        started = await self.say("ADMIN", "/征集意见 下个月玩什么？")
+        self.assertIn("📮 管理员 发起了意见征集：下个月玩什么？", started)
+        self.assertIn("每人最多 3 条", started)
+        self.assertEqual(self.gw.buttons[-1], (GROUP, [[("提意见", "/意见 ")]]))     # typed in, for the opinion
+        self.assertIn("正在征集「下个月玩什么？」", await self.say("ADMIN", "/征集意见 另一个"))
+        self.assertIn("收到 小明 的意见～（现在 1 人提了 1 条）", await self.say("A", "/意见 想玩狼人杀"))
+        await self.say("A", "/意见：周末晚上比较好")              # with a colon
+        await self.say("B", "/意见想去KTV")                       # without a space
+        self.assertIn("用法", await self.say("C", "/意见"))
+        self.assertIn("最多 200 个字", await self.say("C", "/意见 " + "长" * 201))
+        await self.say("A", "/意见 第三条")
+        self.assertIn("每人最多提 3 条", await self.say("A", "/意见 第四条"))
+        self.assertIn("收回了：第三条", await self.say("A", "/意见 撤回"))
+        self.assertIn("还没有提过意见", await self.say("C", "/意见 撤回"))
+        status = await self.say("C", "/意见征集")
+        self.assertIn("📮 正在征集意见：下个月玩什么？（发起：管理员）\n已有 2 人提了 3 条", status)
+        self.assertIn("只有发起人或管理员", await self.say("C", "/结束征集"))
+        ended = await self.say("ADMIN", "/结束征集")
+        self.assertEqual(ended, "📮 意见征集结束：下个月玩什么？（2 人，共 3 条）\n"
+                                "1. 小明：想玩狼人杀\n2. 小明：周末晚上比较好\n3. 小红：想去KTV")
+        self.assertIn("没有在征集意见", await self.say("A", "/意见 晚了"))
+        await self.say("ADMIN", "/征集意见 空的\n第二行")
+        self.assertIn("意见征集结束：空的 第二行\n这次没有人提意见", await self.say("ADMIN", "/结束征集意见"))
+
+    async def test_her_summary_follows_the_list(self):
+        self.make()
+        heard = []
+
+        async def summarizer(topic, opinions):
+            heard.append((topic, opinions))
+            return "好几个人都想玩狼人杀～"
+        self.social.opinion_summarizer = summarizer
+        await self.say("ADMIN", "/征集意见 玩什么")
+        await self.say("A", "/意见 狼人杀")
+        await self.say("B", "/意见 也是狼人杀")
+        ended = await self.say("ADMIN", "/结束征集")
+        self.assertTrue(ended.endswith("2. 小红：也是狼人杀\n💬 小莲看完大家的意见：\n好几个人都想玩狼人杀～"))
+        self.assertEqual(heard, [("玩什么", ["狼人杀", "也是狼人杀"])])       # not who wrote them
+
+    async def test_a_long_list_goes_out_in_parts(self):
+        self.make()
+        await self.say("ADMIN", "/征集意见 玩什么")
+        for member in "ABCDEFGH":
+            for i in range(3):
+                await self.say(member, f"/意见 {member}{i}" + "想" * 100)
+        before = len(self.gw.sent)
+        await self.say("ADMIN", "/结束征集")
+        parts = [content for _, content, _ in self.gw.sent[before:]]
+        self.assertGreater(len(parts), 2)
+        self.assertTrue(all(len(part) <= 900 for part in parts))
+        self.assertIn("24. H：H2", parts[-1])
+
+    async def test_forgetting_someone_and_clearing_old_calls(self):
+        self.make()
+        await self.say("ADMIN", "/征集意见 玩什么")
+        await self.say("A", "/意见 狼人杀")
+        await self.say("B", "/意见 KTV")
+        self.social.forget_member(GROUP, "A")
+        self.assertIn("已有 1 人提了 1 条", await self.say("C", "/征集意见"))
+        await self.say("ADMIN", "/结束征集")
+        self.now += timedelta(days=31)
+        await self.say("C", "/征集意见")                      # the day's housekeeping runs first
+        self.assertEqual(self.store.db.execute("SELECT COUNT(*) FROM opinions").fetchone()[0], 0)
+        self.assertEqual(self.store.db.execute("SELECT COUNT(*) FROM opinion_calls").fetchone()[0], 0)
+
+
+class OpinionSummaryTest(unittest.IsolatedAsyncioTestCase):
+    async def test_ai_sums_them_up_in_character(self):
+        client, store = FakeDeepSeek(), ChatStore(":memory:")
+        self.addCleanup(store.db.close)
+        ai = AIChatModule(FakeGateway(), {}, store=store, client=client)
+        self.assertIsNone(await ai.summarize_opinions("玩什么", ["狼人杀", "KTV"]))     # two need no summary
+        self.assertEqual(client.requests("chat"), [])
+        client.answers["chat"].append("好几个人提到狼人杀[表情:开心]")
+        self.assertEqual(await ai.summarize_opinions("玩什么", ["狼人杀", "也是狼人杀", "KTV"]), "好几个人提到狼人杀")
+        request = client.requests("chat")[-1]["messages"]
+        self.assertIn("你是「小莲」", request[0]["content"])
+        self.assertIn("主题是「玩什么」", request[1]["content"])
+        self.assertIn("1. 狼人杀\n2. 也是狼人杀\n3. KTV", request[1]["content"])
+        client.answers["chat"].append(RuntimeError("余额不足"))
+        self.assertIsNone(await ai.summarize_opinions("玩什么", ["一", "二", "三"]))   # the list goes out without it
+        off = AIChatModule(FakeGateway(), {"ai_chat": {"opinion_summary": False}}, store=store, client=client)
+        self.assertIsNone(await off.summarize_opinions("玩什么", ["一", "二", "三"]))
+
+
 class FlipTest(SocialTestCase):
     async def test_this_weeks_active_members_weighted(self):
         rows = [{"member_openid": "B", "nickname": "小红", "n": 1000}, {"member_openid": "C", "nickname": "小刚", "n": 1},
@@ -152,11 +264,65 @@ class FlipTest(SocialTestCase):
         self.now = START + timedelta(days=1)
         self.assertNotIn("已经翻过", await self.say("A", "/翻牌子"))
 
+    async def test_admins_flip_as_often_as_they_like(self):
+        rows = [{"member_openid": "B", "nickname": "小红", "n": 3}, {"member_openid": "C", "nickname": "小刚", "n": 3}]
+        self.make(activity=lambda group, since: rows)
+        for _ in range(4):
+            flipped = await self.say("ADMIN", "/翻牌子")
+            self.assertIn("📜", flipped)
+            self.assertNotIn("已经翻过", flipped)
+        await self.say("A", "/翻牌子")
+        self.assertIn("今天已经翻过牌子啦", await self.say("A", "/翻牌子"))   # everyone else, once a day
+
     async def test_mentions_or_an_unmanaged_group(self):
         self.make()                                         # no activity data: not a managed group
         self.assertIn("@ 几个人", await self.say("A", "/翻牌子"))
         picked = await self.say("A", "/翻牌子", mentions=["C"])
         self.assertIn("小刚", picked)
+
+
+class SpecialFlipTest(SocialTestCase):
+    ROWS = [{"member_openid": "B", "nickname": "小红", "n": 1000}, {"member_openid": "C", "nickname": "小刚", "n": 1},
+            {"member_openid": "A", "nickname": "小明", "n": 5000}]
+
+    @staticmethod
+    def special(table):
+        return {"social": {"flip": {"special": table}}}
+
+    async def test_their_chances_come_first_and_the_rest_is_the_usual_draw(self):
+        config = self.special({"A": {"C": 60}})
+        self.make(activity=lambda group, since: self.ROWS, config=config, rng=Roll(0.59))
+        self.assertIn("小刚", await self.say("A", "/翻牌子"))       # within A's 60%, though 小刚 posted once
+        self.make(activity=lambda group, since: self.ROWS, config=config, rng=Roll(0.61))
+        self.assertIn("小红", await self.say("A", "/翻牌子"))       # the other 40%: by posts, without 小刚
+        self.assertIn("小明", await self.say("B", "/翻牌子"))       # everyone else flips as before
+
+    async def test_a_hundred_percent_always_comes_up(self):
+        self.make(activity=lambda group, since: self.ROWS, config=self.special({"A": {"C": "100%"}}))
+        for day in range(7):
+            self.now = START + timedelta(days=day)
+            self.assertIn("小刚", await self.say("A", "/翻牌子"))
+
+    async def test_quiet_this_week_still_counts_but_not_after_leaving(self):
+        rows = [{"member_openid": "B", "nickname": "小红", "n": 3}]
+        self.make(activity=lambda group, since: rows, config=self.special({"A": {"D": 100, "E": 100}}),
+                  nickname_of=lambda group, member: "小丁" if member == "D" else None)     # E has left
+        for day in range(5):
+            self.now = START + timedelta(days=day)
+            self.assertIn("小丁", await self.say("A", "/翻牌子"))
+
+    async def test_with_mentions_only_those_mentioned(self):
+        self.make(config=self.special({"A": {"C": 100}}))      # an unmanaged group
+        self.assertIn("小红", await self.say("A", "/翻牌子", mentions=["B"]))
+        self.now += timedelta(days=1)
+        self.assertIn("小刚", await self.say("A", "/翻牌子", mentions=["B", "C"]))
+
+    def test_reading_the_tables(self):
+        tables = read_flip_special({"A": {"B": 60, "C": "25%", "D": 0, "E": "很多", "A": 50, "F": -3, "G": ".nan"},
+                                    "H": "不是名单", "I": {"B": 0}})
+        self.assertEqual(tables, {"A": {"B": 60.0, "C": 25.0}})
+        self.assertEqual(read_flip_special(None), {})
+        self.assertEqual(read_flip_special(["A"]), {})
 
 
 class ButtonsTest(unittest.IsolatedAsyncioTestCase):
