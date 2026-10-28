@@ -112,6 +112,20 @@ seekchat (`Desktop/ai`):
   inside her reply: one markdown message, with the image kept in QQ's image library. If QQ won't
   take that, it goes out as its own message under the text. `python -m modules.ai.stickers` checks
   the folder; `… import stickers.zip` brings in a seekchat pack.
+- **She has a day of her own.** Each day one cheap call plans three small things in it (上午、下午、
+  晚上) that fit her persona, as in seekchat. They ride along with every reply, so 「在干嘛」 gets the
+  same answer all day, and she brings them up now and then. `ai_chat.her_day: false` turns it off.
+- **She restarts a quiet group (only in the groups you list).** In the groups under
+  `ai_chat.topics`, once nobody has spoken for 3 hours between 10:00 and 22:00, she says something
+  herself: picks up an unfinished topic, tells about her day, or asks an easy question. At most
+  twice a day, and never twice into silence: if nobody answered her last one, she waits. Only the
+  time of each group's last message is kept for this. `python -m modules.ai.rehearse --topic`
+  shows what she'd say.
+- **She speaks (with a MiniMax key).** With a `voice` section in `config.yaml`, special moments
+  (good night, a birthday, comfort) can get a short voice message: she writes 「[语音:…]」 as in
+  seekchat, MiniMax says it in the voice you chose, and it goes under her reply. At most 5 a day
+  per group, and only her own words go to MiniMax. If it fails, her words go out as text for an
+  hour.
 - **She can follow the whole group (off by default).** With `ai_chat.hear_all`, every message in a
   managed group joins her conversation, marked 「（没@你）」 when it wasn't addressed to her, and
   the summary covers it. It stores everyone's chat for 7 days: update the privacy notice first.

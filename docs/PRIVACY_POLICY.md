@@ -48,6 +48,7 @@
    - 本机器人还会给每位和它聊过天的成员记一句「印象」（不超过 50 字），例如它怎么称呼对方、两人之间的玩笑，用于之后的聊天。
    - 每个群的对话和记忆分开保存，在一个群里说的话不会出现在另一个群。
    - 若运营者开启「AI 看全部聊天」（仅在开启群管理的群里有效）：群里**所有**的文字消息（含发言人的昵称，不含指令）也会作为 AI 对话记录保存，和上面的对话记录一样保留 7 天、并入群聊总结，用于让它了解群里在聊什么。
+   - 若运营者为某些群开启「主动开话题」：在这些群里只记录**最后一条消息的时间**（不含内容和发言人），用于判断群里是否已经安静了一段时间。
 
 7. **互动功能**
    - 成员**自己登记**的生日（只有月和日），用于当天祝福和 `/本月生日`。
@@ -73,9 +74,11 @@
 
 ### 三、第三方共享
 
-**AI 对话功能（含 `/服务器QA`）：** 当用户使用该功能时，以下内容将被传输至 **DeepSeek**（api.deepseek.com）以生成回复：用户发送的**消息内容**；该群最近与机器人的对话（含发言人的昵称）和群聊总结；参与对话的成员的长期记忆和本机器人对他们的印象；若运营者开启「AI 看全部聊天」，还包括群里最近的全部聊天（含昵称），群聊总结也会包括这些聊天；运营者在配置中为个别成员写的身份说明（例如“机器人的作者”），连同该成员当前的昵称；当天组队游戏的队伍名单（昵称和游戏状态）、当天过生日的成员的昵称，以及正在进行的投票（问题、选项和票数，不含投票人）。每次回复前，机器人会把这条消息和它上一条回复发给 DeepSeek，判断回复的风格和长短；每次回复后，还会把这一轮对话发给 DeepSeek（最多两次），用于整理和核对发言人的长期记忆和印象；每天整理记忆时，会把这位成员最近的片段和现有的长期记忆发给 DeepSeek 归纳。每周小报（统计数字和上榜成员的昵称）也会发给 DeepSeek，生成一两句点评。传输内容**不包含**成员标识或群组标识（member_openid、group_openid）。`/服务器QA` 只传输问题本身。请勿通过 AI 对话功能发送敏感或私密信息。DeepSeek 的数据处理方式适用其自身隐私政策。
+**AI 对话功能（含 `/服务器QA`）：** 当用户使用该功能时，以下内容将被传输至 **DeepSeek**（api.deepseek.com）以生成回复：用户发送的**消息内容**；该群最近与机器人的对话（含发言人的昵称）和群聊总结；参与对话的成员的长期记忆和本机器人对他们的印象；若运营者开启「AI 看全部聊天」，还包括群里最近的全部聊天（含昵称），群聊总结也会包括这些聊天；运营者在配置中为个别成员写的身份说明（例如“机器人的作者”），连同该成员当前的昵称；当天组队游戏的队伍名单（昵称和游戏状态）、当天过生日的成员的昵称，以及正在进行的投票（问题、选项和票数，不含投票人）。每次回复前，机器人会把这条消息和它上一条回复发给 DeepSeek，判断回复的风格和长短；每次回复后，还会把这一轮对话发给 DeepSeek（最多两次），用于整理和核对发言人的长期记忆和印象；每天整理记忆时，会把这位成员最近的片段和现有的长期记忆发给 DeepSeek 归纳。每周小报（统计数字和上榜成员的昵称）也会发给 DeepSeek，生成一两句点评。在开启「主动开话题」的群里，群里安静一段时间后，机器人会把该群最近与它的对话和群聊总结发给 DeepSeek，由它主动说一句话。传输内容**不包含**成员标识或群组标识（member_openid、group_openid）。`/服务器QA` 只传输问题本身。请勿通过 AI 对话功能发送敏感或私密信息。DeepSeek 的数据处理方式适用其自身隐私政策。
 
 > 若部署时未配置 DeepSeek 密钥，AI 对话与 `/服务器QA` 功能将自动停用，届时不存在任何第三方数据传输。
+
+**语音功能：** 若运营者配置了 MiniMax 密钥，本机器人偶尔会用语音回复：它要说的那句话会被发送至 **MiniMax**（api.minimax.io 或 api.minimax.cn）合成语音。发送的只有本机器人自己的话，**不包含**任何成员的消息、昵称或标识。MiniMax 的数据处理方式适用其自身隐私政策。未配置 MiniMax 密钥时，不存在这项传输。
 
 **群管理功能：** 有效发言的判断完全在本机器人服务器上完成，**不会**把群消息发送给任何第三方。提醒消息和移出操作通过 QQ 开放平台接口完成。
 
@@ -96,6 +99,7 @@
 - **最近的片段**：每天凌晨整理成长期记忆后即删除，一般不超过 2 天。
 - **印象**：每人一句，新的替换旧的；保留到成员用 `/忘记 印象` 或 `/忘记 全部` 删除、管理员按要求删除，或本机器人被移出该群为止。
 - **AI 看全部聊天**（仅在运营者开启时）：群里的聊天和上面的 AI 对话记录一样，保存 **7 天**后自动删除。
+- **主动开话题**（仅在运营者开启的群）：每个群只保留最后一条消息的时间，新的替换旧的；本机器人被移出该群时删除。
 - **生日**：保留到成员自己用 `/生日 删除` 删除、管理员按要求删除，或本机器人被移出该群为止。
 - **投票**：结束 **30 天**后连同投票记录一起删除；进行中的投票 7 天后自动结束。
 - **`/翻牌子` 的记录**：2 天后删除。
@@ -162,12 +166,14 @@ splits managed and unmanaged groups.
   - one short impression per member: how the bot addresses them, running jokes
   - with `ai_chat.hear_all` on, in managed groups: every text message in the group (not commands),
     with nicknames, kept like the messages above
+  - in groups listed under `ai_chat.topics`: the time of the last message there, nothing else
 - Runtime logs.
 
 **Explicitly not collected:** QQ numbers, phone numbers, passwords, ID documents, location,
 contacts, payment info.
 
-**Third parties:** only AI chat talks to DeepSeek. Each reply sends:
+**Third parties:** only AI chat talks to DeepSeek, and, with a `voice` key, MiniMax. MiniMax gets
+only the line she's about to say: her own words, nothing from members. Each reply to DeepSeek sends:
 - the message
 - the group's recent conversation with the bot, with nicknames, and its summary
 - the memories of the members in that conversation, and the bot's impressions of them
@@ -184,7 +190,9 @@ should sound and how long it should be. After each reply, one or two more calls 
 exchange, to note memories and the impression and to check the memories were meant seriously.
 Each night, a member's recent notes and memories are sent once to be consolidated. The
 weekly digest
-(counts and top talkers' nicknames) is sent for its closing comment. No openids are sent. `/服务器QA` sends only the question. The classifier runs locally, so nothing from the
+(counts and top talkers' nicknames) is sent for its closing comment. In groups under
+`ai_chat.topics`, when the group has been quiet a while, the group's recent conversation with her
+and its summary are sent so she can speak up. Her day is planned from the persona alone. No openids are sent. `/服务器QA` sends only the question. The classifier runs locally, so nothing from the
 manager leaves the server except QQ API calls.
 
 **Retention, and where each is enforced:**
@@ -201,6 +209,8 @@ manager leaves the server except QQ API calls.
 | Recent notes, before consolidation | until the night's consolidation, usually under 2 days | `AIChatModule.consolidate`, `NOTES_LEFT_DAYS` |
 | AI chat impressions | one per member, replaced when it changes; until `/忘记 印象`, `/忘记 全部`, `/删除数据` or the bot leaves | `ChatStore.set_impression` |
 | Group chat that didn't @ the bot (`ai_chat.hear_all`) | 7 days, like AI chat turns, after being folded into the summary | `ai_chat.keep_days`, `AIChatModule.housekeeping` |
+| Last message time in a topic group (`ai_chat.topics`) | one per group, replaced by the next; until the bot leaves | `ChatStore.set_heard`, `forget_group` |
+| Her day, and when she spoke up or sent a voice message | 7 days, like AI chat turns | `ChatStore.prune` |
 | Birthdays (`data/fun.db`) | until `/生日 删除`, `/删除数据` or the bot leaves | `FunStore` |
 | Polls and votes | 30 days after closing; open polls close after 7 days | `POLL_KEEP_DAYS`, `POLL_DAYS` in `modules/fun/social/module.py` |
 | `/翻牌子` marks | 2 days | `SocialModule._prune` |
@@ -223,3 +233,6 @@ manager leaves the server except QQ API calls.
    With `ai_chat.hear_all: false` (the default) they don't apply. Before switching it on, tell the
    group: it stores everyone's messages for a week and sends them to DeepSeek, including messages
    from people who never talk to the bot.
+8. **Topics and voice:** the 「主动开话题」 sentences only apply when `ai_chat.topics` lists groups,
+   and the 语音功能 paragraph says it doesn't apply without a MiniMax key, so both read correctly
+   either way.

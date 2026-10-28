@@ -173,6 +173,14 @@ class GatewayImageTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sends[0], {"msg_type": 7, "media": {"file_info": "FI1"}, "msg_id": "m1", "msg_seq": 1})
         self.assertEqual(sends[1]["media"], {"file_info": "FI1"})
 
+    async def test_a_voice_message_is_uploaded_then_sent(self):
+        await self.gateway.send_voice(G, b"ID3mp3", reply_to="m1")
+        (upload_path, upload), (send_path, send) = self.calls
+        self.assertTrue(upload_path.endswith("/files") and send_path.endswith("/messages"))
+        self.assertEqual((upload["file_type"], upload["file_name"], upload["srv_send_msg"]), (3, "voice.mp3", False))
+        self.assertEqual(base64.b64decode(upload["file_data"]), b"ID3mp3")
+        self.assertEqual(send, {"msg_type": 7, "media": {"file_info": "FI1"}, "msg_id": "m1", "msg_seq": 1})
+
     async def test_an_expiring_upload_is_redone(self):
         self.ttl = 30                                     # under a minute left: upload again
         await self.gateway.send_image(G, self.path)

@@ -21,6 +21,12 @@ prompts/chat.yaml. Raw turns are deleted after ai_chat.keep_days.
 ai_chat.special_people in config.yaml says who particular members are (the
 bot's author, say). They're recognised by member_openid, never by nickname,
 so someone who copies a nickname isn't taken for them.
+
+Like seekchat, she has a life of her own: each day one cheap call plans a few
+small things in her day (ai_chat.her_day), which ride along as evidence. In
+the groups listed under ai_chat.topics she speaks up when nobody has for a
+while, and with a MiniMax key (config.yaml voice) she can answer with a short
+voice message (modules/ai/voice.py).
 """
 import asyncio
 import functools
@@ -34,8 +40,8 @@ import yaml
 from botpy import logging
 from openai import OpenAI
 from core.config import content_path, load_config, root_path
-from core.style import current, join, placeholders, render, t
-from modules.ai import context, memory, stickers
+from core.style import STYLES, current, join, placeholders, render, t
+from modules.ai import context, memory, stickers, voice
 from modules.ai.store import ChatStore
 
 
@@ -46,6 +52,17 @@ DEFAULT_MODEL = "deepseek-flash"
 CHAT_PROMPTS_FILE = content_path("prompts", "chat.yaml")
 # After QQ refuses a sticker inside a reply, stickers go out as their own messages for this long.
 INLINE_RETRY_SECONDS = 3600
+# After a voice message fails, her [语音:…] lines go out as text for this long.
+VOICE_RETRY_SECONDS = 3600
+# 她带话题, unless ai_chat.topics says otherwise: speak up after this many hours of silence, only
+# between these hours (Beijing time), at most this many times a day.
+TOPIC_QUIET_HOURS = 3
+TOPIC_HOURS = (10, 22)
+TOPICS_PER_DAY = 2
+DAY_START_HOUR = 5          # her day is planned ahead for the topic groups from this hour on
+DAY_RETRY_SECONDS = 1800    # after a failed plan, wait this long before asking again
+TICK_SECONDS = 300          # how often the scheduler looks at quiet groups
+HEARD_SAVE_SECONDS = 60     # a group's last message time is written down at most this often
 # What each line of prompts/chat.yaml may fill in, besides {name} (the style's name).
 PROMPT_FIELDS = {
     "group_rules": {"member"},
@@ -57,11 +74,13 @@ PROMPT_FIELDS = {
     "length_long": set(),
     "lore": {"lore"},
     "stickers": {"stickers", "max"},
+    "voice": {"max_chars"},
     "special_people": {"people"},
     "special_line": {"member", "note"},
     "special_speaker": {"member", "note"},
     "special_namesake": {"member"},
     "memory_rules": set(),
+    "day_rules": set(),
     "evidence_policy": set(),
     "evidence_title": set(),
     "now": {"date", "weekday", "time"},
@@ -70,12 +89,16 @@ PROMPT_FIELDS = {
     "today_birthdays": {"members"},
     "today_poll": {"question", "options"},
     "recent_actions": {"actions"},
+    "her_day": {"events"},
     "summary_prefix": set(),
     "memory_title": set(),
     "impression_title": set(),
     "empty_mention": {"member"},
+    "topic": {"hours"},
+    "topic_cue": {"hours"},
     "summary": set(),
     "digest_comment": {"digest"},
+    "day": {"date", "weekday"},
     "observer": {"member", "known", "impression", "said", "reply", "max_text", "max_adds", "max_impression"},
     "register": {"member", "said", "last"},
     "memory_check": {"member", "said", "reply", "notes"},
@@ -137,7 +160,7 @@ def read_special_people(value):
 class AIChatModule:
     def __init__(self, gateway, config=None, store=None, client=None, is_admin=None, clock=None,
                  prompts_path=CHAT_PROMPTS_FILE, nickname_of=None, stickers_dir=None,
-                 library_path=stickers.LIBRARY_FILE):
+                 library_path=stickers.LIBRARY_FILE, speaker=None):
         self.gw = gateway
         self.config = load_config() if config is None else config
         deepseek = self.config.get("deepseek") or {}
@@ -183,6 +206,39 @@ class AIChatModule:
         self.inline_off_until = 0.0
         self.library = stickers.Library(gateway, {os.path.basename(s.path) for s in self.stickers.values()},
                                         library_path) if self.stickers else None
+        # 她的一天: each day one cheap call plans a few small things in her day.
+        self.her_day = bool(chat.get("her_day", True))
+        self.planning = set()       # styles with a planning call out
+        self.plan_failed = {}       # style name -> when its plan last failed
+        # 她带话题: in the groups listed, she speaks up when nobody has for a while.
+        topics = chat.get("topics") if isinstance(chat.get("topics"), dict) else {}
+        self.topic_groups = [str(group) for group in topics.get("groups") or []]
+        self.quiet_hours = float(topics.get("quiet_hours", TOPIC_QUIET_HOURS))
+        hours = topics.get("hours")
+        if not (isinstance(hours, (list, tuple)) and len(hours) == 2):
+            if hours is not None:
+                _log.warning(f"[AIChat] ai_chat.topics.hours 要写成 [开始, 结束]，例如 [10, 22]；"
+                             f"先用 {TOPIC_HOURS[0]} 点到 {TOPIC_HOURS[1]} 点")
+            hours = TOPIC_HOURS
+        self.topic_hours = (int(hours[0]), int(hours[1]))
+        self.topics_per_day = int(topics.get("per_day", TOPICS_PER_DAY))
+        self.heard = {}             # group -> when a member last said anything there
+        self.heard_saved = {}       # group -> the time last written to chat.db
+        self.topic_wait = {}        # group -> no topic before this, after one failed
+        # 语音: MiniMax says her [语音:…] lines (config.yaml voice). Tests and rehearsals pass a speaker.
+        spoken = self.config.get("voice") or {}
+        if speaker is None and spoken.get("api_key") and spoken.get("voice_id"):
+            try:
+                speaker = voice.MiniMax(str(spoken["api_key"]), str(spoken["voice_id"]),
+                                        region=str(spoken.get("region") or "global"),
+                                        model=str(spoken.get("model") or voice.MODEL),
+                                        speed=float(spoken.get("speed", 1.0)),
+                                        host=str(spoken["host"]) if spoken.get("host") else None)
+            except ValueError as e:
+                _log.warning(f"[Voice] {e}。语音没有打开")
+        self.speaker = speaker
+        self.voice_per_day = int(spoken.get("per_day", voice.PER_DAY))
+        self.voice_off_until = 0
         # Today's team game and birthdays/poll, set by main.py: group -> what teams.today_for_ai and
         # social.today_for_ai return. Without them the bot only knows the time.
         self.teams_today = self.social_today = None
@@ -192,6 +248,7 @@ class AIChatModule:
         self.nickname_of = nickname_of or (lambda group, member: None)
         self.tz = pytz.timezone('Asia/Shanghai')
         self.clock = clock or (lambda: datetime.now(self.tz))
+        self.started = self._now()  # a group with no message since counts as quiet from here
         self.summarizing = set()    # groups with a summary call in flight
         # Bumped whenever a group's chat or memories are deleted, so a summary or
         # memory note computed from the deleted text is thrown away when it lands.
@@ -252,6 +309,10 @@ class AIChatModule:
 
     def _now(self):
         return int(self.clock().timestamp())
+
+    def _midnight(self):
+        """The start of today, Beijing time, as a timestamp: daily limits count from here."""
+        return int(self.clock().replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
 
     async def _reply(self, message, text, buttons=None):
         try:
@@ -314,11 +375,14 @@ class AIChatModule:
         return "\n".join(block)
 
     def _today(self, group, window):
-        """The first part of the evidence: the time, today's game, birthdays and poll, and the
-        actions the bot's last replies used. Nicknames come from members, so this is data."""
+        """The first part of the evidence: the time, her day, today's game, birthdays and poll, and
+        the actions the bot's last replies used. Nicknames come from members, so this is data."""
         now = self.clock()
         lines = [render(self.prompts["now"], date=t("common.date", month=now.month, day=now.day),
                         weekday=WEEKDAYS[now.weekday()], time=now.strftime("%H:%M"))]
+        day = self._her_day()
+        if day:
+            lines.append(render(self.prompts["her_day"], events="\n".join(f"- {event}" for event in day)))
         if self.game_state and self.teams_today:
             teams = [render(self.prompts["team_line"], captain=captain,
                             members=join([f"{name}（{join(statuses)}）" if statuses else name
@@ -356,6 +420,38 @@ class AIChatModule:
             self.heard_since[group] = 0
             self._spawn(self.maybe_summarize(group))
 
+    def noticed(self, message):
+        """Any member's message in a group where she may start topics: it isn't quiet there. Only
+        the time is kept, and written to chat.db at most once a minute, so a restart remembers it."""
+        group = message.group_openid
+        if not self.enabled or getattr(message, "is_bot", False) or group not in self.topic_groups:
+            return
+        ts = self.heard[group] = self._now()
+        if ts - self.heard_saved.get(group, 0) >= HEARD_SAVE_SECONDS:
+            self.heard_saved[group] = ts
+            self.store.set_heard(group, ts)
+
+    def _last_heard(self, group):
+        """When a member last spoke in the group; since the bot started, if it doesn't know."""
+        return self.heard.get(group) or self.store.heard_at(group) or self.started
+
+    def _her_day(self):
+        """Her day today in the current style, as planned (lines like "上午：…"), or None."""
+        return self.store.day_plan(current().name, self.clock().date().isoformat()) if self.her_day else None
+
+    def _can_speak(self, group):
+        """Whether her next [语音:…] can be a voice message: a voice is set up, it hasn't failed in
+        the last hour, and this group's voice.per_day isn't used up today."""
+        return (self.speaker is not None and self._now() >= self.voice_off_until
+                and self.store.posts_since(group, "voice", self._midnight()) < self.voice_per_day)
+
+    def _samples(self, style):
+        """The style's sample exchanges and the voice to avoid, as instruction sections."""
+        examples = str(style.lookup("examples") or "").strip()
+        bad = str(style.lookup("bad_examples") or "").strip()
+        return [examples and render(self.prompts["examples"], examples=examples),
+                bad and render(self.prompts["bad_examples"], examples=bad)]
+
     def _impression(self, group, member):
         row = self.store.impression(group, member)
         return row["text"] if row else None
@@ -363,20 +459,18 @@ class AIChatModule:
     def _prompt(self, group, member, member_name, window, length=None):
         """(instructions, evidence) for one reply. `length` is the pre-reply call's 短/中/长, if it gave one."""
         style = current()
-        examples = str(style.lookup("examples") or "").strip()
-        bad = str(style.lookup("bad_examples") or "").strip()
         lore = context.lore_for(style.lookup("lore"), window)
         # The parts that never change for a style come first, so DeepSeek's prefix cache can reuse them.
-        instructions = [style.system_prompt,
-                        examples and render(self.prompts["examples"], examples=examples),
-                        bad and render(self.prompts["bad_examples"], examples=bad),
+        instructions = [style.system_prompt, *self._samples(style),
                         render(self.prompts["group_rules"], member=member_name),
                         render(self.prompts["reply_shape"]),
                         length and render(self.prompts[context.LENGTHS[length]]),
                         self.stickers and render(self.prompts["stickers"], stickers=stickers.listing(self.stickers),
                                                  max=stickers.MAX_PER_REPLY),
+                        self._can_speak(group) and render(self.prompts["voice"], max_chars=voice.MAX_CHARS),
                         self._special_people(group, member, member_name, window),
-                        lore and render(self.prompts["lore"], lore="\n".join(f"- {text}" for text in lore))]
+                        lore and render(self.prompts["lore"], lore="\n".join(f"- {text}" for text in lore)),
+                        self._her_day() and render(self.prompts["day_rules"])]
         evidence = [self._today(group, window)]
         summary = self.store.summary(group)
         if summary:
@@ -419,6 +513,8 @@ class AIChatModule:
         said = text or render(self.prompts["empty_mention"], member=name)
         self.store.add_turn(group, member, name, "user", said, self._now())
         window = context.select_window(self.store.recent_turns(group), self.context_tokens)
+        if self.her_day and self._her_day() is None:
+            self._spawn(self.plan_day())        # ready for her next reply; this one goes without
         register, length = await self.perceive(name, said, window) if self.dynamic else (None, None)
         instructions, evidence = self._prompt(group, member, name, window, length)
         try:
@@ -442,6 +538,35 @@ class AIChatModule:
         return list(self.store.memories(group, member)) + list(self.store.episodes(group, member))
 
     async def _send_reply(self, message, reply):
+        """Send a reply: its text and sticker (_send_text), then a [语音:…] in it as a voice message
+        under them. When she can't speak now, her words stay in the text. Returns the reply as it went
+        out, for the transcript."""
+        text, spoken = voice.extract(reply)
+        if not spoken or not self._can_speak(message.group_openid):
+            return await self._send_text(message, voice.as_text(reply))
+        sent = await self._send_text(message, text)
+        if await self._speak(message, spoken[0]):
+            return "\n".join(part for part in (sent, f"[语音:{spoken[0]}]") if part)
+        await self._reply(message, spoken[0])       # the voice didn't go: say it in words
+        return "\n".join(part for part in (sent, spoken[0]) if part)
+
+    async def _speak(self, message, words):
+        """Her words as a voice message under the reply; False when it didn't go out. After a failure
+        her voice lines go out as text for an hour."""
+        line = voice.speakable(words)
+        if not line:
+            return False
+        try:
+            audio = await self.speaker.speak(line)
+            await self.gw.send_voice(message.group_openid, audio, reply_to=message.id)
+        except Exception as e:
+            self.voice_off_until = self._now() + VOICE_RETRY_SECONDS
+            _log.warning(f"[Voice] 语音没发出去，{VOICE_RETRY_SECONDS // 3600} 小时内她的语音改成文字: {e}")
+            return False
+        self.store.add_post(message.group_openid, "voice", self._now())
+        return True
+
+    async def _send_text(self, message, reply):
         """Send a reply, with any [表情:标签] in it as that sticker: inside the reply when QQ takes
         that, otherwise right under the text. Returns the reply as it went out, for the transcript."""
         clean, labels = stickers.extract(reply, self.stickers) if self.stickers else (reply, [])
@@ -643,6 +768,109 @@ class AIChatModule:
         text = text.strip().strip("“”\"")
         return text[:DIGEST_COMMENT_LIMIT] or None
 
+    # ------------------------------------------------------------------ her day, and speaking up
+
+    async def plan_day(self):
+        """Her day in the current style, planned by one cheap call the first time it's needed each
+        day; it rides along with every reply after that. None when it can't be planned: a failed
+        plan is asked for again after half an hour."""
+        if not (self.enabled and self.her_day):
+            return None
+        style, now = current(), self.clock()
+        day = now.date().isoformat()
+        planned = self.store.day_plan(style.name, day)
+        if planned is not None:
+            return planned
+        failed = self.plan_failed.get(style.name)
+        if style.name in self.planning or (failed is not None and self._now() - failed < DAY_RETRY_SECONDS):
+            return None
+        self.planning.add(style.name)
+        try:
+            raw = await self._complete(self.client, self.helper_model, [
+                {"role": "system", "content": style.system_prompt},
+                {"role": "user", "content": render(self.prompts["day"], weekday=WEEKDAYS[now.weekday()],
+                                                   date=t("common.date", month=now.month, day=now.day))},
+            ])
+            events = context.parse_day(raw)
+            if not events:
+                raise ValueError("回答里没有读到日常")
+        except Exception as e:
+            self.plan_failed[style.name] = self._now()
+            _log.warning(f"[AIChat] 今天的日常没排出来，{DAY_RETRY_SECONDS // 60} 分钟后再试: {e}")
+            return None
+        finally:
+            self.planning.discard(style.name)
+        self.store.set_day_plan(style.name, day, events, self._now())
+        _log.info(f"[AIChat] {style.name}今天的日常排好了：{len(events)} 件事")
+        return events
+
+    async def maybe_topic(self, group):
+        """In a group from ai_chat.topics: speak up once nobody has for topics.quiet_hours, between
+        topics.hours, at most topics.per_day times a day, and never twice into silence: until someone
+        speaks after her last topic, she waits. True when she spoke."""
+        now, ts = self.clock(), self._now()
+        start, end = self.topic_hours
+        heard = self._last_heard(group)
+        if not start <= now.hour < end or ts - heard < self.quiet_hours * 3600 or ts < self.topic_wait.get(group, 0):
+            return False
+        if self.store.posts_since(group, "topic", self._midnight()) >= self.topics_per_day:
+            return False
+        last = self.store.last_post(group, "topic")
+        if last is not None and last >= heard:
+            return False
+        hours = int((ts - heard) // 3600)
+        with STYLES.scope(group):
+            try:
+                text = await self.write_topic(group, hours)
+                if not text:
+                    raise ValueError("回答是空的")
+                await self.gw.send(group, text)
+            except Exception as e:
+                self.topic_wait[group] = ts + 3600
+                _log.warning(f"[AIChat] 话题没开成，一小时后再看: {e}")
+                return False
+            self.store.add_turn(group, None, current().name, "assistant", text, self._now())
+        self.store.add_post(group, "topic", self._now())
+        _log.info(f"[AIChat] 群里 {hours} 小时没人说话，她开了个话题")
+        return True
+
+    async def write_topic(self, group, hours):
+        """What she says to restart a quiet group, in the current style: her persona and the topic
+        rules, the same evidence as a reply (the time, her day, today's game, the summary), the recent
+        chat, and a cue in place of a member's message. Plain text: any markers become words or go."""
+        await self.plan_day()
+        style = current()
+        window = context.select_window(self.store.recent_turns(group), self.context_tokens)
+        instructions = [style.system_prompt, *self._samples(style), render(self.prompts["topic"], hours=hours),
+                        self._her_day() and render(self.prompts["day_rules"])]
+        evidence = [self._today(group, window)]
+        summary = self.store.summary(group)
+        if summary:
+            evidence.append(f"{render(self.prompts['summary_prefix'])}\n{summary['summary']}")
+        instructions, evidence = context.compose(instructions, evidence, render(self.prompts["evidence_policy"]),
+                                                 render(self.prompts["evidence_title"]))
+        messages = context.build_messages(instructions, evidence, window)
+        cue = render(self.prompts["topic_cue"], hours=hours)
+        if messages[-1]["role"] == "user":
+            messages[-1]["content"] += "\n" + cue
+        else:
+            messages.append({"role": "user", "content": cue})
+        text = await self._complete(self.client, self.model, messages, thinking=self.thinking,
+                                    temperature=self.temperature)
+        return stickers.extract(voice.as_text(text.strip()), {})[0]
+
+    async def tick(self):
+        """Every few minutes, for each group from ai_chat.topics: her day planned ahead from the
+        morning on, and a topic if the group has gone quiet."""
+        for group in self.topic_groups:
+            try:
+                if self.clock().hour >= DAY_START_HOUR:
+                    with STYLES.scope(group):
+                        await self.plan_day()
+                await self.maybe_topic(group)
+            except Exception as e:
+                _log.error(f"[AIChat] 开话题出错: {e}")
+
     # ------------------------------------------------------------------ commands
 
     async def cmd_my_memory(self, message, args):
@@ -735,7 +963,8 @@ class AIChatModule:
     def forget_group(self, group):
         if self.enabled:
             self.store.forget_group(group)
-            self.heard_since.pop(group, None)
+            for waiting in (self.heard_since, self.heard, self.heard_saved, self.topic_wait):
+                waiting.pop(group, None)
             self._deleted(group)
 
     async def housekeeping(self):
@@ -771,9 +1000,18 @@ class AIChatModule:
         if self.special:
             # The start of each ID, to check against what /我的ID says.
             _log.info(f"[AIChat] 特别的群友 {len(self.special)} 位，ID 开头：{'、'.join(o[:8] for o in self.special)}")
+        if self.topic_groups:
+            _log.info(f"[AIChat] {len(self.topic_groups)} 个群安静 {self.quiet_hours:g} 小时后她会开话题："
+                      f"{self.topic_hours[0]}–{self.topic_hours[1]} 点之间，每天最多 {self.topics_per_day} 次")
+        if self.speaker is not None:
+            _log.info(f"[Voice] 语音已打开：每个群每天最多 {self.voice_per_day} 条")
+        housekept = None
         while True:
-            try:
-                await self.housekeeping()
-            except Exception as e:
-                _log.error(f"[AIChat] 清理聊天记录出错: {e}")
-            await asyncio.sleep(3600)
+            if housekept is None or time.monotonic() - housekept >= 3600:
+                housekept = time.monotonic()
+                try:
+                    await self.housekeeping()
+                except Exception as e:
+                    _log.error(f"[AIChat] 清理聊天记录出错: {e}")
+            await self.tick()
+            await asyncio.sleep(TICK_SECONDS)

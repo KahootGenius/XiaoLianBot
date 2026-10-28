@@ -20,6 +20,8 @@ REGISTERS = {"严谨": 0.6, "平衡": 1.0, "奔放": 1.15}
 LENGTHS = {"短": "length_short", "中": "length_medium", "长": "length_long"}
 LORE_TURNS = 4      # lore keywords are looked for in the last few turns...
 LORE_LIMIT = 3      # ...and at most this many entries ride along
+DAY_EVENTS = 4      # her day: at most this many things happen in it (the prompt asks for three)...
+DAY_TEXT = 40       # ...each at most this many characters
 # A bracketed action in a reply, like "（歪了歪头）". Short, so a long aside isn't taken for one.
 _ACTION = re.compile(r"[（(]([^（）()\n]{1,20})[）)]")
 # CJK ideographs, kana and full-width forms each cost about a token.
@@ -81,6 +83,20 @@ def parse_register(raw):
     data = first_json(raw)
     register, length = str(data.get("register") or "").strip(), str(data.get("length") or "").strip()
     return (register if register in REGISTERS else None), (length if length in LENGTHS else None)
+
+
+def parse_day(raw):
+    """Her day from the planning call's answer: short lines like "上午：…", [] when unreadable.
+    An event may also come as {"time": "上午", "event": "…"}."""
+    events = first_json(raw).get("events")
+    lines = []
+    for event in events if isinstance(events, list) else []:
+        if isinstance(event, dict):
+            event = "：".join(str(event[key]).strip() for key in ("time", "event") if event.get(key))
+        text = re.sub(r"\s+", " ", str(event or "")).strip()
+        if text:
+            lines.append(text[:DAY_TEXT])
+    return lines[:DAY_EVENTS]
 
 
 def parse_lore(entries):

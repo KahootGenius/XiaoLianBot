@@ -110,6 +110,7 @@ class MyClient(botpy.Client):
         with STYLES.scope(message.group_openid):
             await self.manager_module.observe(message)
             await self.social_module.observe(message)
+            self.ai_chat_module.noticed(message)        # it isn't quiet: only the time is kept
             if message.mentions_bot:
                 await self._handle_command(message)
             else:
@@ -119,6 +120,7 @@ class MyClient(botpy.Client):
         with STYLES.scope(message.group_openid):
             await self.manager_module.observe(message)
             await self.social_module.observe(message)
+            self.ai_chat_module.noticed(message)
             await self._handle_command(message)
 
     async def on_group_del_robot(self, event):

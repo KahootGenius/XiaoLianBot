@@ -1,4 +1,5 @@
 """AI chat's context window, rolling summary and per-member memory, with a fake DeepSeek."""
+import asyncio
 import io
 import json
 import os
@@ -10,7 +11,7 @@ from datetime import timedelta
 from types import SimpleNamespace
 from core.config import root_path
 from core.style import DEFAULT_STYLE, StyleBook
-from modules.ai import context, memory, memory_admin, rehearse
+from modules.ai import context, memory, memory_admin, rehearse, voice
 from modules.ai.ai_chat import AIChatModule, load_chat_prompts, read_special_people
 from modules.ai.store import ChatStore
 from tests.test_manager import START, FakeGateway, FakeMessage
@@ -21,6 +22,7 @@ NOTHING = '{"facts": [], "forget": []}'
 KEEP_ALL = '{"keep": [1, 2, 3, 4, 5]}'
 BALANCED = '{"register": "平衡", "length": "中"}'
 CONSOLIDATED = '{"add": [], "update": [], "forget": []}'
+DAY_PLAN = '{"events": ["上午：在森林里采蘑菇", "下午：熬的药冒了紫烟", "晚上：给猫梳毛"]}'
 
 
 class FakeDeepSeek:
@@ -28,12 +30,17 @@ class FakeDeepSeek:
 
     def __init__(self):
         self.calls = []
-        self.answers = {"chat": [], "register": [], "observer": [], "check": [], "consolidation": [], "summary": []}
+        self.answers = {"chat": [], "register": [], "observer": [], "check": [], "consolidation": [], "summary": [],
+                        "day": [], "topic": []}
         self.hooks = {}
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
 
     @staticmethod
     def kind(messages):
+        if "会发生的三件小事" in messages[-1]["content"]:
+            return "day"
+        if "【开个话题】" in messages[0]["content"]:
+            return "topic"
         if len(messages) == 1:
             content = messages[0]["content"]
             if "需要什么风格和篇幅" in content:
@@ -51,7 +58,8 @@ class FakeDeepSeek:
         queue = self.answers[kind]
         answer = queue.pop(0) if queue else {"chat": f"回复{len(self.requests('chat'))}", "register": BALANCED,
                                              "observer": NOTHING, "check": KEEP_ALL, "consolidation": CONSOLIDATED,
-                                             "summary": "总结：小明在准备考研"}[kind]
+                                             "summary": "总结：小明在准备考研", "day": DAY_PLAN,
+                                             "topic": f"话题{len(self.requests('topic'))}"}[kind]
         if isinstance(answer, Exception):
             raise answer
         return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=answer))])
@@ -60,18 +68,33 @@ class FakeDeepSeek:
         return [request for k, request in self.calls if k == kind]
 
 
+class FakeSpeaker:
+    """Stands in for MiniMax: the "audio" is the words it was given."""
+
+    def __init__(self):
+        self.said = []
+        self.fail = None
+
+    async def speak(self, text):
+        if self.fail:
+            raise self.fail
+        self.said.append(text)
+        return f"mp3:{text}".encode()
+
+
 class AIChatTestCase(unittest.IsolatedAsyncioTestCase):
-    def make(self, nickname_of=None, deepseek=None, stickers_dir=None, **chat_config):
+    def make(self, nickname_of=None, deepseek=None, stickers_dir=None, speaker=None, voice_config=None,
+             **chat_config):
         self.now = START
         self.gw = FakeGateway()
         self.ai_client = FakeDeepSeek()
         self.store = ChatStore(":memory:")
         self.addCleanup(self.store.db.close)
-        config = {"ai_chat": chat_config, "deepseek": deepseek or {}}
+        config = {"ai_chat": chat_config, "deepseek": deepseek or {}, "voice": voice_config or {}}
         self.ai = AIChatModule(self.gw, config, store=self.store, client=self.ai_client,
                                is_admin=lambda group, member, role=None: member == "ADMIN",
                                clock=lambda: self.now, nickname_of=nickname_of, stickers_dir=stickers_dir,
-                               library_path=None)
+                               library_path=None, speaker=speaker)
         return self.ai
 
     async def say(self, member, text, group=G, name=None):
@@ -643,6 +666,209 @@ class SummaryTest(AIChatTestCase):
         self.assertEqual(self.store.recent_turns(G), [])
 
 
+class HerDayTest(AIChatTestCase):
+    """seekchat's generated day: one cheap call a day plans a few small things in her day."""
+
+    def evidence(self):
+        return self.last_chat()[1]["content"]
+
+    async def test_planned_once_a_day_and_it_rides_along(self):
+        self.make()
+        await self.say("A", "你好")
+        await self.say("A", "在干嘛")
+        self.assertIn("你今天的日常：\n- 上午：在森林里采蘑菇\n- 下午：熬的药冒了紫烟\n- 晚上：给猫梳毛", self.evidence())
+        self.assertIn("【你的今天】", self.last_chat()[0]["content"])
+        plans = self.ai_client.requests("day")
+        self.assertEqual(len(plans), 1)
+        self.assertEqual(plans[0]["model"], "deepseek-flash")
+        self.assertIn("你是「小莲」", plans[0]["messages"][0]["content"])                 # her persona
+        self.assertIn("今天（11月1日 星期日）", plans[0]["messages"][1]["content"])
+        self.now += timedelta(days=1)
+        await self.say("A", "早")
+        self.assertEqual(len(self.ai_client.requests("day")), 2)
+
+    async def test_a_failed_plan_is_asked_again_after_half_an_hour(self):
+        self.make()
+        self.ai_client.answers["day"] += [RuntimeError("超时"), "今天没什么特别的"]
+        await self.say("A", "你好")
+        self.now += timedelta(minutes=10)
+        await self.say("A", "在吗")
+        self.assertEqual(len(self.ai_client.requests("day")), 1)          # not again yet
+        self.now += timedelta(minutes=25)
+        await self.say("A", "在吗")
+        self.assertEqual(len(self.ai_client.requests("day")), 2)          # unreadable: it waits again
+        self.assertNotIn("你今天的日常", self.evidence())
+        self.now += timedelta(minutes=31)
+        await self.say("A", "在吗")
+        await self.say("A", "嗯")
+        self.assertEqual(len(self.ai_client.requests("day")), 3)
+        self.assertIn("你今天的日常", self.evidence())
+
+    async def test_it_can_be_switched_off(self):
+        self.make(her_day=False)
+        await self.say("A", "你好")
+        await self.say("A", "在干嘛")
+        self.assertEqual(self.ai_client.requests("day"), [])
+        self.assertNotIn("你今天的日常", self.evidence())
+        self.assertNotIn("【你的今天】", self.last_chat()[0]["content"])
+
+
+class TopicTest(AIChatTestCase):
+    """她带话题: in the groups listed, she speaks up when nobody has for a while."""
+
+    def noticed(self, group=G, member="A"):
+        self.ai.noticed(FakeMessage(group, member, NAMES.get(member, member), "hi", content="hi"))
+
+    def topics(self, group=G):
+        return [content for g, content, reply_to in self.gw.sent if g == group and reply_to is None]
+
+    async def test_she_speaks_up_after_three_quiet_hours(self):
+        self.make(topics={"groups": [G]})
+        await self.say("A", "我下周要考试")
+        self.noticed()
+        self.now += timedelta(hours=2, minutes=59)
+        await self.ai.tick()
+        self.assertEqual(self.topics(), [])
+        self.now += timedelta(minutes=1)
+        await self.ai.tick()
+        self.assertEqual(self.topics(), ["话题1"])                          # a message of her own, not a reply
+        messages = self.ai_client.requests("topic")[0]["messages"]
+        self.assertIn("你是「小莲」", messages[0]["content"])
+        self.assertIn("这个 QQ 群已经 3 小时没人说话了", messages[0]["content"])
+        self.assertIn("你今天的日常", messages[1]["content"])                # her day, planned first
+        self.assertEqual(messages[2:], [{"role": "user", "content": "小明：我下周要考试"},
+                                        {"role": "assistant", "content": "回复1"},
+                                        {"role": "user", "content": "（群里已经 3 小时没人说话了）"}])
+        last = self.store.recent_turns(G)[-1]
+        self.assertEqual((last["role"], last["content"]), ("assistant", "话题1"))   # the chat goes on from it
+
+    async def test_never_twice_into_silence_nor_past_the_days_limit(self):
+        self.make(topics={"groups": [G], "per_day": 1})
+        self.noticed()
+        self.now += timedelta(hours=3)
+        await self.ai.tick()                                # 13:00
+        self.now += timedelta(hours=4)
+        await self.ai.tick()                                # 17:00: nobody answered her, so she waits
+        self.assertEqual(self.topics(), ["话题1"])
+        self.noticed()
+        self.now += timedelta(hours=4)
+        await self.ai.tick()                                # 21:00: answered, but one a day
+        self.assertEqual(len(self.topics()), 1)
+        self.now += timedelta(hours=13)                     # 10:00 the next day
+        await self.ai.tick()
+        self.assertEqual(self.topics(), ["话题1", "话题2"])
+
+    async def test_only_in_the_daytime_and_only_where_listed(self):
+        self.make(topics={"groups": [G]})
+        self.noticed()
+        self.noticed(G2)
+        self.now += timedelta(hours=13)                     # 23:00
+        await self.ai.tick()
+        self.now += timedelta(hours=10, minutes=55)         # 09:55 the next day
+        await self.ai.tick()
+        self.assertEqual(self.gw.sent, [])
+        self.now += timedelta(minutes=5)
+        await self.ai.tick()
+        self.assertEqual(self.topics(), ["话题1"])
+        self.assertEqual(self.topics(G2), [])
+        self.assertIsNone(self.store.heard_at(G2))          # not even the time, where she doesn't start topics
+
+    async def test_a_restart_remembers_when_the_group_last_spoke(self):
+        self.make(topics={"groups": [G]})
+        self.noticed()                                      # 10:00, written down
+        self.now += timedelta(hours=2)
+        restarted = AIChatModule(self.gw, {"ai_chat": {"topics": {"groups": [G]}}}, store=self.store,
+                                 client=self.ai_client, clock=lambda: self.now, library_path=None)
+        self.now += timedelta(hours=1)
+        self.assertTrue(await restarted.maybe_topic(G))     # 13:00: three hours since that message
+
+    async def test_a_failed_topic_waits_an_hour_and_markers_become_words(self):
+        self.make(topics={"groups": [G]})
+        self.ai_client.answers["topic"] += [RuntimeError("超时"), "[表情:开心]\n有人在吗[语音:嘿嘿]"]
+        self.noticed()
+        self.now += timedelta(hours=3)
+        await self.ai.tick()
+        self.now += timedelta(minutes=30)
+        await self.ai.tick()
+        self.assertEqual(len(self.ai_client.requests("topic")), 1)
+        self.assertEqual(self.gw.sent, [])
+        self.now += timedelta(minutes=30)
+        await self.ai.tick()
+        self.assertEqual(self.topics(), ["有人在吗嘿嘿"])
+
+
+class VoiceTest(AIChatTestCase):
+    """语音: MiniMax says her [语音:…] lines, sent under the reply as a voice message."""
+
+    def voiced(self, **voice_config):
+        self.speaker = FakeSpeaker()
+        return self.make(speaker=self.speaker, voice_config=voice_config)
+
+    async def test_a_voice_line_goes_under_the_reply(self):
+        self.voiced()
+        self.ai_client.answers["chat"].append("晚安呀～\n[语音:晚安，做个好梦（摸摸头）]")
+        self.assertEqual(await self.say("A", "我去睡了"), "晚安呀～")
+        self.assertIn("【语音】", self.last_chat()[0]["content"])
+        self.assertIn("不超过 60 个字", self.last_chat()[0]["content"])
+        self.assertEqual(self.speaker.said, ["晚安，做个好梦"])                  # no bracketed action
+        group, audio, reply_to = self.gw.voices[0]
+        self.assertEqual((group, audio), (G, "mp3:晚安，做个好梦".encode()))
+        self.assertIsNotNone(reply_to)                                           # under the reply
+        self.assertEqual(self.store.recent_turns(G)[-1]["content"], "晚安呀～\n[语音:晚安，做个好梦（摸摸头）]")
+
+    async def test_a_reply_can_be_only_a_voice(self):
+        self.voiced()
+        self.ai_client.answers["chat"].append("[语音:早安！]")
+        self.assertEqual(await self.say("A", "早"), "")
+        self.assertEqual(len(self.gw.voices), 1)
+
+    async def test_past_the_days_limit_her_words_stay_in_the_text(self):
+        self.voiced(per_day=1)
+        self.ai_client.answers["chat"] += ["[语音:晚安]", "好呀[语音:明天见]"]
+        await self.say("A", "晚安")
+        self.assertEqual(await self.say("B", "我也睡了"), "好呀明天见")
+        self.assertEqual(len(self.gw.voices), 1)
+        self.assertNotIn("【语音】", self.last_chat()[0]["content"])              # not offered once used up
+        self.now += timedelta(days=1)
+        await self.say("A", "早")
+        self.assertIn("【语音】", self.last_chat()[0]["content"])
+
+    async def test_a_failure_turns_her_voice_into_words_for_an_hour(self):
+        self.voiced()
+        self.gw.refuse_voice = True
+        self.ai_client.answers["chat"].append("嗯嗯\n[语音:晚安]")
+        self.assertEqual(await self.say("A", "睡了"), "嗯嗯\n晚安")
+        self.gw.refuse_voice = False
+        await self.say("A", "还在吗")
+        self.assertNotIn("【语音】", self.last_chat()[0]["content"])
+        self.now += timedelta(hours=1)
+        await self.say("A", "早")
+        self.assertIn("【语音】", self.last_chat()[0]["content"])
+        self.speaker.fail = voice.VoiceError("MiniMax 1004: invalid api key")
+        self.ai_client.answers["chat"].append("[语音:早安]")
+        self.assertEqual(await self.say("A", "早安"), "早安")
+        self.assertEqual(self.gw.voices, [])
+
+    async def test_without_a_voice_her_markers_are_words(self):
+        self.make()
+        self.ai_client.answers["chat"].append("好的[语音:晚安]")
+        self.assertEqual(await self.say("A", "睡了"), "好的晚安")
+        self.assertNotIn("【语音】", self.last_chat()[0]["content"])
+
+    def test_a_key_and_a_voice_turn_minimax_on(self):
+        def made(config):
+            store = ChatStore(":memory:")
+            self.addCleanup(store.db.close)
+            return AIChatModule(FakeGateway(), config, client=FakeDeepSeek(), store=store, library_path=None)
+
+        speaker = made({"voice": {"api_key": "k", "voice_id": "female-chengshu", "region": "cn"}}).speaker
+        self.assertEqual((speaker.host, speaker.voice_id), ("https://api.minimax.cn", "female-chengshu"))
+        speaker = made({"voice": {"api_key": "k", "voice_id": "v", "host": "https://api.minimaxi.chat/"}}).speaker
+        self.assertEqual(speaker.host, "https://api.minimaxi.chat")                 # MiniMax moved before
+        self.assertIsNone(made({"voice": {"api_key": "k"}}).speaker)                # no voice chosen
+        self.assertIsNone(made({"voice": {"api_key": "k", "voice_id": "v", "region": "mars"}}).speaker)
+
+
 class PureTest(unittest.TestCase):
     def test_tokens_and_window(self):
         self.assertEqual(context.estimate_tokens("abcd"), 2)
@@ -719,6 +945,30 @@ class PureTest(unittest.TestCase):
         self.assertEqual(memory.parse_check("都可以记", 3), set())
 
 
+    def test_her_day_is_read_tolerantly(self):
+        answer = '好的：{"events": ["上午：采蘑菇", {"time": "下午", "event": "熬药"}, "", "晚上：' + "很长" * 30 + '"]}'
+        self.assertEqual(context.parse_day(answer), ["上午：采蘑菇", "下午：熬药", ("晚上：" + "很长" * 30)[:40]])
+        self.assertEqual(context.parse_day("今天没什么事"), [])
+        self.assertEqual(context.parse_day('{"events": "上午：采蘑菇"}'), [])
+
+    def test_voice_markers_and_what_is_said(self):
+        self.assertEqual(voice.extract("嗯\n[语音:晚安]\n【语音：再见】"), ("嗯\n\n再见", ["晚安"]))
+        self.assertEqual(voice.as_text("好的[ 语音 : 晚安 ]"), "好的晚安")
+        self.assertEqual(voice.speakable("（摸摸头）晚安😴，[表情:开心]做个好梦"), "晚安，做个好梦")
+        long = "今天好开心呀。" * 20
+        self.assertEqual(voice.speakable(long), long[:56])                  # cut after a pause
+        self.assertEqual(len(voice.speakable("好" * 100)), voice.MAX_CHARS)
+
+    def test_minimax_answers(self):
+        self.assertEqual(voice.audio_from({"base_resp": {"status_code": 0}, "data": {"audio": "49443303"}}),
+                         b"ID3\x03")
+        for answer in ({"base_resp": {"status_code": 1004, "status_msg": "invalid api key"}},
+                       {"base_resp": {"status_code": 0}, "data": {"audio": ""}},
+                       {"base_resp": {"status_code": 0}, "data": {"audio": "not hex"}}, None):
+            with self.assertRaises(voice.VoiceError):
+                voice.audio_from(answer)
+
+
 class MemoryAdminTest(unittest.TestCase):
     """The operator's command line for members' memories (deploy/memories.sh)."""
 
@@ -787,6 +1037,11 @@ class RehearsalScriptTest(unittest.TestCase):
         self.assertEqual(rehearse.split_line("小明: 半角冒号也行"), ("小明", "半角冒号也行"))
         with self.assertRaises(ValueError):
             rehearse.split_line("没有冒号")
+
+    def test_her_voice_shows_as_words_without_minimax(self):
+        gateway = rehearse.Gateway()
+        asyncio.run(gateway.send_voice("G", asyncio.run(rehearse.Voice().speak("晚安"))))
+        self.assertEqual(gateway.sent, ["[语音:晚安]"])
 
 
 class PromptsFileTest(unittest.TestCase):

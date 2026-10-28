@@ -6,8 +6,10 @@ config.yaml and style, and print her replies. For tuning a persona with evidence
     python -m modules.ai.rehearse --model deepseek-v4-pro   # the reply model; helper calls unchanged
     python -m modules.ai.rehearse --times 3                 # play it three times
     python -m modules.ai.rehearse --memory                  # also take memory notes, then consolidate them
+    python -m modules.ai.rehearse --topic                   # then the group goes quiet: what she says
 
-Each line costs two small DeepSeek calls (the pre-reply judgement and the reply).
+Each line costs two small DeepSeek calls (the pre-reply judgement and the reply), and planning her
+day one more per run. Her voice lines show as [语音:…]; MiniMax isn't called.
 Nothing is saved: the chat and any memories vanish when it ends.
 """
 import argparse
@@ -48,6 +50,16 @@ class Gateway:
     async def upload_library_image(self, path):
         return "-", f"rehearsal://{os.path.basename(path)}", 0
 
+    async def send_voice(self, group, audio, reply_to=None):
+        self.sent.append(f"[语音:{audio.decode()}]")
+
+
+class Voice:
+    """Stands in for MiniMax: the "audio" is the words she'd have said."""
+
+    async def speak(self, text):
+        return text.encode()
+
 
 def split_line(line):
     """("昵称", "消息") from "昵称：消息"."""
@@ -77,7 +89,7 @@ def today_from(script):
     return (lambda group: teams), (lambda group: {"birthdays": list(script.get("birthdays") or []), "poll": poll})
 
 
-async def play(script, config, run, model=None, remember=False, out=sys.stdout):
+async def play(script, config, run, model=None, remember=False, out=sys.stdout, topic=False):
     chat = dict(config.get("ai_chat") or {}, memory=remember)
     if "special_people" in script:
         chat["special_people"] = script["special_people"]
@@ -93,7 +105,7 @@ async def play(script, config, run, model=None, remember=False, out=sys.stdout):
     names = {openid: name for name, openid in ids.items()}
     gateway, store = Gateway(), ChatStore(":memory:")
     ai = AIChatModule(gateway, config, store=store, clock=lambda: clock.now,
-                      nickname_of=lambda group, member: names.get(member), library_path=None)
+                      nickname_of=lambda group, member: names.get(member), library_path=None, speaker=Voice())
     ai.teams_today, ai.social_today = today_from(script)
     judged = []
     perceive = ai.perceive
@@ -105,6 +117,10 @@ async def play(script, config, run, model=None, remember=False, out=sys.stdout):
 
     ai.perceive = recording
     print(f"\n== run {run} · {ai.model} · 北京时间 {start.strftime('%m-%d %H:%M')}", file=out)
+    with STYLES.scope(GROUP):
+        day = await ai.plan_day()
+    if day:
+        print("-- her day: " + " / ".join(day), file=out)
     for i, line in enumerate(script["lines"]):
         nickname, text = split_line(line)
         clock.now = start + timedelta(minutes=i)
@@ -126,6 +142,12 @@ async def play(script, config, run, model=None, remember=False, out=sys.stdout):
     average = sum(len(r) for r in replies) // max(1, len(replies))
     print(f"-- {len(replies)} replies, about {average} characters each, {len(actions)} bracketed actions, "
           f"repeated: {'、'.join(repeated) or 'none'}", file=out)
+    if topic:
+        hours = max(1, round(ai.quiet_hours))
+        clock.now += timedelta(hours=hours)
+        with STYLES.scope(GROUP):
+            said = await ai.write_topic(GROUP, hours)
+        print(f"（{hours} 小时没人说话）\n  → [话题] {said or '（什么也没说）'}", file=out)
     if remember:
         show_memories(store, names, "noted during the chat", out)
         for group, member in store.members_with("episode"):
@@ -146,6 +168,7 @@ def main(argv=None):
     parser.add_argument("--model", help="the reply model, e.g. deepseek-v4-pro")
     parser.add_argument("--times", type=int, default=1)
     parser.add_argument("--memory", action="store_true", help="take memory notes too (more calls)")
+    parser.add_argument("--topic", action="store_true", help="then let the group go quiet and show her topic")
     args = parser.parse_args(argv)
     config = load_config()
     if not (config.get("deepseek") or {}).get("api_key"):
@@ -153,7 +176,7 @@ def main(argv=None):
         return 1
     script = load_script(args.script)
     for run in range(1, args.times + 1):
-        asyncio.run(play(script, config, run, args.model, args.memory))
+        asyncio.run(play(script, config, run, args.model, args.memory, topic=args.topic))
     return 0
 
 

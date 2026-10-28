@@ -48,6 +48,8 @@ class FakeGateway:
         self.library = {}       # image_id -> file name: QQ's image library
         self.library_room = 100
         self.uploads = 0
+        self.voices = []        # (group, audio, reply_to): voice messages
+        self.refuse_voice = False
 
     async def send(self, group, content, reply_to=None, buttons=None):
         self.sent.append((group, content, reply_to))
@@ -58,6 +60,11 @@ class FakeGateway:
         if self.refuse_images:
             raise OpenAPIError(400, 304080, "富媒体文件格式不支持")
         self.images.append((group, path, reply_to, url))
+
+    async def send_voice(self, group, audio, reply_to=None):
+        if self.refuse_voice:
+            raise OpenAPIError(400, 304080, "富媒体文件格式不支持")
+        self.voices.append((group, audio, reply_to))
 
     async def send_markdown(self, group, content, reply_to=None):
         if self.refuse_markdown:

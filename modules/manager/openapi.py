@@ -31,6 +31,7 @@ TRACE_HEADER = "X-Tps-trace-Id"
 # bot), replies go out as plain text only for this long before trying again.
 BUTTON_RETRY_SECONDS = 6 * 3600
 IMAGE = 1                   # file_type of an image upload
+VOICE = 3                   # file_type of a voice upload: silk, mp3 or wav
 # Where QQ's API has lived since 2026-08-10. botpy still calls the old address, which serves the older
 # APIs; newer ones (the image library, markdown's force_verify_image_resource) go here.
 API_DOMAIN = "api.bot.qq.com"
@@ -111,6 +112,17 @@ class QQGateway:
         there instead. Raises OpenAPIError when it can't be sent."""
         file_info = await self._upload_image(group_openid, path, url)
         body = {"msg_type": 7, "media": {"file_info": file_info}}
+        if reply_to:
+            body.update(msg_id=reply_to, msg_seq=self._next_seq(reply_to))
+        return await self._call("POST", "/v2/groups/{group_openid}/messages", body=body, group_openid=group_openid)
+
+    async def send_voice(self, group_openid, audio, reply_to=None):
+        """A voice message from mp3 bytes, as a passive reply when `reply_to` is a message id. It's
+        uploaded straight from this machine, which QQ takes up to 5 MB. Raises OpenAPIError."""
+        result = await self._call("POST", "/v2/groups/{group_openid}/files", body={
+            "file_type": VOICE, "file_data": base64.b64encode(audio).decode("ascii"), "file_name": "voice.mp3",
+            "srv_send_msg": False}, group_openid=group_openid)
+        body = {"msg_type": 7, "media": {"file_info": result["file_info"]}}
         if reply_to:
             body.update(msg_id=reply_to, msg_seq=self._next_seq(reply_to))
         return await self._call("POST", "/v2/groups/{group_openid}/messages", body=body, group_openid=group_openid)

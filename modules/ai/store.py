@@ -4,7 +4,10 @@ By default only conversations with the bot are stored: messages that @ it and
 its own replies. With ai_chat.hear_all the rest of the group's chat is stored
 too, marked as not addressed to the bot. Raw turns are kept for
 ai_chat.keep_days (7 by default). The rolling summary and members' memories
-stay until they are reset or deleted. See docs/PRIVACY_POLICY.md.
+stay until they are reset or deleted. Her own day, and when she spoke up or
+sent a voice message, are kept as long as raw turns; in groups where she may
+start topics, so is the time of the last message there, and nothing else
+about it. See docs/PRIVACY_POLICY.md.
 """
 import os
 import sqlite3
@@ -40,6 +43,23 @@ CREATE TABLE IF NOT EXISTS memories (
     reinforced_at INTEGER                    -- when it last did; NULL: never, count from created_at
 );
 CREATE INDEX IF NOT EXISTS idx_memories_member ON memories (group_openid, member_openid, id);
+CREATE TABLE IF NOT EXISTS days (
+    style TEXT NOT NULL,             -- one persona has one day, whichever group she's in
+    day TEXT NOT NULL,               -- YYYY-MM-DD, Beijing time
+    events TEXT NOT NULL,            -- what happens in it, one per line
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (style, day)
+);
+CREATE TABLE IF NOT EXISTS posts (
+    group_openid TEXT NOT NULL,
+    kind TEXT NOT NULL,              -- topic: she spoke up in a quiet group; voice: a voice message
+    ts INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_posts_group ON posts (group_openid, kind, ts);
+CREATE TABLE IF NOT EXISTS heard (
+    group_openid TEXT PRIMARY KEY,
+    ts INTEGER NOT NULL              -- when a member last said anything there; only the time
+);
 """
 
 
@@ -102,8 +122,10 @@ class ChatStore:
         return [r["group_openid"] for r in self._all("SELECT DISTINCT group_openid FROM turns WHERE ts < ?", ts)]
 
     def prune(self, before_ts):
-        """Delete raw turns older than the retention period."""
+        """Delete raw turns older than the retention period, and her old days and posts with them."""
         self._write("DELETE FROM turns WHERE ts < ?", before_ts)
+        self._write("DELETE FROM days WHERE created_at < ?", before_ts)
+        self._write("DELETE FROM posts WHERE ts < ?", before_ts)
 
     # ---- summary
 
@@ -187,6 +209,35 @@ class ChatStore:
         return self._write("DELETE FROM memories WHERE group_openid = ? AND member_openid = ?",
                            group, member).rowcount
 
+    # ---- her day, and what she says without being asked
+
+    def day_plan(self, style, day):
+        """Her day as a list of lines, or None if it hasn't been planned."""
+        row = self._one("SELECT events FROM days WHERE style = ? AND day = ?", style, day)
+        return row["events"].splitlines() if row else None
+
+    def set_day_plan(self, style, day, events, ts):
+        self._write("INSERT OR REPLACE INTO days (style, day, events, created_at) VALUES (?, ?, ?, ?)",
+                    style, day, "\n".join(events), ts)
+
+    def add_post(self, group, kind, ts):
+        self._write("INSERT INTO posts (group_openid, kind, ts) VALUES (?, ?, ?)", group, kind, ts)
+
+    def posts_since(self, group, kind, ts):
+        return self._one("SELECT COUNT(*) AS n FROM posts WHERE group_openid = ? AND kind = ? AND ts >= ?",
+                         group, kind, ts)["n"]
+
+    def last_post(self, group, kind):
+        return self._one("SELECT MAX(ts) AS ts FROM posts WHERE group_openid = ? AND kind = ?", group, kind)["ts"]
+
+    def heard_at(self, group):
+        row = self._one("SELECT ts FROM heard WHERE group_openid = ?", group)
+        return row["ts"] if row else None
+
+    def set_heard(self, group, ts):
+        self._write("INSERT INTO heard (group_openid, ts) VALUES (?, ?) "
+                    "ON CONFLICT(group_openid) DO UPDATE SET ts = excluded.ts", group, ts)
+
     # ---- deletion on request
 
     def forget_member(self, group, member):
@@ -197,5 +248,5 @@ class ChatStore:
         self._write("DELETE FROM summaries WHERE group_openid = ?", group)
 
     def forget_group(self, group):
-        for table in ("turns", "summaries", "memories"):
+        for table in ("turns", "summaries", "memories", "posts", "heard"):
             self._write(f"DELETE FROM {table} WHERE group_openid = ?", group)

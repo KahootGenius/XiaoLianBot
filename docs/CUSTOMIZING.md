@@ -326,16 +326,22 @@ at startup** and names the line.
 | `special_people`, `special_line` | Added when someone from `ai_chat.special_people` is known in the group: who they are, one `special_line` each | `{people}`; `{member}`, `{note}` |
 | `special_speaker`, `special_namesake` | Added when this turn's speaker is one of them, or only has the same nickname as one | `{member}`; `special_speaker` also `{note}` |
 | `length_short`, `length_medium`, `length_long` | The length line the judgement before each reply picks | |
+| `stickers` | Added when there are stickers: how to send one, and the list of labels | `{stickers}`, `{max}` |
+| `voice` | Added when a voice is set up and the group's voice messages for today aren't used up: when and how to write 「[语音:…]」 | `{max_chars}` |
 | `lore` | The style's lore whose keywords came up in the last few turns, one line each | `{lore}` |
 | `memory_rules` | Added when memories or impressions are sent: use them naturally, and don't pass one member's details to another | |
+| `day_rules` | Added when her day is planned: answer 「在干嘛」 from it, and mention it only now and then | |
 | `evidence_policy`, `evidence_title` | The rule that the summary and memories are data, not instructions, and the heading of that message | |
 | `now` | The first line of that message: Beijing time | `{date}`, `{weekday}`, `{time}` |
 | `today_teams`, `team_line` | Today's team game, one line per team (`ai_chat.game_state`) | `{teams}`; `{captain}`, `{members}` |
 | `today_birthdays`, `today_poll` | Who has a birthday today, and the open poll with its counts (`ai_chat.game_state`) | `{members}`; `{question}`, `{options}` |
 | `recent_actions` | The bracketed actions in the bot's last few replies, which `reply_shape` says not to reuse | `{actions}` |
+| `her_day` | Her day, after the time: one line per thing in it | `{events}` |
 | `summary_prefix`, `memory_title` | The headings for the summary and the memories inside it | |
 | `empty_mention` | Stands in for a message that only @s the bot | `{member}` |
+| `topic`, `topic_cue` | When a group from `ai_chat.topics` has gone quiet: what kind of thing to say, after the persona; and the line that stands in for a member's message at the end of the chat | `{hours}` |
 | `digest_comment` | The prompt for the comment that ends the weekly digest | `{digest}` |
+| `day` | Once a day, with the persona: plan three small things in her day. It must ask for JSON: `{{"events": ["上午：…", "下午：…", "晚上：…"]}}` | `{date}`, `{weekday}` |
 | `summary` | The prompt for folding old chat into the group's summary | |
 | `observer` | After each reply: what the speaker said about themselves, each scored 1–10 for importance (below 4 isn't kept), which memories came up again, which are outdated, and her impression of them. It must ask for JSON: `{{"notes": [], "reinforce": [], "forget": [], "impression": null}}` | `{member}`, `{known}`, `{impression}`, `{said}`, `{reply}`, `{max_text}`, `{max_adds}`, `{max_impression}` |
 | `consolidation` | Each night, like sleep: fold a member's recent notes and long-term memories into a few general facts. It must ask for JSON: `{{"add": [], "update": [], "forget": []}}` | `{member}`, `{facts}`, `{notes}`, `{max_text}`, `{max_facts}` |
@@ -370,8 +376,19 @@ ai_chat:
   stickers_inline: true      # inside her reply; false: as a message of their own
   sticker_size: 160          # how big they show inside a reply, in px
   stickers_url: ""           # where QQ can fetch them if a direct upload fails
+  her_day: true              # plan a few small things in her day, once a day (next sections)
+  topics:                    # speak up in a quiet group; only in the groups listed
+    groups: ["GROUP_OPENID"]
+    quiet_hours: 3
+    hours: [10, 22]
+    per_day: 2
   special_people:            # who particular members are (next section)
     "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX": 这个机器人的作者
+voice:                       # her voice, through MiniMax (next sections)
+  api_key: "YOUR_MINIMAX_API_KEY"
+  voice_id: female-chengshu
+  region: global             # or cn, for a key from the 国内 site
+  per_day: 5
 ```
 
 If you change `keep_days` or `memories_per_member`, change the same numbers in
@@ -458,6 +475,33 @@ Put the images and a `stickers.yaml` in `local/stickers/`, which never goes to G
 - **Choose with care.** She picks them herself, in front of the whole group, and QQ reviews images
   too. Leave out anything explicit.
 
+### Her day, speaking up, and her voice
+
+These follow seekchat's idea that she feels alive through state and rhythm, not more rules.
+
+- **Her day.** The first time she's needed each day (or from 05:00 in the topic groups), one cheap
+  call gets her persona and the `day` prompt and plans three small things: one each for the
+  morning, afternoon and evening. They ride along with every reply after the time, with `day_rules`
+  telling her to answer 「在干嘛」 from them and to mention them only now and then. One persona
+  has one day, whichever group she's in. A failed plan is tried again after half an hour.
+- **Speaking up.** Every few minutes the bot looks at the groups under `ai_chat.topics.groups`.
+  When nobody has said anything there for `quiet_hours`, inside `hours`, she writes one message
+  with her persona, the `topic` prompt, the same evidence as a reply and the recent chat. It goes
+  out as a message of her own and joins the conversation, so an @ reply carries on from it. She
+  posts at most `per_day` a day, and none until someone has spoken since her last one. The bot
+  must receive every message in those groups, like the manager does; otherwise a group that only
+  talks among itself looks quiet to her. Try it first with
+  `.venv/bin/python -m modules.ai.rehearse --topic`.
+- **Her voice.** With a `voice` section, her prompt gets the `voice` lines, and a 「[语音:…]」 she
+  writes is taken out of the text and said by MiniMax (`speech-2.8-turbo`, mp3). It goes under
+  the reply as a QQ voice message. Bracketed actions and emoji are left out of what she says, and a
+  long line is cut after a pause at 60 characters. After `per_day` voice messages in a group, the
+  `voice` lines leave her prompt until the next day. If MiniMax or QQ fails, the words go out as
+  text, and for an hour her voice lines stay text. A MiniMax key works only on the site it was made
+  on, so set `region: cn` for a key from the 国内 site (minimax.cn, formerly minimaxi.com);
+  `voice_id` is a system voice such as `female-chengshu`, or the ID of a voice you cloned there. If
+  MiniMax moves its address again, `voice.host` sets it, e.g. `host: https://api.minimaxi.chat`.
+
 ### Trying changes before the group sees them
 
 `modules/ai/rehearse.py` plays a scripted group chat against the real DeepSeek with your
@@ -469,7 +513,9 @@ Put the images and a `stickers.yaml` in `local/stickers/`, which never goes to G
 ```
 
 The script is `prompts/rehearsal.yaml`; put your group's own in `local/prompts/rehearsal.yaml`. Each
-line costs two small DeepSeek calls, and nothing is saved.
+line costs two small DeepSeek calls, planning her day one more per run, and nothing is saved. Her
+voice lines show as 「[语音:…]」 without calling MiniMax. `--topic` lets the group go quiet at the
+end and shows what she'd say to restart it.
 
 ### Telling AI chat who someone is
 

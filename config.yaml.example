@@ -58,11 +58,29 @@ secret: "YOUR_APP_SECRET"
 #                            # e.g. "https://stickers.example.com"
 #   hear_all: false          # true: every message in a managed group joins her conversation, not just
 #                            # @s. Stores everyone's chat for keep_days; read the privacy policy first.
+#   her_day: true            # each day one cheap call plans 3 small things in her day; replies follow it
+#   topics:                  # she says something when a group has gone quiet; only in the groups listed
+#     groups: []             # group_openid of each (@机器人 /群ID); the bot must get every message there
+#     quiet_hours: 3         # how long nobody has spoken
+#     hours: [10, 22]        # only between these hours, Beijing time
+#     per_day: 2             # at most this many a day, and none until someone answers her last one
 #   # Who particular members are, which the bot treats as true. Key: their member_openid
 #   # (@机器人 /我的ID; one line per person, as the ID is the same in every group). It goes
 #   # by the ID, so copying someone's nickname doesn't make you them. See docs/CUSTOMIZING.md.
 #   special_people:
 #     "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX": 这个机器人的作者   # 张三
+
+# --- Optional: her voice (MiniMax text to speech, https://platform.minimax.io) ---
+# Special moments (good night, a birthday) can get a short voice message: she writes
+# [语音:…] and MiniMax says it. Only her own words go to MiniMax. Omit this section
+# to keep her to text.
+# voice:
+#   api_key: "YOUR_MINIMAX_API_KEY"
+#   voice_id: "female-chengshu"   # a MiniMax system voice, or the ID of a voice you cloned
+#   region: global                # global: a key from minimax.io; cn: from the 国内 site, minimax.cn
+#   model: speech-2.8-turbo
+#   speed: 1.0
+#   per_day: 5                    # voice messages per group per day
 
 # --- Optional: outbound proxy for the Steam scraper ---
 # Only needed if store.steampowered.com is unreachable from your host.
