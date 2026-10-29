@@ -131,7 +131,7 @@ class MarkdownTest(unittest.TestCase):
 
     def test_her_words_show_as_written(self):
         self.assertEqual(stickers.as_markdown("*哼* 才不是~\n- 一\n1. 二\n\n# 三\n> 引用 >_<"),
-                         "＊哼＊ 才不是～\n\n－ 一\n\n1． 二\n\n＃ 三\n\n＞ 引用 ＞＿＜")
+                         "＊哼＊ 才不是～  \n\u200b- 一  \n\u200b1. 二  \n\u200b  \n\u200b# 三  \n＞ 引用 ＞＿＜")
         self.assertEqual(stickers.as_markdown("[链接](x) a|b `c` \\"), "［链接］(x) a｜b ｀c｀ ＼")
         self.assertEqual(stickers.markdown_image("qqbot-media://image/v1/t", 113, 160),
                          "![表情 #113px #160px](qqbot-media://image/v1/t)")

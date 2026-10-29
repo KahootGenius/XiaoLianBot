@@ -13,6 +13,7 @@ import base64
 import hashlib
 import itertools
 import os
+import re
 import time
 from collections import OrderedDict
 import aiohttp
@@ -30,6 +31,9 @@ TRACE_HEADER = "X-Tps-trace-Id"
 # After QQ refuses buttons (a custom layout needs Tencent to switch it on for the
 # bot), replies go out as plain text only for this long before trying again.
 BUTTON_RETRY_SECONDS = 6 * 3600
+# After QQ refuses a reply and its buttons as one markdown message, the buttons go in a small
+# message of their own under the reply for this long before trying again.
+INLINE_RETRY_SECONDS = 3600
 IMAGE = 1                   # file_type of an image upload
 VOICE = 3                   # file_type of a voice upload: silk, mp3 or wav
 # Where QQ's API has lived since 2026-08-10. botpy still calls the old address, which serves the older
@@ -37,6 +41,30 @@ VOICE = 3                   # file_type of a voice upload: silk, mp3 or wav
 API_DOMAIN = "api.bot.qq.com"
 LIBRARY_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif",
                  ".webp": "image/webp"}
+
+
+# Characters QQ's markdown would act on, swapped for full-width look-alikes so text shows as written
+# (it doesn't promise backslash escapes). A line that starts like a list, a heading, a rule or code
+# gets an invisible zero-width space in front instead, so 「1. 小明」 still looks the same.
+_PLAIN = str.maketrans({"*": "＊", "_": "＿", "~": "～", "`": "｀", ">": "＞", "<": "＜",
+                        "[": "［", "]": "］", "|": "｜", "\\": "＼"})
+_LINE_START = re.compile(r"[-+=#]|\d+[.)]|\s")
+ZWSP = "\u200b"
+
+
+def as_markdown(text):
+    """Plain text as QQ markdown that shows the same: nothing read as syntax, and each line on a
+    line of its own (two spaces before the line break make it a hard one). A blank line becomes
+    a zero-width space, as QQ's docs do it, since markdown folds empty lines."""
+    lines = []
+    for line in text.translate(_PLAIN).split("\n"):
+        line = line.rstrip()
+        lines.append(ZWSP if not line else ZWSP + line if _LINE_START.match(line) else line)
+    while lines and lines[0] == ZWSP:
+        lines.pop(0)
+    while lines and lines[-1] == ZWSP:
+        lines.pop()
+    return "  \n".join(lines)
 
 
 class OpenAPIError(Exception):
@@ -53,10 +81,12 @@ class OpenAPIError(Exception):
 
 
 class QQGateway:
-    def __init__(self, api, buttons=True):
+    def __init__(self, api, buttons=True, buttons_inline=True):
         self.api = api
         self.buttons = buttons              # config.yaml: buttons
         self.buttons_off_until = 0.0
+        self.buttons_inline = buttons_inline    # config.yaml: buttons_inline
+        self.inline_off_until = 0.0
         # msg_id -> next msg_seq. QQ rejects a second reply with the same
         # (msg_id, msg_seq) pair as a duplicate (error 40054005).
         self._seq = OrderedDict()
@@ -77,8 +107,19 @@ class QQGateway:
 
         Passive replies only work within 5 minutes of the original message;
         past that (or on any failure) fall back to a proactive message.
-        `buttons` -- rows of (label, command) -- go under a reply; see send_buttons.
+        `buttons` -- rows of (label, command) -- go at the bottom of a reply: the reply goes as
+        markdown with them in the same message. If QQ won't take that, the reply goes as text
+        with the buttons in a small message of their own under it (send_buttons).
         """
+        if reply_to and buttons and self._inline_ready() and "<qqbot-" not in content:
+            try:
+                return await self.api.post_group_message(
+                    group_openid=group_openid, msg_type=2, markdown={"content": as_markdown(content)},
+                    keyboard=self.keyboard(buttons), msg_id=reply_to, msg_seq=self._next_seq(reply_to))
+            except Exception as e:
+                self.inline_off_until = time.monotonic() + INLINE_RETRY_SECONDS
+                _log.warning(f"[Buttons] 回复和按钮没能放进同一条消息（{e}），"
+                             f"{INLINE_RETRY_SECONDS // 3600} 小时内按钮单独发在回复下面")
         if reply_to:
             try:
                 result = await self.api.post_group_message(
@@ -218,8 +259,14 @@ class QQGateway:
             buttons.append({"buttons": line})
         return {"content": {"rows": buttons}}
 
+    def _inline_ready(self):
+        now = time.monotonic()
+        return (self.buttons and self.buttons_inline and now >= self.buttons_off_until
+                and now >= self.inline_off_until)
+
     async def send_buttons(self, group_openid, reply_to, rows):
-        """Tap-to-send buttons, as a small Markdown message of their own under a reply.
+        """Tap-to-send buttons, as a small Markdown message of their own under a reply: with
+        buttons_inline off, or for a while after QQ wouldn't take them inside the reply.
 
         The reply itself has already gone out as plain text, so if QQ refuses the
         buttons -- custom layouts need Tencent to switch them on for the bot --

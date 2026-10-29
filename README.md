@@ -187,8 +187,9 @@ For the group's games, where a few captains pick teams:
 - **Buttons:** replies with an obvious next step offer tap-to-send buttons: `/帮助`, `/今日运势`,
   `/我的状态`, `/排行` and `/成就`, the team list, polls, 征集意见, 21点, dice, 发癫, `/翻牌子`, birthdays,
   `/我的记忆` and `/mc状态`. Admins get them under `/管理帮助` and the removal lists, where QQ asks
-  before 「确认移出」 or 「已移出」 goes through. If QQ refuses buttons, replies are plain text for
-  six hours.
+  before 「确认移出」 or 「已移出」 goes through. The buttons sit at the bottom of the reply itself,
+  which goes as QQ markdown; `buttons_inline: false` in `config.yaml` puts them in a small message
+  of their own instead. If QQ refuses buttons, replies are plain text for six hours.
 
 ### Inherited from Castorice
 Epic and Steam free-game pushes, Minecraft server status, blackjack, dice, 发癫 quotes, and

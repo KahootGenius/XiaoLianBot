@@ -18,7 +18,7 @@ from modules.fun.social import SocialModule
 from modules.fun.social.module import parse_birthday, read_flip_special
 from modules.fun.social.store import FunStore
 from modules.fun.teams.rules import load_rules
-from modules.manager.openapi import QQGateway
+from modules.manager.openapi import QQGateway, as_markdown
 from tests.test_ai_chat import FakeDeepSeek
 from tests.test_manager import GROUP, START, FakeGateway, FakeMessage, ManagerTestCase
 from tests.test_teams import TeamGameTestCase, shipped_rules
@@ -68,7 +68,7 @@ class FortuneTest(SocialTestCase):
         pools = STYLES.styles[DEFAULT_STYLE].lookup("social.fortune")
         level = first.split("\n")[1].removeprefix("运势：")
         self.assertIn(level, pools["levels"])
-        self.assertEqual(self.gw.buttons[-1], (GROUP, [[("我也抽一签", "/今日运势")]]))
+        self.assertEqual(self.gw.buttons[-1], (GROUP, [[("我也要测", "/今日运势")]]))
         week = set()
         for day in range(7):
             self.now = START + timedelta(days=day)
@@ -89,7 +89,7 @@ class BirthdayTest(SocialTestCase):
         self.assertIn("还没有登记", await self.say("A", "/生日"))
         self.assertIn("写成「月-日」", await self.say("A", "/生日 13-40"))
         self.assertIn("11月2日", await self.say("A", "/生日 11-2"))
-        self.assertEqual(self.gw.buttons[-1], (GROUP, [[("本月生日", "/本月生日")]]))
+        self.assertEqual(self.gw.buttons[-1], (GROUP, [[("看看本月寿星", "/本月生日")]]))
         self.assertEqual(await self.say("A", "今天上课好累"), "")             # not the day yet
         self.now = START + timedelta(days=1)
         wish = await self.say("A", "早上好")                               # either of the style's two wishes
@@ -99,7 +99,7 @@ class BirthdayTest(SocialTestCase):
         self.assertIn("11 月过生日的群友（1 位）：\n11月2日 小明", await self.say("B", "/本月生日"))
         self.assertIn("删掉了", await self.say("A", "/生日 删除"))
         self.assertIn("还没有人登记", await self.say("B", "/本月生日"))
-        self.assertEqual(self.gw.buttons[-1], (GROUP, [[("登记我的生日", "/生日 ")]]))     # typed in, for the date
+        self.assertEqual(self.gw.buttons[-1], (GROUP, [[("我要登记生日", "/生日 ")]]))     # typed in, for the date
 
     async def test_leap_day_birthdays_come_on_the_28th(self):
         self.make()
@@ -171,7 +171,7 @@ class OpinionTest(SocialTestCase):
         started = await self.say("ADMIN", "/征集意见 下个月玩什么？")
         self.assertIn("📮 管理员 发起了意见征集：下个月玩什么？", started)
         self.assertIn("每人最多 3 条", started)
-        self.assertEqual(self.gw.buttons[-1], (GROUP, [[("提意见", "/意见 ")]]))     # typed in, for the opinion
+        self.assertEqual(self.gw.buttons[-1], (GROUP, [[("我要提意见", "/意见 ")]]))     # typed in, for the opinion
         self.assertIn("正在征集「下个月玩什么？」", await self.say("ADMIN", "/征集意见 另一个"))
         self.assertIn("收到 小明 的意见～（现在 1 人提了 1 条）", await self.say("A", "/意见 想玩狼人杀"))
         await self.say("A", "/意见：周末晚上比较好")              # with a colon
@@ -259,7 +259,7 @@ class FlipTest(SocialTestCase):
                 {"member_openid": "A", "nickname": "小明", "n": 5000}]
         self.make(activity=lambda group, since: rows)
         self.assertIn("小红", await self.say("A", "/翻牌子"))                 # 1000 messages against 1; never themself
-        self.assertEqual(self.gw.buttons[-1], (GROUP, [[("我也翻一张", "/翻牌子")]]))
+        self.assertEqual(self.gw.buttons[-1], (GROUP, [[("我也要翻", "/翻牌子")]]))
         self.assertIn("今天已经翻过牌子啦，翻到的是 小红", await self.say("A", "/翻牌子"))
         self.now = START + timedelta(days=1)
         self.assertNotIn("已经翻过", await self.say("A", "/翻牌子"))
@@ -326,23 +326,46 @@ class SpecialFlipTest(SocialTestCase):
 
 
 class ButtonsTest(unittest.IsolatedAsyncioTestCase):
-    def make_api(self, refuse):
+    def make_api(self, refuse, refuse_inline=False):
+        """QQ refusing every markdown message (`refuse`), or only a reply with buttons inside it."""
         calls = []
 
         async def post_group_message(**kwargs):
             calls.append(kwargs)
-            if refuse and kwargs.get("msg_type") == 2:
+            if kwargs.get("msg_type") == 2 and (refuse or refuse_inline and kwargs["markdown"]["content"] != "点一下直接发送 👇"):
                 raise RuntimeError("custom keyboard not enabled")
         return SimpleNamespace(post_group_message=post_group_message), calls
 
-    async def test_buttons_go_under_the_reply(self):
+    async def test_buttons_go_in_the_reply(self):
         api, calls = self.make_api(refuse=False)
         await QQGateway(api).send("G", "运势", reply_to="m1", buttons=[[("我也抽", "/今日运势"), ("抓人", "/抓 ")]])
-        self.assertEqual([c["msg_type"] for c in calls], [0, 2])
-        self.assertEqual([c["msg_seq"] for c in calls], [1, 2])
-        buttons = calls[1]["keyboard"]["content"]["rows"][0]["buttons"]
+        self.assertEqual([(c["msg_type"], c["msg_seq"], c["markdown"]["content"]) for c in calls], [(2, 1, "运势")])
+        buttons = calls[0]["keyboard"]["content"]["rows"][0]["buttons"]
         self.assertEqual([(b["action"]["data"], b["action"]["enter"]) for b in buttons],
                          [("/今日运势", True), ("/抓", False)])            # "/抓 " is only typed in
+
+    def test_the_reply_reads_as_written(self):
+        self.assertEqual(as_markdown("📊 周六几点开？\n1. 19点 · 2 票：小_明\n- 备注 <地址>\n\n# 3 *票*\n"),
+                         "📊 周六几点开？  \n\u200b1. 19点 · 2 票：小＿明  \n\u200b- 备注 ＜地址＞  \n\u200b  \n"
+                         "\u200b# 3 ＊票＊")
+
+    async def test_if_qq_wont_take_them_inside_they_go_under_it_for_an_hour(self):
+        api, calls = self.make_api(refuse=False, refuse_inline=True)
+        gateway = QQGateway(api)
+        await gateway.send("G", "运势", reply_to="m1", buttons=[[("我也抽", "/今日运势")]])
+        await gateway.send("G", "运势", reply_to="m2", buttons=[[("我也抽", "/今日运势")]])
+        self.assertEqual([(c["msg_type"], c.get("msg_id")) for c in calls], [(2, "m1"), (0, "m1"), (2, "m1"),
+                                                                             (0, "m2"), (2, "m2")])
+        gateway.inline_off_until = 0                        # the hour is up: it tries inside the reply again
+        calls.clear()
+        await gateway.send("G", "运势", reply_to="m3", buttons=[[("我也抽", "/今日运势")]])
+        self.assertEqual((calls[0]["msg_type"], calls[0]["markdown"]["content"]), (2, "运势"))
+        calls.clear()
+        await QQGateway(api, buttons_inline=False).send("G", "运势", reply_to="m4", buttons=[[("我也抽", "/今日运势")]])
+        self.assertEqual([c["msg_type"] for c in calls], [0, 2])          # config.yaml: buttons_inline: false
+        calls.clear()
+        await QQGateway(api).send("G", '<qqbot-at-user id="X" /> 到你了', reply_to="m5", buttons=[[("好", "/好")]])
+        self.assertEqual([c["msg_type"] for c in calls], [0, 2])          # an @ stays in a text message
 
     def test_a_button_that_changes_things_asks_first(self):
         rows = QQGateway.keyboard([[("确认移出 #3", "/确认移出 3", "确定把名单 #3 的 2 人移出群吗？"),
@@ -363,7 +386,7 @@ class ButtonsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await play(blackjack, "handle_blackjack", "/21点"), [[("抽卡", "/抽卡"), ("停止", "/停止")]])
         self.assertEqual(await play(blackjack, "handle_blackjack", "/停止"), [[("再来一局", "/21点")]])
         self.assertEqual(await play(blackjack, "handle_blackjack", "/抽卡"), [[("再来一局", "/21点")]])   # no game
-        self.assertEqual(await play(DiceModule(None, gateway=gw), "handle_dice", "/摇骰子"), [[("再摇一次", "/摇骰子")]])
+        self.assertEqual(await play(DiceModule(None, gateway=gw), "handle_dice", "/摇骰子"), [[("我也要摇", "/摇骰子")]])
         self.assertEqual(await play(CrazyTalkModule(None, gateway=gw), "handle_crazy_talk", "/发癫 小红"),
                          [[("再来一条", "/发癫 小红")]])
 
@@ -372,7 +395,7 @@ class ButtonsTest(unittest.IsolatedAsyncioTestCase):
         gateway = QQGateway(api)
         await gateway.send("G", "运势", reply_to="m1", buttons=[[("我也抽", "/今日运势")]])
         await gateway.send("G", "运势", reply_to="m2", buttons=[[("我也抽", "/今日运势")]])
-        self.assertEqual([c["msg_type"] for c in calls], [0, 2, 0])         # tried once, then text only
+        self.assertEqual([c["msg_type"] for c in calls], [2, 0, 2, 0])      # tried both ways once, then text only
         api, calls = self.make_api(refuse=False)
         await QQGateway(api, buttons=False).send("G", "运势", reply_to="m1", buttons=[[("我也抽", "/今日运势")]])
         self.assertEqual([c["msg_type"] for c in calls], [0])               # config.yaml: buttons: false

@@ -15,9 +15,12 @@ secret: "YOUR_APP_SECRET"
 #   "GROUP_OPENID": 桃子  # which group this is (@机器人 /群ID shows the ID)
 
 # --- Optional: buttons under replies with a next step (/帮助, 21点, polls, removal lists ...) ---
-# Tapping one sends the command for the member. If QQ refuses them, the bot notices
-# and sends text only for six hours. Set false to never try.
+# Tapping one sends the command for the member. They sit at the bottom of the reply,
+# which then goes as QQ markdown; buttons_inline: false puts them in a small message
+# of their own under it instead. If QQ refuses them, the bot notices and sends text
+# only for six hours. Set buttons: false to never try.
 # buttons: true
+# buttons_inline: true
 
 # --- Optional: DeepSeek (https://platform.deepseek.com) ---
 # Omit this whole section to run the bot without AI features. Epic, Steam,

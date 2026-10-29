@@ -121,7 +121,7 @@ The sections of `小莲.yaml`:
 | `manager.batch`, `manager.daily` | Removal lists and their commands; the daily check's reports and safety stop |
 | `manager.digest` | The weekly digest |
 | `social` | `/今日运势` (its title, and the lists it draws levels, 宜, 忌 and comments from), birthdays, polls, 征集意见 (`social.opinion`), `/翻牌子` |
-| `common.buttons_hint` | The little message that carries the buttons |
+| `common.buttons_hint` | The little message that carries the buttons when they can't go in the reply itself: with `buttons_inline: false`, or for an hour after QQ refused that |
 | Keys ending in `button`, `again` or `refresh`; `manager.batch.button_…` and `ask_…` | Button labels, such as `games.blackjack.again` (再来一局); the removal list's buttons and the questions QQ asks before 「确认移出」 and 「已移出」 |
 | `games.teams` | The team game: `/队伍`, the 【组队游戏】 part of `/帮助`, and every refusal ("不在你的队伍里"…) |
 | `games`, `info`, `ai` | Dice, blackjack, 发癫, sleep; Epic, Steam, Minecraft; AI chat errors |

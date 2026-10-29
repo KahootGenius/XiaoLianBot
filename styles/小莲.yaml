@@ -45,7 +45,8 @@ common:
   error: "{command} 出错了：{error}"
   # 回复没能发出去时（多半是 QQ 没收下这段文字）补发的一句
   send_failed: 刚才那条回复没发出去，可能被 QQ 拦下了，换个说法再试试～
-  # 回复下面的按钮那条小消息（需要腾讯为机器人开通按钮，没开通时不会出现）
+  # 按钮单独发在回复下面时的那条小消息：config.yaml 设了 buttons_inline: false，或 QQ 不收回复里的按钮时。
+  # 平时按钮就在回复里，用不到这一句
   buttons_hint: 点一下直接发送 👇
   buttons_unsupported: 当前 QQ 版本不支持这个按钮，请升级后再试
 
@@ -431,7 +432,7 @@ manager:
 # ---------------------------------------------------------------- 娱乐
 games:
   dice: "你投出了: {number} 点 "
-  dice_again: 再摇一次
+  dice_again: 我也要摇
   blackjack:
     start: "游戏开始！\n你的手牌: {hand} (点数: {points})\n机器人的明牌: {dealer}\n你可以输入 /抽卡 继续要牌，或输入 /停止 停止要牌"
     no_game: 当前没有进行中的游戏，请先输入 /21点 开始游戏。
@@ -564,7 +565,7 @@ social:
     level: "运势：{level}"
     good_line: "宜：{items}"
     bad_line: "忌：{items}"
-    button: 我也抽一签
+    button: 我也要测                  # 按钮上的字是群友会说的话，读起来像邀请
     levels: [大吉, 中吉, 小吉, 吉, 末吉, 凶]
     good: [冒泡聊天, 早睡早起, 组队开黑, 喝一杯奶茶, 认真回答问题, 分享一首歌, 出门晒太阳, 整理房间]
     bad: [熬夜, 潜水, 立 flag, 冲动消费, 和人抬杠, 拖延, 空腹喝咖啡, 刷手机到凌晨]
@@ -588,7 +589,8 @@ social:
     month_title: "🎂 {month} 月过生日的群友（{count} 位）："
     month_row: "{date} {member}"
     month_none: "{month} 月还没有人登记生日～用 /生日 月-日 登记一下吧"
-    register_button: 登记我的生日
+    register_button: 我要登记生日
+    month_button: 看看本月寿星        # 登记好生日后的按钮，发 /本月生日
 
   # /投票、/投、/结束投票。每个群同时只有一个投票，7 天后自动结束
   poll:
@@ -629,7 +631,7 @@ social:
     row: "{n}. {member}：{text}"
     ended_empty: "📮 意见征集结束：{topic}\n这次没有人提意见……"
     summary: "💬 {name}看完大家的意见：\n{summary}"
-    button: 提意见
+    button: 我要提意见
 
   # /翻牌子：开玩笑的抽签，从本周活跃的群友里按发言多少加权抽一位，每人每天一次（管理员不限次数）
   flip:
@@ -639,5 +641,5 @@ social:
     again: "今天已经翻过牌子啦，翻到的是 {target}。明天再来～"
     need_mentions: "这个群没开群管理，我不知道谁最近活跃；@ 几个人，我从里面帮你翻"
     empty: 这周还没有别人有效发言过，牌子都是空的……
-    button: 我也翻一张
+    button: 我也要翻
 

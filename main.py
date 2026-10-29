@@ -43,7 +43,8 @@ class MyClient(botpy.Client):
     def __init__(self, intents):
         super().__init__(intents=intents)
         # One gateway for every module that replies through it, so reply sequence numbers never collide.
-        self.gateway = QQGateway(self.api, buttons=config.get("buttons", True))
+        self.gateway = QQGateway(self.api, buttons=config.get("buttons", True),
+                                 buttons_inline=config.get("buttons_inline", True))
         self.epic_module = EpicGamesModule(self.api)
         self.minecraft_module = MinecraftModule(self.api, gateway=self.gateway)
         self.steam_module = SteamModule(self.api)

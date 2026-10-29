@@ -255,7 +255,7 @@ class SocialModule:
         month, day = parsed
         self.store.set_birthday(group, member, message.nickname, month, day)
         await self._reply(message, t("social.birthday.saved", date=t("common.date", month=month, day=day)),
-                          buttons=[[("本月生日", "/本月生日")]])
+                          buttons=[[(t("social.birthday.month_button"), "/本月生日")]])
 
     async def cmd_month(self, message, args):
         """/本月生日: everyone in this group who shared a birthday in this month."""

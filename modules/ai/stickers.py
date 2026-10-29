@@ -28,6 +28,7 @@ from dataclasses import dataclass
 import yaml
 from botpy import logging
 from core.config import LOCAL_DIR, root_path, use_local
+from modules.manager.openapi import as_markdown    # her words as markdown, as replies with buttons go
 
 
 _log = logging.get_logger()
@@ -175,22 +176,6 @@ def display_size(path, size=SIZE):
     width, height = found
     scale = size / max(width, height)
     return max(1, round(width * scale)), max(1, round(height * scale))
-
-
-# Characters markdown would act on, swapped for full-width look-alikes so her words show as written
-# (QQ's markdown doesn't promise backslash escapes). Line starts that would make a list or a rule too.
-_PLAIN = str.maketrans({"*": "＊", "_": "＿", "~": "～", "`": "｀", "#": "＃", ">": "＞", "<": "＜",
-                        "[": "［", "]": "］", "|": "｜", "\\": "＼"})
-_LINE_START = re.compile(r"^(?:([-+=])|(\d+)([.)]))")
-_WIDE = {"-": "－", "+": "＋", "=": "＝", ".": "．", ")": "）"}
-
-
-def as_markdown(text):
-    """Plain text as markdown that shows the same: each line a paragraph, nothing read as syntax."""
-    lines = (_LINE_START.sub(lambda m: _WIDE[m.group(1)] if m.group(1) else m.group(2) + _WIDE[m.group(3)],
-                             line.strip())
-             for line in text.translate(_PLAIN).splitlines())
-    return "\n\n".join(line for line in lines if line)
 
 
 def markdown_image(link, width, height):
