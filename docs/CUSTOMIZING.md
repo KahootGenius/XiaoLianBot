@@ -98,6 +98,42 @@ The rules:
   ```
   It lists misspelt keys, placeholders the code won't fill, and how many lines still come from 小莲.
 
+## Lines for particular people
+
+Any line can have a version for particular people, written next to it as `key@audience`. Most
+lines need none: whoever has no version of a line gets the line itself.
+
+```yaml
+help:
+  admin: ""                    # everyone else: nothing
+  admin@admin: "{admin_help}"  # admins: every /管理帮助 command, at the end of /帮助
+```
+
+- **`admin` needs no setup.** It means whoever the group manager counts as an admin:
+  - the group's owner and admins
+  - `manager.admins` in `config.yaml`
+  - everyone in the admin group
+- **Name other groups of people in `config.yaml`,** then write `key@captains`, `key@vip` and so on:
+  ```yaml
+  audiences:
+    captains: teams.captains                      # a list kept elsewhere in config.yaml
+    vip: ["MEMBER_OPENID_1", "MEMBER_OPENID_2"]   # or the IDs themselves; @机器人 /我的ID shows yours
+  ```
+  Pointing at a list, as `captains` does here, keeps one list to update. Names can't contain `.`,
+  `@` or spaces.
+- **It goes by who the bot is answering.** Everything said while handling someone's message uses
+  that person's versions, badge congratulations included. Messages for the whole group use the line
+  itself: the daily check (even one run with `/立即检查`), its reminders, and the weekly digest.
+- **When someone fits several versions,** the groups in `config.yaml` come first, in the order
+  they're written, then `admin`.
+- **A version follows its line's rules:** the same placeholders, a list to pick from at random, and
+  the line itself if the version is broken.
+- **A version your style leaves out comes from 小莲,** like any other line. So the shipped
+  `help.admin@admin` still gives admins the list in a style that only rewrites `help.admin`.
+- **`system_prompt@admin` works too:** AI chat then uses that persona when it replies to an admin.
+- **The checker covers versions:** it reports versions of lines 小莲 doesn't have, versions for
+  groups `config.yaml` doesn't name, and placeholders the code won't fill.
+
 ## Where each kind of line is
 
 The sections of `小莲.yaml`:
@@ -105,7 +141,7 @@ The sections of `小莲.yaml`:
 | Section | Lines for |
 |---|---|
 | `common` | The stand-in for a missing nickname, the separator between names (、), the date format, "admins only", the error message |
-| `help` | `/帮助` |
+| `help` | `/帮助`; `help.admin@admin` is the admins-only part at the end |
 | `manager.help_block`, `manager.admin_help` | The group-management part of `/帮助`, and `/管理帮助` |
 | `manager.modes`, `manager.mode_hints` | What the three modes are called and how each is explained |
 | `manager.kinds` | Why a message did or didn't count, as shown by `/成员表`, `/成员` and the web table |

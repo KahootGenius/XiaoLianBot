@@ -92,7 +92,7 @@ Admins can use every action except `/抓` on any team.
 
 | Command | Meaning | Module |
 |---|---|---|
-| `/帮助` | Show the command list (aliases: `/菜单`, `/help`, `/指令`) | `help.py` |
+| `/帮助` | Show the command list (aliases: `/菜单`, `/help`, `/指令`); admins also get the admin commands at the end | `help.py` |
 | `/epicfree` | List Epic free games | `info/epic_games.py` |
 | `订阅epic` | Subscribe to daily Epic push (12:00) | `info/epic_games.py` |
 | `epicTD` | Unsubscribe from Epic push | `info/epic_games.py` |

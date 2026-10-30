@@ -12,6 +12,11 @@
 # 想整套重写，就把 小莲.yaml 整个复制过来改。
 # 花括号 {xxx} 只能用 小莲.yaml 里同一句已有的那些；写了不存在的，这句会自动改用小莲的说法。
 # 写完可以检查：python -m core.style check 桃子
+#
+# 某句话想对某类人说得不一样，就在原句旁边再写一个「键名@类别」的版本，没有对应版本的人照常看到原句：
+#   help:
+#     admin@admin: "🍑 管理员看这里：\n{admin_help}"
+# admin 是管理员，不用设置；其他类别在 config.yaml 的 audiences 里起名字、列出成员ID。
 
 name: 桃子
 

@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from core import style
 from core.config import root_path
-from core.style import DEFAULT_STYLE, STYLES, StyleBook, placeholders, t
+from core.style import ADMIN, DEFAULT_STYLE, STYLES, StyleBook, placeholders, t
 from modules.help import HelpModule
 from tests.test_manager import GROUP, FakeGateway, ManagerTestCase
 
@@ -40,12 +40,14 @@ class DefaultStyleTest(unittest.TestCase):
                     continue
                 if any(k.arg is None for k in node.keywords):       # t(key, **fields): can't tell from here
                     continue
-                line = base.own(node.args[0].value)
                 given = {k.arg for k in node.keywords} | {"name"}
-                for variant in line if isinstance(line, list) else [line] if line is not None else []:
-                    missing = placeholders(str(variant)) - given
-                    if missing:
-                        problems.append(f"{os.path.basename(path)}:{node.lineno} {node.args[0].value}: {sorted(missing)}")
+                # The line and its versions for particular people (key@admin) are filled from the same call.
+                for line in StyleBook._versions_in(base, node.args[0].value):
+                    for variant in line if isinstance(line, list) else [line]:
+                        missing = placeholders(str(variant)) - given
+                        if missing:
+                            problems.append(f"{os.path.basename(path)}:{node.lineno} {node.args[0].value}: "
+                                            f"{sorted(missing)}")
         self.assertEqual(problems, [])
 
     def test_every_line_has_valid_placeholders(self):
@@ -63,8 +65,18 @@ class DefaultStyleTest(unittest.TestCase):
                     "/投票 问题 选项1 选项2…  /投 A  /结束投票\n/征集意见 看看在征集什么  /意见 内容 提意见\n\n【作息】\n"
                     "/晚安 记录入睡  /早安 查看睡眠时长\n\n【AI】\n/服务器QA <问题> 服务器问答\n直接@我聊天即可\n"
                     "/我的记忆 我记得的关于你的事  /忘记 序号 删掉一条\n\n"
-                    "提示：所有指令需@我使用\n管理员指令：/管理帮助")
+                    "提示：所有指令需@我使用")
         self.assertEqual(HelpModule(None, ai_enabled=True, manager_enabled=True)._build_help_text(), expected)
+
+    def test_admins_see_the_admin_commands_in_help(self):
+        help = HelpModule(None, ai_enabled=True, manager_enabled=True)
+        member = help._build_help_text()
+        with STYLES.scope("G", audiences=[ADMIN]):
+            admin = help._build_help_text()
+            self.assertEqual(admin, member + "\n\n" + t("manager.admin_help"))
+            # Without the group manager there are no admin commands to list.
+            self.assertNotIn("/管理状态", HelpModule(None, manager_enabled=False)._build_help_text())
+        self.assertNotIn("/管理", member)
 
 
 class CustomStyleTest(unittest.TestCase):
@@ -151,6 +163,73 @@ class PrivateStyleTest(unittest.TestCase):
             self.assertIn("出错了", t("common.error", command="/x", error="e"))
             self.assertNotIn("桃子出错了", t("common.error", command="/x", error="e"))
         self.assertIn("{oops}", "\n".join(book.check(DEFAULT_STYLE)))
+
+
+class AudienceTest(unittest.TestCase):
+    """Versions of a line for particular people, written next to it as key@audience."""
+
+    PEACH = """
+name: 桃子
+system_prompt: 你是桃子。
+system_prompt@admin: 你是桃子，正在和管理员说话。
+common:
+  not_admin: 这个只有管理员能用哒～
+  not_admin@vip: 贵宾也不行哦～
+  someone@admin: "{oops}"
+manager:
+  leave:
+    none@admin: "{mystery}查了一下，管理员没有请假"
+  typo@admin: 这一句不存在
+  welcome_back@nobody: 没有这一类人
+"""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir)
+        shutil.copy(root_path("styles", f"{DEFAULT_STYLE}.yaml"), self.dir)
+        with open(os.path.join(self.dir, "桃子.yaml"), "w", encoding="utf-8") as f:
+            f.write(self.PEACH)
+        self.book = StyleBook(directory=self.dir)
+        self.book.configure({"group_styles": {"G1": "桃子"}, "audiences": {"vip": ["V", "W"], "作者": ["W"]}})
+
+    def say(self, key, *audiences, group="G1", **kwargs):
+        with self.book.scope(group, audiences=audiences):
+            return t(key, **kwargs)
+
+    def test_each_person_gets_their_version_or_the_line_itself(self):
+        self.assertEqual(self.say("common.not_admin"), "这个只有管理员能用哒～")
+        self.assertEqual(self.say("common.not_admin", "vip", ADMIN), "贵宾也不行哦～")
+        self.assertEqual(self.say("common.not_admin", "作者", ADMIN), "这个只有管理员能用哒～")   # no version for either
+        # A version the style leaves out comes from the default, like any other line: still as 桃子.
+        self.assertEqual(self.say("help.admin", ADMIN, admin_help="管理指令"), "管理指令")
+        self.assertEqual(self.say("help.admin", admin_help="管理指令"), "")
+        # A version that can't be filled in falls back to the line for everyone.
+        self.assertEqual(self.say("common.someone", ADMIN), self.say("common.someone"))
+        with self.book.scope("G1", audiences=[ADMIN]):
+            self.assertEqual(style.current().system_prompt, "你是桃子，正在和管理员说话。")
+        with self.book.scope("G1"):
+            self.assertEqual(style.current().system_prompt, "你是桃子。")
+
+    def test_who_is_in_which_audience_comes_from_config(self):
+        self.assertEqual(self.book.audiences_of("W"), ["vip", "作者"])
+        self.assertEqual(self.book.audiences_of("X"), [])
+        self.book.configure({"audiences": {"a.b": ["X"], ADMIN: ["X"], "好友": "X", "同学": ["X"]}})
+        self.assertEqual(self.book.audiences_of("X"), ["同学"])      # the others can't be used
+
+    def test_an_audience_can_be_a_list_kept_elsewhere_in_config(self):
+        self.book.configure({"teams": {"captains": ["C1", "C2"]},
+                             "audiences": {"captains": "teams.captains", "没有": "teams.nobody"}})
+        self.assertEqual(self.book.audiences_of("C2"), ["captains"])
+        self.assertEqual(list(self.book.audiences), ["captains"])          # nothing at teams.nobody
+
+    def test_check_names_the_problems(self):
+        problems = "\n".join(self.book.check("桃子"))
+        self.assertIn("typo@admin：小莲.yaml 里没有 manager.typo 这一句", problems)
+        self.assertIn("welcome_back@nobody：没有叫「nobody」的群友类别", problems)
+        self.assertIn("none@admin：程序不会填写 {mystery}", problems)
+        self.assertIn("someone@admin：程序不会填写 {oops}", problems)
+        self.assertNotIn("not_admin@vip", problems)
+        self.assertNotIn("system_prompt@admin", problems)
 
 
 class NoStyleCommandInChatTest(ManagerTestCase):

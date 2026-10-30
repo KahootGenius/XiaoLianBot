@@ -13,6 +13,11 @@ secret: "YOUR_APP_SECRET"
 # style: 小莲             # every group's style
 # group_styles:          # optional: a different style for particular groups
 #   "GROUP_OPENID": 桃子  # which group this is (@机器人 /群ID shows the ID)
+# A line in a style can have versions for particular people, written as key@who:
+# help.admin@admin is what admins see. "admin" needs no setup; name others here.
+# audiences:
+#   captains: teams.captains   # key@captains lines: the team game's captains, from that list
+#   vip: ["MEMBER_OPENID"]     # or list IDs yourself (@机器人 /我的ID shows one)
 
 # --- Optional: buttons under replies with a next step (/帮助, 21点, polls, removal lists ...) ---
 # Tapping one sends the command for the member. They sit at the bottom of the reply,

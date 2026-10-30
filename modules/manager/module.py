@@ -1058,7 +1058,9 @@ class ManagerModule:
                 await self._send(bg, t("manager.removal_notice", count=len(openids)))
 
     async def cmd_check_now(self, message, group, args):
-        summary = await self.daily_check(group, manual=True)
+        # Its reminders are for the group, so they read as the scheduled check's do, not the admin's versions.
+        with self.styles.scope(group):
+            summary = await self.daily_check(group, manual=True)
         await self._reply(message, summary)
 
     async def cmd_digest_now(self, message, group, args):

@@ -39,11 +39,11 @@ class HelpModule:
         sections += [t("help.social"), t("help.sleep")]
         if self.ai_enabled:
             sections.append(t("help.ai"))
-        footer = t("help.footer")
+        sections.append(t("help.footer"))
         if self.manager_enabled:
-            footer += "\n" + t("help.admin")
-        sections.append(footer)
-        return "\n\n".join(sections)
+            # Empty for most people; the style's help.admin@admin gives admins the /管理帮助 list.
+            sections.append(t("help.admin", admin_help=t("manager.admin_help")))
+        return "\n\n".join(section for section in sections if section)
 
     async def handle_help(self, message):
         content = message.content

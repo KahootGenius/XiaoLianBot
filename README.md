@@ -320,6 +320,8 @@ The tests cover:
 - **private versions** of styles and rules in `local/`, which never goes to GitHub
 - **choosing styles per group** in `config.yaml`, and checking a file with
   `python -m core.style check 名字`
+- **lines for particular people:** a `key@admin` version of any line, such as the admin commands
+  that only admins see at the end of `/帮助`, or versions for groups of people you name
 - **renaming commands**
 - **adding achievements:** most new badges are a few lines in `prompts/achievements.yaml`
 - **changing the team game:** new statuses and captain actions in `prompts/teams.yaml`

@@ -3,7 +3,7 @@ from collections import OrderedDict
 import botpy
 from botpy import logging
 from core.config import load_config
-from core.style import STYLES
+from core.style import ADMIN, STYLES
 from modules.help import HelpModule
 from modules.ai import ai_chat
 from modules.ai.ai_chat import AIChatModule
@@ -113,8 +113,8 @@ class MyClient(botpy.Client):
         """Every group message. Only delivered once the group owner lets the bot receive all messages."""
         if message.is_bot:
             return
-        # Everything said while handling this message speaks in the group's style.
-        with STYLES.scope(message.group_openid):
+        # Everything said while handling this message speaks in the group's style, to its sender.
+        with STYLES.scope(message.group_openid, audiences=self._audiences(message)):
             await self.manager_module.observe(message)
             await self.social_module.observe(message)
             self.ai_chat_module.noticed(message)        # it isn't quiet: only the time is kept
@@ -124,11 +124,19 @@ class MyClient(botpy.Client):
                 self.ai_chat_module.hear(message)       # only kept with ai_chat.hear_all
 
     async def on_group_at_message_create(self, message):
-        with STYLES.scope(message.group_openid):
+        with STYLES.scope(message.group_openid, audiences=self._audiences(message)):
             await self.manager_module.observe(message)
             await self.social_module.observe(message)
             self.ai_chat_module.noticed(message)
             await self._handle_command(message)
+
+    def _audiences(self, message):
+        """Who the sender is, for lines with versions for particular people (key@admin in a style):
+        config.yaml's audiences that list them, then admin."""
+        found = STYLES.audiences_of(message.member_openid)
+        if self.manager_module.is_admin(message.group_openid, message.member_openid, message.role):
+            found.append(ADMIN)
+        return found
 
     async def on_group_del_robot(self, event):
         # The privacy policy promises a group's data is deleted when the bot leaves it.

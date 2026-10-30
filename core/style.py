@@ -14,6 +14,12 @@ Which style each group uses is set only in config.yaml on the machine running
 the bot (`style` for every group, `group_styles` for exceptions), never from
 chat. Changes apply on the next restart.
 
+A line can also have versions for particular people, written next to it as
+key@audience: help.admin@admin is what admins see in place of help.admin. The
+scope says who is being answered; "admin" is built in, and config.yaml's
+`audiences` names any others. A version a style leaves out comes from the
+default, like any other line, and everyone else gets the line itself.
+
     python -m core.style check 桃子     # list problems in styles/桃子.yaml
 """
 import contextlib
@@ -24,7 +30,7 @@ import string
 import sys
 import yaml
 from botpy import logging
-from core.config import LOCAL_DIR, root_path, use_local
+from core.config import LOCAL_DIR, load_config, root_path, use_local
 
 
 _log = logging.get_logger()
@@ -32,6 +38,8 @@ _log = logging.get_logger()
 STYLES_DIR = root_path("styles")
 LOCAL_STYLES_DIR = os.path.join(LOCAL_DIR, "styles")
 DEFAULT_STYLE = "小莲"
+# The audience that needs no setup: whoever the group manager counts as an admin.
+ADMIN = "admin"
 
 
 class _Formatter(string.Formatter):
@@ -61,6 +69,30 @@ def _leaves(node, prefix=""):
         yield prefix, node
 
 
+def split_version(key):
+    """("help.admin", "admin") for "help.admin@admin"; (key, None) for a line itself."""
+    head, dot, last = key.rpartition(".")
+    if "@" not in last:
+        return key, None
+    line, audience = last.split("@", 1)
+    return f"{head}{dot}{line}", audience
+
+
+def _find(config, path):
+    """What config.yaml has at a dotted path such as teams.captains, or None."""
+    node = config
+    for part in path.strip().split("."):
+        if not isinstance(node, dict) or part not in node:
+            return None
+        node = node[part]
+    return node
+
+
+def _versions(key):
+    """The keys to try for `key`, in order: its versions for whoever's being answered, then itself."""
+    return [f"{key}@{audience}" for audience in _audiences.get()] + [key]
+
+
 class Style:
     def __init__(self, file_name, data, base=None):
         self.file_name = file_name
@@ -70,7 +102,11 @@ class Style:
 
     @property
     def system_prompt(self):
-        return str(self.lookup("system_prompt") or "").strip()
+        for version in _versions("system_prompt"):
+            value = self.lookup(version)
+            if value is not None:
+                return str(value).strip()
+        return ""
 
     def own(self, key):
         """This file's own value for a dotted key, or None."""
@@ -91,6 +127,14 @@ class Style:
         return _FORMATTER.format(str(template), name=self.name, **kwargs)
 
     def say(self, key, **kwargs):
+        for version in _versions(key):
+            text = self._say(version, kwargs)
+            if text is not None:
+                return text
+        raise KeyError(f"styles/{DEFAULT_STYLE}.yaml 缺少 {key}")
+
+    def _say(self, key, kwargs):
+        """One version of a line, or None when neither this style nor the default has it."""
         value = self.own(key)
         if isinstance(value, list):
             value = random.choice(value) if value else None
@@ -102,14 +146,12 @@ class Style:
                     raise
                 _log.warning(f"[Style] {self.file_name}.yaml 的 {key} 用不了（{e}），改用{self.base.file_name}的说法")
         if self.base is None:
-            raise KeyError(f"styles/{DEFAULT_STYLE}.yaml 缺少 {key}")
+            return None
         # Fall back to the default's wording, still speaking as this style.
         fallback = self.base.lookup(key)
         if isinstance(fallback, list):
-            fallback = random.choice(fallback)
-        if fallback is None:
-            raise KeyError(f"styles/{DEFAULT_STYLE}.yaml 缺少 {key}")
-        return self._render(fallback, kwargs)
+            fallback = random.choice(fallback) if fallback else None
+        return None if fallback is None else self._render(fallback, kwargs)
 
 
 def _read_yaml(path):
@@ -132,6 +174,8 @@ class StyleBook:
         self.default_name = DEFAULT_STYLE
         self.styles = {}
         self.groups = {}        # group_openid -> style name, from config.yaml's group_styles
+        self.audiences = {}     # audience -> member_openids, from config.yaml's audiences
+        self.configured = False
         self.reload()
 
     def configure(self, config):
@@ -153,6 +197,41 @@ class StyleBook:
                              f"在 styles/ 里找不到，这个群改用默认风格")
                 continue
             self.groups[str(group)] = str(name)
+        self.audiences = self._read_audiences(config)
+        self.configured = True
+        for name in self.styles:
+            for problem in self._audience_problems(name):
+                _log.warning(f"[Style] {name}.yaml：{problem}")
+
+    @staticmethod
+    def _read_audiences(config):
+        """config.yaml's audiences: {name: [member_openid, ...]}, the people some lines have versions for.
+        In place of a list, a name can give where one is kept elsewhere in config.yaml, like teams.captains."""
+        raw = config.get("audiences")
+        if not raw:
+            return {}
+        if not isinstance(raw, dict):
+            _log.warning("[Style] config.yaml 的 audiences 应该写成「名字: [成员ID, ...]」的形式，已忽略")
+            return {}
+        audiences = {}
+        for name, members in raw.items():
+            name = str(name).strip()
+            if not name or any(c in name for c in ".@ ") or name == ADMIN:
+                _log.warning(f"[Style] config.yaml 的 audiences 里的「{name}」不能用：名字里不能有 . @ 空格，"
+                             f"{ADMIN} 是自带的（管理员），不用写")
+                continue
+            if isinstance(members, str):
+                members = _find(config, members)
+            if not isinstance(members, list):
+                _log.warning(f"[Style] config.yaml 的 audiences 里，{name} 后面要写成员ID的列表，"
+                             f"或者 config.yaml 里另一个列表的位置（比如 teams.captains），已忽略")
+                continue
+            audiences[name] = {str(m) for m in members}
+        return audiences
+
+    def audiences_of(self, member):
+        """The audiences in config.yaml that list this member, in the order they're written."""
+        return [name for name, members in self.audiences.items() if member in members]
 
     def reload(self):
         """Re-read every file in styles/. Returns {style: [problems]} for the ones with problems."""
@@ -197,12 +276,15 @@ class StyleBook:
         return self.styles.get(self.groups.get(group)) or self.default()
 
     @contextlib.contextmanager
-    def scope(self, group):
-        """Everything said inside this block speaks in `group`'s style."""
+    def scope(self, group, audiences=()):
+        """Everything said inside this block speaks in `group`'s style, to someone in `audiences`
+        (most particular first): their versions of a line win over the line itself."""
         token = _current.set(self.for_group(group))
+        audience_token = _audiences.set(tuple(audiences))
         try:
             yield
         finally:
+            _audiences.reset(audience_token)
             _current.reset(token)
 
     def check(self, name):
@@ -210,17 +292,20 @@ class StyleBook:
         style, base = self.styles[name], self.shared_base
         if style is base:
             return []
-        problems = []
+        problems = self._audience_problems(name) if self.configured else []
         for key, value in _leaves(style.data):
             if key == "name":
                 continue
-            base_value = base.own(key)
-            if base_value is None:
-                problems.append(f"{key}：{DEFAULT_STYLE}.yaml 里没有这一项，程序不会用到它（键名写错了？）")
+            line = split_version(key)[0]
+            if base.own(line) is None:
+                what = "这一项" if line == key else f" {line} 这一句"
+                problems.append(f"{key}：{DEFAULT_STYLE}.yaml 里没有{what}，程序不会用到它（键名写错了？）")
                 continue
+            # Every version of a line is filled from the same call, so any of the default's names will do.
             allowed = {"name"}
-            for variant in base_value if isinstance(base_value, list) else [base_value]:
-                allowed |= placeholders(str(variant))
+            for base_value in self._versions_in(base, line):
+                for variant in base_value if isinstance(base_value, list) else [base_value]:
+                    allowed |= placeholders(str(variant))
             for variant in value if isinstance(value, list) else [value]:
                 try:
                     unknown = placeholders(str(variant)) - allowed
@@ -233,6 +318,26 @@ class StyleBook:
                                     f"（这里能用的有：{'、'.join('{' + a + '}' for a in sorted(allowed))}）")
         return problems
 
+    @staticmethod
+    def _versions_in(style, line):
+        """The style's own values for a line and for each of its key@audience versions."""
+        head, _, last = line.rpartition(".")
+        section = style.own(head) if head else style.data
+        if not isinstance(section, dict):
+            return []
+        return [value for key, value in section.items() if key == last or str(key).startswith(f"{last}@")]
+
+    def _audience_problems(self, name):
+        """Versions in a style written for an audience nobody is in: they would never be said."""
+        known = {ADMIN, *self.audiences}
+        problems = []
+        for key, _ in _leaves(self.styles[name].data):
+            audience = split_version(key)[1]
+            if audience is not None and audience not in known:
+                problems.append(f"{key}：没有叫「{audience}」的群友类别，这句不会用到（现有：{'、'.join(sorted(known))}。"
+                                f"{ADMIN} 是管理员，其他类别写在 config.yaml 的 audiences 里）")
+        return problems
+
     def missing(self, name):
         """Keys the style leaves to the default -- not a problem, just not customised yet."""
         style, base = self.styles[name], self.shared_base
@@ -240,6 +345,7 @@ class StyleBook:
 
 
 _current = contextvars.ContextVar("style", default=None)
+_audiences = contextvars.ContextVar("audiences", default=())
 STYLES = StyleBook()
 
 
@@ -271,6 +377,9 @@ if __name__ == "__main__":
     name = sys.argv[2]
     if name not in STYLES.styles:
         raise SystemExit(f"styles/ 里没有 {name}.yaml。现有：{'、'.join(STYLES.names())}")
+    # config.yaml's audiences, so versions written for anyone else are reported too.
+    STYLES.audiences = StyleBook._read_audiences(load_config())
+    STYLES.configured = True
     found = STYLES.check(name)
     print("\n".join(found) if found else f"{name}.yaml 没有问题。")
     left = STYLES.missing(name)
