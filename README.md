@@ -183,7 +183,9 @@ For the group's games, where a few captains pick teams:
 - **`/翻牌子`:** a joke lucky draw among the week's active members, weighted by how much they
   posted; once a day each, while admins can flip as often as they like. @ a few people to draw
   among them instead. `social.flip.special` in `config.yaml` can give a member their own chances
-  of drawing particular people.
+  of drawing particular people. People who have left aren't drawn, but QQ doesn't tell bots when
+  someone quits: unless Tencent has granted the member-list API, an admin says so with
+  `/已退群 昵称`.
 - **The weekly digest** ends with a short in-character comment written by DeepSeek from the
   digest's numbers.
 - **Buttons:** replies with an obvious next step offer tap-to-send buttons: `/帮助`, `/今日运势`,

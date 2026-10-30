@@ -454,6 +454,7 @@ class ManagerModule:
             (("/取消移出",), self.cmd_cancel_batch, True, "admin"),
             (("/排除",), self.cmd_exclude, True, "admin"),
             (("/已移出",), self.cmd_mark_removed, True, "admin"),
+            (("/已退群",), self.cmd_mark_left, True, "admin"),
             (("/立即检查",), self.cmd_check_now, True, "admin"),
             (("/小报",), self.cmd_digest_now, True, "admin"),
             (("/艾特测试",), self.cmd_mention_test, True, "member"),
@@ -920,6 +921,12 @@ class ManagerModule:
         lines.append(t("manager.card.first_seen", time=r["first_seen_text"]))
         return "\n".join(lines)
 
+    @staticmethod
+    def _by_nickname(rows, name):
+        """Rows with exactly this nickname, or else with it as part of theirs."""
+        return ([r for r in rows if r["nickname"] == name]
+                or [r for r in rows if name.lower() in r["nickname"].lower()])
+
     async def cmd_member_detail(self, message, group, args):
         if await self._keep_private(message):
             return
@@ -929,8 +936,7 @@ class ManagerModule:
         if mentioned:
             found = [r for r in rows if r["member_openid"] in mentioned]
         elif name:
-            found = ([r for r in rows if r["nickname"] == name]
-                     or [r for r in rows if name.lower() in r["nickname"].lower()])
+            found = self._by_nickname(rows, name)
         else:
             await self._reply(message, t("manager.card.usage"))
             return
@@ -1056,6 +1062,25 @@ class ManagerModule:
         if self.settings.announce_removals:
             with self.styles.scope(bg):
                 await self._send(bg, t("manager.removal_notice", count=len(openids)))
+
+    async def cmd_mark_left(self, message, group, args):
+        """/已退群 昵称: QQ tells bots nothing when someone leaves (only the invite-only member list
+        shows it), so an admin says so. Speaking again undoes it, as for anyone who rejoins."""
+        name = args.strip().lstrip("@").strip()
+        if not name:
+            await self._reply(message, t("manager.left.usage"))
+            return
+        found = self._by_nickname([r for r in self.member_table(group) if r["status_key"] != "gone"], name)
+        if not found:
+            await self._reply(message, t("manager.left.not_found", query=name))
+        elif len(found) > 1 or found[0]["nickname"] != name:    # only the whole name changes someone's record
+            await self._reply(message, t("manager.left.ambiguous", count=len(found),
+                                         names=join([r["nickname"] for r in found[:8]])))
+        else:
+            ts = int(self.clock().timestamp())
+            self.store.set_status(group, [found[0]["member_openid"]], "left", ts)
+            self.store.log(ts, group, found[0]["member_openid"], "left", None, message.member_openid)
+            await self._reply(message, t("manager.left.done", member=found[0]["nickname"]))
 
     async def cmd_check_now(self, message, group, args):
         # Its reminders are for the group, so they read as the scheduled check's do, not the admin's versions.
@@ -1270,8 +1295,11 @@ class ManagerModule:
         return text
 
     def active_members(self, group, since_ts):
-        """[(member_openid, nickname, n valid messages)] since `since_ts`, or None for a group it doesn't manage."""
-        return self.store.valid_counts(group, since_ts) if self.manages(group) else None
+        """[(member_openid, nickname, n valid messages)] since `since_ts` for people not known to have
+        left, or None for a group it doesn't manage."""
+        if not self.manages(group):
+            return None
+        return [r for r in self.store.valid_counts(group, since_ts) if r["status"] == "active"]
 
     def build_digest(self, group):
         now = self.clock()

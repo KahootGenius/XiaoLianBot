@@ -430,3 +430,48 @@ class GreetingTest(ManagerTestCase):
         self.make(FakeGateway(), greet_newcomers=False)
         await self.post("A", "大家好")
         self.assertEqual(self.greetings(), [])
+
+
+class MemberLeftTest(ManagerTestCase):
+    """QQ tells bots nothing when someone quits, so /翻牌子 relies on what the manager knows."""
+
+    def pool(self):
+        return {r["member_openid"] for r in self.mgr.active_members(GROUP, int(START.timestamp()) - 3600)}
+
+    async def test_admins_can_say_someone_left_until_they_speak_again(self):
+        self.make(FakeGateway())
+        await self.post("A", "大家这周末打算做什么呢", nickname="小明")
+        await self.post("B", "我周末打算去爬山，有人一起吗", nickname="小红")
+        await self.post("C", "我也想去爬山，记得叫上我", nickname="小红豆")
+        self.assertEqual(self.pool(), {"A", "B", "C"})
+
+        for command, reply in (("/已退群", "用法"), ("/已退群 没这个人", "没找到「没这个人」"), ("/已退群 小红豆豆", "没找到"),
+                               ("/已退群 小", "找到 4 位")):
+            await self.post("ADMIN", command, command=True)
+            self.assertIn(reply, self.gw.texts(GROUP)[-1])
+        await self.post("A", "/已退群 小红", command=True)
+        self.assertIn("管理员", self.gw.texts(GROUP)[-1])
+        self.assertEqual(self.pool(), {"A", "B", "C"})                  # nobody marked yet
+
+        await self.post("ADMIN", "/已退群 小红", command=True)           # the whole name wins over 小红豆
+        self.assertIn("小红 已退群", self.gw.texts(GROUP)[-1])
+        self.assertEqual(self.status("B"), "left")
+        self.assertEqual(self.pool(), {"A", "C"})
+        self.assertIsNone(self.mgr.current_nickname(GROUP, "B"))        # out of 翻牌子 tables too
+        await self.post("ADMIN", "/已退群 小红", command=True)           # sent twice: 小红豆 only half matches
+        self.assertIn("找到 1 位：小红豆", self.gw.texts(GROUP)[-1])
+        self.assertEqual(self.status("C"), "active")
+
+        self.now += timedelta(minutes=5)
+        await self.post("B", "我回来啦，上周去爬山了，风景很好", nickname="小红")
+        self.assertEqual(self.status("B"), "active")
+        self.assertEqual(self.pool(), {"A", "B", "C"})
+
+    async def test_people_removed_are_out_of_the_pool(self):
+        self.make(FakeGateway())
+        await self.post("A", "大家这周末打算做什么呢")
+        await self.post("B", "我周末打算去爬山，有人一起吗")
+        self.store.set_status(GROUP, ["B"], "removed", int(self.now.timestamp()))
+        self.assertEqual(self.pool(), {"A"})
+        self.assertEqual({r["member_openid"] for r in self.store.valid_counts(GROUP, 0)}, {"A", "B"})    # /排行 keeps them
+        self.assertIsNone(self.mgr.active_members("ELSEWHERE", 0))

@@ -96,7 +96,7 @@ secret: "YOUR_APP_SECRET"
 # under it, the members they may draw and each one's chance in percent (60 or "60%").
 # What the chances leave over goes to the usual draw among the week's active members,
 # without the people listed; at 100 or more in total it's only among them. Someone listed
-# who has left the group isn't drawn. See docs/CUSTOMIZING.md.
+# who the bot knows has left isn't drawn (/已退群 昵称 tells it). See docs/CUSTOMIZING.md.
 # social:
 #   flip:
 #     special:

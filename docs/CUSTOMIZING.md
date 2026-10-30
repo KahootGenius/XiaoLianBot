@@ -389,8 +389,12 @@ social:
   time and 王五 20%. The other 20% is the usual draw among everyone else, leaving out 李四 and 王五.
   When the chances add up to 100 or more, the draw is only among the people listed, in proportion.
 - **Who can come up:** someone listed can come up even if they haven't posted this week, as long
-  as the bot has seen them post in that group and they haven't left it. When 张三 @s people to
-  draw among, only the listed people they @ count.
+  as the bot has seen them post in that group and doesn't know they've left it. When 张三 @s people
+  to draw among, only the listed people they @ count.
+- **People who quit:** QQ doesn't tell bots when someone leaves. Without the invite-only member-list
+  API, the bot only knows if they were removed through it, or if an admin sends `/已退群 昵称`.
+  Until then they can still come up: from the weekly draw for up to 7 days after their last valid
+  message, and from a table for as long as they're listed. Speaking again undoes `/已退群`.
 - **What stays the same:** it's still once a day (admins can flip as often as they like), and the
   reply looks like any other flip.
 

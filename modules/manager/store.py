@@ -384,10 +384,11 @@ class Store:
     # ---- statistics ----
 
     def valid_counts(self, group, since_ts, until_ts=None):
-        """[(member_openid, nickname, valid_count)] sorted by count, for leaderboards."""
+        """[(member_openid, nickname, status, valid_count)] sorted by count, for leaderboards."""
         until_ts = until_ts if until_ts is not None else 2 ** 62
         return self._all(
-            "SELECT msg.member_openid, m.nickname, COUNT(*) AS n FROM messages msg "
+            "SELECT msg.member_openid, m.nickname, COALESCE(m.status, 'active') AS status, COUNT(*) AS n "
+            "FROM messages msg "
             "LEFT JOIN members m ON m.group_openid = msg.group_openid AND m.member_openid = msg.member_openid "
             "WHERE msg.group_openid = ? AND msg.valid = 1 AND msg.ts >= ? AND msg.ts < ? "
             "AND COALESCE(m.is_bot, 0) = 0 "
