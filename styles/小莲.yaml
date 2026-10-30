@@ -242,8 +242,13 @@ manager:
   # /成就
   badges:
     title: "🎖️ {member} 的成就（{earned}/{total}）"
-    row: "{icon} {badge} —— {desc}（{date}）"
+    # {holders}：群里现在有几个人有这个成就
+    row: "{icon} {badge} —— {desc}（{date} · 全群 {holders} 人）"
     locked: "还没解锁：{names}"
+    # 隐藏成就（achievements.yaml 里写了 hidden: true）解锁前不显示名字
+    hidden: "还有 {count} 个隐藏成就，解锁了才知道是什么"
+    # 离解锁最近的一个。{badge}：图标加成就名；{have}/{need}：进度
+    next: "下一个目标：{badge} {have}/{need}"
     all_done: 全部解锁啦，太厉害了！
 
   # /请假、/销假、/请假名单、/撤销请假

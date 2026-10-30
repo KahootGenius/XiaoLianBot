@@ -18,7 +18,7 @@ Users type these literally after @-ing the bot. **Changing them breaks the bot f
 |---|---|---|
 | `/我的状态` (`/状态`) | "My status": activity card with last valid message, streak, weekly rank, badges, days left | `manager/module.py` |
 | `/排行` (`/排行榜`) | Leaderboard of valid messages, last 7 days (`/排行 月` = 30 days) | `manager/module.py` |
-| `/成就` | "Achievements": my badges and the ones still locked | `manager/module.py` |
+| `/成就` | "Achievements": my badges with how many members have each, the ones still locked, how many hidden ones are left, and the one I'm closest to | `manager/module.py` |
 | `/请假 <天数> [原因]` | "Request leave" for N days (max 90); admins are notified | `manager/module.py` |
 | `/销假` | "End leave" early; the clock restarts today | `manager/module.py` |
 | `/群规` | Show the group rule and how valid messages are judged | `manager/module.py` |

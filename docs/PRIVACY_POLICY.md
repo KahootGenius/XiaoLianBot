@@ -36,7 +36,7 @@
      - 每位成员**最近一次有效发言的前 30 个字**，仅用于成员通过 `/我的状态` 查看自己的记录（群管理员可在配置中关闭）。
 
 4. **群管理记录**（仅开启群管理的群）
-   有效发言计数与连续天数、成就、请假记录（起止时间和成员自己填写的原因）、豁免名单、提醒与移出记录。
+   有效发言计数与连续天数、成就、请假记录（起止时间和成员自己填写的原因）、豁免名单、提醒与移出记录。成就还会用到几项次数：参加过几次投票和意见征集、`/晚安` 后睡够 7–9 小时再 `/早安` 的次数，以及生日当天是否来过群里（只记次数）。
    如果 QQ 平台向本机器人开放了群成员列表接口，还会读取成员列表中的昵称、角色（群主/管理员/成员）和入群时间，用于统计从未发言的成员。
 
 5. **组队游戏记录**（仅在管理员开启组队游戏后）
@@ -53,7 +53,7 @@
 7. **互动功能**
    - 成员**自己登记**的生日（只有月和日），用于当天祝福和 `/本月生日`。
    - 投票的问题、选项，以及每位投票者的成员标识、昵称和所选的选项；投票结果会公开显示投票者的昵称。
-   - 意见征集的主题，以及每条意见的内容、提意见的成员的成员标识和昵称；征集结束时会公开列出每条意见和提意见的人的昵称。
+   - 意见征集的主题，以及每条意见的内容、提意见的成员的成员标识和昵称；征集结束时会公开列出每条意见和提意见的人的昵称。另外记下每位成员参加过哪些意见征集（只有征集编号和成员标识），撤回意见后也保留，这样每次征集只计入成就一次。
    - `/翻牌子` 当天翻到了谁，用于每人每天只能翻一次。
 
 8. **运行日志**
@@ -103,7 +103,7 @@
 - **主动开话题**（仅在运营者开启的群）：每个群只保留最后一条消息的时间，新的替换旧的；本机器人被移出该群时删除。
 - **生日**：保留到成员自己用 `/生日 删除` 删除、管理员按要求删除，或本机器人被移出该群为止。
 - **投票**：结束 **30 天**后连同投票记录一起删除；进行中的投票 7 天后自动结束。
-- **意见征集**：结束 **30 天**后连同全部意见一起删除；没人结束的征集 30 天后自动关闭。
+- **意见征集**：结束 **30 天**后连同全部意见和参加记录一起删除；没人结束的征集 30 天后自动关闭。
 - **`/翻牌子` 的记录**：2 天后删除。
 - **本机器人被移出某个群时**：立即删除该群的全部群管理数据、队伍名单、AI 对话记录、群聊总结、长期记忆、生日、投票和意见征集。
 - 群组绑定、订阅状态、游戏状态、睡眠记录**仅保存在服务器内存中**，机器人重启后即全部清除；睡眠记录在记录后 **24 小时**自动删除。
@@ -156,7 +156,9 @@ splits managed and unmanaged groups.
 - For managed groups only:
   - per-message metadata: id, sender, time, valid or not, and the reason
   - the first 30 characters of each member's latest valid message
-  - counters and streaks, badges, leave records, the exempt list, and the reminder and removal log
+  - counters and streaks, badges, leave records, the exempt list, and the reminder and removal log.
+    Badges also count polls voted in, 征集 joined, nights of 7–9 hours between `/晚安` and `/早安`,
+    and birthdays a member showed up on (counts only)
   - the member list (nickname, role, join time), if Tencent grants that invite-only API
 - For team games, once enabled: today's rosters (captain and member IDs, nicknames, when each was
   grabbed, in-game statuses such as 小队长 or 死亡).
@@ -170,7 +172,8 @@ splits managed and unmanaged groups.
     with nicknames, kept like the messages above
   - in groups listed under `ai_chat.topics`: the time of the last message there, nothing else
 - For the social features (`data/fun.db`): birthdays members register, polls with who voted for
-  what, 征集意见 with each opinion and who wrote it, and whom each member drew in `/翻牌子` today.
+  what, 征集意见 with each opinion and who wrote it, which 征集 each member joined (kept after a
+  撤回, so each counts toward a badge once), and whom each member drew in `/翻牌子` today.
 - Runtime logs.
 
 **Explicitly not collected:** QQ numbers, phone numbers, passwords, ID documents, location,
@@ -219,10 +222,10 @@ manager leaves the server except QQ API calls.
 | Her day, and when she spoke up or sent a voice message | 7 days, like AI chat turns | `ChatStore.prune` |
 | Birthdays (`data/fun.db`) | until `/生日 删除`, `/删除数据` or the bot leaves | `FunStore` |
 | Polls and votes | 30 days after closing; open polls close after 7 days | `POLL_KEEP_DAYS`, `POLL_DAYS` in `modules/fun/social/module.py` |
-| 征集意见 and their opinions | 30 days after ending; one nobody ends closes after 30 days | `OPINION_KEEP_DAYS`, `OPINION_DAYS` |
+| 征集意见, their opinions and who joined them | 30 days after ending; one nobody ends closes after 30 days | `OPINION_KEEP_DAYS`, `OPINION_DAYS` |
 | `/翻牌子` marks | 2 days | `SocialModule._prune` |
 | A group's data after the bot is removed | deleted immediately (manager data, rosters, AI chat) | `on_group_del_robot` in `main.py` |
-| Deletion on request | when an admin runs it (also takes them off every team; deletes their AI chat turns and memories, the group's summary, and their birthday, votes and opinions) | `/删除数据 @某人` |
+| Deletion on request | when an admin runs it (also takes them off every team; deletes their AI chat turns and memories, the group's summary, and their birthday, votes, opinions and the 征集 they joined) | `/删除数据 @某人` |
 | botpy logs | 7 rotated files (< 30 days) | botpy's own `TimedRotatingFileHandler` |
 
 ### Before you submit, check these

@@ -1,31 +1,46 @@
 # 小莲的成就。增删、修改成就只要改这个文件，不用动代码；改完重启机器人生效。
 # 写错了（比如重复的 code、不存在的计数），机器人启动时会直接报出是第几个成就的问题。
+# /成就 按这个文件里的顺序列出成就。
 #
 # 每个成就要写：
 #   code      唯一编号，只用英文、数字、下划线。有人获得之后就不要再改它，
-#             否则大家已有的这个成就会对不上（名称、说明、图标可以随时改）。
+#             否则大家已有的这个成就会对不上（名称、说明、图标、门槛可以随时改）。
 #   icon      图标，一个 emoji
 #   name      名称
 #   desc      说明：解锁时小莲会念出来，/成就 里也会显示
 #   announce  解锁时是否在群里祝贺，可省略，默认 true
-# 再加上下面三种条件中的一种（只能写一种）：
+#   hidden    隐藏成就，可省略，默认 false。写 true 的话，解锁前 /成就 不显示它的名字，
+#             只说「还有几个隐藏成就」
+# 再加上下面四种条件中的一种（只能写一种）：
 #   counter + at_least   某项计数达到多少，例如 counter: valid 和 at_least: 100
 #   streak               连续多少天都有有效发言，例如 streak: 7
 #   comeback: true       沉默 20 天以上后回来发言
+#   dates                在这些日子里有效发言，例如 dates: ["01-01"]。"01-01" 是每年这一天；
+#                        2027-02-06 这样带年份的只算那一天，农历节日每年日子不同，就把每年的都写上
 #
-# 可用的计数（每条有效发言更新一次，只算有效发言）：
-#   valid     有效发言条数
-#   question  提问条数
-#   reply     带引用的回复条数
-#   share     分享次数：链接、文件、带说明的图片或视频
-#   night     凌晨 0–5 点的条数
-#   morning   早上 5–8 点的条数
-#   weekend   周六、周日的条数
-#   long      50 个字以上的长发言条数
-#   days      有有效发言的天数（同一天只算一次）
+# 可用的计数：
+#   每条有效发言更新的（只算有效发言）：
+#     valid     有效发言条数
+#     question  提问条数
+#     reply     带引用的回复条数
+#     share     分享次数：链接、文件、带说明的图片或视频
+#     night     凌晨 0–5 点的条数
+#     morning   早上 5–8 点的条数
+#     weekend   周六、周日的条数
+#     long      50 个字以上的长发言条数
+#     days      有有效发言的天数（同一天只算一次）
+#     opener    当天群里第一条有效发言的次数（从早上 5 点算起，熬夜抢不到）
+#   其他功能更新的：
+#     birthday  用 /生日 登记的生日当天来群里说话（每年一次）
+#     vote      参加过几次 /投票（改票不重复算）
+#     opinion   在几次 /征集意见 里提过意见（每次征集只算一次，撤回也不会重复算）
+#     sleep     /晚安 后睡了 7 到 9 小时再 /早安 的次数
 #
 # 新加的成就会在成员下一次有效发言时检查；条件早就满足的人会在那时解锁。
+# 一个群每小时最多祝贺 3 次（config.yaml 里 manager 下的 achievements.max_per_hour），一下子加很多也不会刷屏；
+# 没祝贺到的照样解锁，/成就 和每周小报里看得到。
 
+# ---- 发言多少
 - code: first_words
   icon: 🌱
   name: 初次见面
@@ -48,6 +63,21 @@
   counter: valid
   at_least: 500
 
+- code: chatter_1000
+  icon: 📢
+  name: 千言万语
+  desc: 累计 1000 条有效发言
+  counter: valid
+  at_least: 1000
+
+- code: chatter_5000
+  icon: 👑
+  name: 群聊传说
+  desc: 累计 5000 条有效发言
+  counter: valid
+  at_least: 5000
+
+# ---- 常来
 - code: streak_7
   icon: 🔥
   name: 七日之约
@@ -60,12 +90,47 @@
   desc: 连续 30 天有效发言
   streak: 30
 
+- code: streak_100
+  icon: 💎
+  name: 百日不断
+  desc: 连续 100 天有效发言
+  streak: 100
+
+- code: regular_100
+  icon: 📅
+  name: 百日常客
+  desc: 累计 100 天有有效发言
+  counter: days
+  at_least: 100
+
+- code: regular_365
+  icon: 🗓️
+  name: 四季常在
+  desc: 累计 365 天有有效发言
+  counter: days
+  at_least: 365
+
+- code: opener_10
+  icon: 🌤️
+  name: 开门红
+  desc: 早上 5 点后群里第一个有效发言，累计 10 次
+  counter: opener
+  at_least: 10
+
+# ---- 聊什么
 - code: helper_20
   icon: 🤝
   name: 热心解答
   desc: 20 次有内容的回复
   counter: reply
   at_least: 20
+
+- code: helper_100
+  icon: 🧭
+  name: 有问必答
+  desc: 100 次有内容的回复
+  counter: reply
+  at_least: 100
 
 - code: curious_20
   icon: ❓
@@ -74,6 +139,13 @@
   counter: question
   at_least: 20
 
+- code: curious_100
+  icon: 🔭
+  name: 十万个为什么
+  desc: 提出 100 个问题
+  counter: question
+  at_least: 100
+
 - code: sharer_10
   icon: 📎
   name: 分享达人
@@ -81,6 +153,21 @@
   counter: share
   at_least: 10
 
+- code: sharer_50
+  icon: 📚
+  name: 资源宝库
+  desc: 分享 50 次链接或文件
+  counter: share
+  at_least: 50
+
+- code: essayist
+  icon: 📝
+  name: 长文作者
+  desc: 发过 10 条 50 字以上的长发言
+  counter: long
+  at_least: 10
+
+# ---- 什么时候来
 - code: night_owl
   icon: 🦉
   name: 夜猫子
@@ -95,31 +182,97 @@
   counter: morning
   at_least: 10
 
+- code: morning_50
+  icon: 🌅
+  name: 晨型人
+  desc: 早上 5–8 点有效发言 50 次
+  counter: morning
+  at_least: 50
+
+- code: weekend_warrior
+  icon: 🏖️
+  name: 周末战士
+  desc: 周末有效发言 200 次
+  counter: weekend
+  at_least: 200
+
+- code: sleep_10
+  icon: 😴
+  name: 作息规律
+  desc: /晚安 后睡 7 到 9 小时再 /早安，累计 10 次
+  counter: sleep
+  at_least: 10
+
+# ---- 一起玩
+- code: voter_5
+  icon: 🗳️
+  name: 积极投票
+  desc: 参加 5 次投票
+  counter: vote
+  at_least: 5
+
+- code: opinion_3
+  icon: 📮
+  name: 建言献策
+  desc: 在 3 次意见征集里提过意见
+  counter: opinion
+  at_least: 3
+
 - code: comeback
   icon: 🌈
   name: 好久不见
   desc: 沉默 20 天以上后回来聊天
   comeback: true
 
+# ---- 隐藏成就：解锁前 /成就 不显示名字
+- code: birthday
+  icon: 🎂
+  name: 生日快乐
+  desc: 在自己登记的生日当天来群里说话
+  hidden: true
+  counter: birthday
+  at_least: 1
+
+- code: new_year
+  icon: 🎆
+  name: 元旦快乐
+  desc: 元旦当天来群里聊天
+  hidden: true
+  dates: ["01-01"]
+
+# 农历节日每年日子不同，2031 年以后的记得补上
+- code: spring_festival
+  icon: 🧧
+  name: 新春快乐
+  desc: 除夕或大年初一来群里聊天
+  hidden: true
+  dates: [2027-02-05, 2027-02-06, 2028-01-25, 2028-01-26, 2029-02-12, 2029-02-13, 2030-02-02, 2030-02-03]
+
+- code: mid_autumn
+  icon: 🥮
+  name: 中秋快乐
+  desc: 中秋节来群里聊天
+  hidden: true
+  dates: [2027-09-15, 2028-10-03, 2029-09-22, 2030-09-12]
+
 # 下面是可以直接启用的例子：把整段行首的 "# " 删掉，重启即可。
 #
-# - code: weekend_warrior
-#   icon: 🏖️
-#   name: 周末战士
-#   desc: 周末有效发言 50 次
-#   counter: weekend
-#   at_least: 50
+# - code: chatter_10000
+#   icon: 🌌
+#   name: 万语千言
+#   desc: 累计 10000 条有效发言
+#   counter: valid
+#   at_least: 10000
 #
-# - code: essayist
-#   icon: 📝
-#   name: 长文作者
-#   desc: 发过 10 条 50 字以上的长发言
-#   counter: long
-#   at_least: 10
+# - code: streak_365
+#   icon: 🏆
+#   name: 全年无休
+#   desc: 连续 365 天有效发言
+#   streak: 365
 #
-# - code: regular_100
-#   icon: 📅
-#   name: 百日常客
-#   desc: 累计 100 天有有效发言
-#   counter: days
-#   at_least: 100
+# - code: dragon_boat
+#   icon: 🐉
+#   name: 端午安康
+#   desc: 端午节来群里聊天
+#   hidden: true
+#   dates: [2027-06-09, 2028-05-28, 2029-06-16, 2030-06-05]

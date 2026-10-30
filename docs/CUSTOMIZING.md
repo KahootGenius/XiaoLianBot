@@ -169,14 +169,21 @@ These are deliberately not part of a style:
 - code: weekend_warrior    # permanent id: letters, digits, underscores
   icon: 🏖️
   name: 周末战士
-  desc: 周末有效发言 50 次  # read out when unlocked, shown in /成就
+  desc: 周末有效发言 200 次  # read out when unlocked, shown in /成就
   counter: weekend         # the condition: a counter plus a threshold...
-  at_least: 50
+  at_least: 200
   # announce: false        # optional: unlock silently
+  # hidden: true           # optional: /成就 doesn't name it until it's earned
 ```
 
-Each badge needs exactly one condition: `counter` + `at_least`, `streak: <days in a row>`, or
-`comeback: true` (back after 20+ silent days). The counters are:
+Each badge needs exactly one condition:
+- `counter` + `at_least`
+- `streak: <days in a row>`
+- `comeback: true`: back after 20+ silent days
+- `dates`: a valid message on one of these days. `"01-01"` is every year; `2027-02-06` is only that
+  day, so a lunar festival lists each year's date.
+
+The counters are:
 
 | Counter | Counts |
 |---|---|
@@ -189,26 +196,39 @@ Each badge needs exactly one condition: `counter` + `at_least`, `streak: <days i
 | `weekend` | Weekend messages |
 | `long` | Messages of 50 or more characters |
 | `days` | Days with any valid message |
+| `opener` | Days they sent the group's first valid message from 05:00 on (needs every-message access) |
+| `birthday` | Birthdays registered with `/生日` that they spoke on |
+| `vote` | Polls voted in; changing a vote doesn't count again |
+| `opinion` | 征集意见 they gave an opinion in, once each, even after a 撤回 |
+| `sleep` | Nights of 7 to 9 hours between `/晚安` and `/早安` |
 
 Three ready-made examples are commented out at the bottom of the file. Things to know:
 - **A mistake stops the bot at startup** and names the bad badge.
 - **New badges unlock at a member's next valid message.**
-- **Never change a `code` once people have earned it.** Names, icons and descriptions are safe to
-  change.
+- **Never change a `code` once people have earned it.** Names, icons, descriptions and thresholds
+  are safe to change.
 - **Announcements are capped at `manager.achievements.max_per_hour` per group.** Badges over the
   cap are still awarded, just silently.
-- **The `weekend`, `long` and `days` counters started from zero** when they were added. They have
-  no history from before.
+- **`/成就` lists badges in the file's order.** Earned ones show how many members still in the group
+  have them. Hidden ones are only counted until earned. The list ends with the counter or streak
+  badge the member is closest to.
+- **Lunar festivals need their dates added.** The shipped 新春 and 中秋 badges list 2027–2030; the
+  Hong Kong Observatory's conversion tables give later years.
+- **Counters start from zero when they're added.** `weekend`, `long` and `days`, and later
+  `opener`, `birthday`, `vote`, `opinion` and `sleep`, have no history from before.
 
 ### With code: a new kind of counter
 
 In `modules/manager/achievements.py`:
 1. Add the name to `COUNTERS`.
-2. Add one line to `counter_increments`. It receives the message's judgement (`units`, `question`,
-   `reply`, `share`, `kind`, `text`), its local send time `when`, and `first_of_day`.
+2. Count it:
+   - For something about each valid message, add one line to `counter_increments`. It receives the
+     message's judgement (`units`, `question`, `reply`, `share`, `kind`, `text`), its local send time
+     `when`, `first_of_day` and `opener`. For example: `"lunch": int(11 <= when.hour < 13)`.
+   - For something another feature sees, call `ManagerModule.count(group, member, nickname, name)`
+     there, and add the lines it returns (congratulations, if that earned a badge) to the reply.
+     `main.py` hands it to the social and sleep modules as `count`.
 3. Use the name as `counter:` in the YAML.
-
-For example: `"lunch": int(11 <= when.hour < 13)`.
 
 ## Changing the team game
 

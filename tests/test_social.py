@@ -38,7 +38,7 @@ class Roll(random.Random):
 
 
 class SocialTestCase(unittest.IsolatedAsyncioTestCase):
-    def make(self, activity=None, config=None, nickname_of=None, rng=None):
+    def make(self, activity=None, config=None, nickname_of=None, rng=None, count=None):
         self.now = START
         self.gw = FakeGateway()
         self.store = FunStore(":memory:")
@@ -46,7 +46,7 @@ class SocialTestCase(unittest.IsolatedAsyncioTestCase):
         self.social = SocialModule(self.gw, store=self.store, clock=lambda: self.now,
                                    is_admin=lambda group, member, role=None: member == "ADMIN",
                                    activity=activity, rng=rng or random.Random(7), config=config,
-                                   nickname_of=nickname_of)
+                                   nickname_of=nickname_of, count=count)
         return self.social
 
     async def say(self, member, text, mentions=(), group=GROUP):
@@ -161,6 +161,46 @@ class PollTest(SocialTestCase):
         self.now = START + timedelta(days=7)
         self.assertIn("没有进行中的投票", await self.say("B", "/投 A"))
         self.assertIn("📊 再来", await self.say("B", "/投票 再来 甲 乙"))
+
+
+class BadgeCountTest(SocialTestCase):
+    """Polls, 征集 and birthdays count toward the group manager's badges, each only once."""
+
+    def make_counting(self):
+        self.counted = []
+
+        def count(group, member, nickname, key):
+            self.counted.append((member, key))
+            return [f"🎉 {nickname} +1 {key}"]
+        return self.make(count=count)
+
+    async def test_each_poll_counts_once(self):
+        self.make_counting()
+        await self.say("A", "/投票 周六几点开？ 19点 20点")
+        self.assertIn("投给了", (voted := await self.say("A", "/投 A")))
+        self.assertIn("\n🎉 小明 +1 vote", voted)                          # in the same reply
+        self.assertNotIn("🎉", await self.say("A", "/投 B"))              # changing the vote
+        await self.say("B", "/投 A")
+        self.assertEqual(self.counted, [("A", "vote"), ("B", "vote")])
+
+    async def test_each_call_counts_once_even_after_taking_it_back(self):
+        self.make_counting()
+        await self.say("ADMIN", "/征集意见 下个月玩什么？")
+        self.assertIn("🎉 小明 +1 opinion", await self.say("A", "/意见 想玩狼人杀"))
+        await self.say("A", "/意见 撤回")
+        self.assertNotIn("🎉", await self.say("A", "/意见 还是想玩剧本杀"))
+        await self.say("A", "/意见 周末晚上比较好")
+        self.assertEqual(self.counted, [("A", "opinion")])
+        self.store.forget_member(GROUP, "A")                    # /删除数据: who joined goes too
+        self.assertTrue(self.store.join_call(self.store.open_call(GROUP)["id"], "A"))
+
+    async def test_a_birthday_counts_with_the_wish(self):
+        self.make_counting()
+        await self.say("A", "/生日 11-2")
+        self.now = START + timedelta(days=1)
+        self.assertIn("🎉 小明 +1 birthday", await self.say("A", "早上好"))
+        await self.say("A", "今天好开心")
+        self.assertEqual(self.counted, [("A", "birthday")])
 
 
 class OpinionTest(SocialTestCase):

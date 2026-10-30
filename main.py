@@ -58,9 +58,12 @@ class MyClient(botpy.Client):
                                            nickname_of=self.manager_module.known_nickname)
         if self.ai_chat_module.enabled:
             self.manager_module.digest_commenter = self.ai_chat_module.comment_on_digest
+        # Birthdays, votes, 征集 and a good night's sleep count toward the manager's badges.
         self.social_module = SocialModule(self.gateway, is_admin=self.manager_module.is_admin,
                                           activity=self.manager_module.active_members, config=config,
-                                          nickname_of=self.manager_module.current_nickname)
+                                          nickname_of=self.manager_module.current_nickname,
+                                          count=self.manager_module.count)
+        self.sleep_module.count = self.manager_module.count
         if self.ai_chat_module.enabled:
             self.social_module.opinion_summarizer = self.ai_chat_module.summarize_opinions
         reserved = (HelpModule.TRIGGERS + CASTORICE_COMMANDS + ai_chat.COMMANDS + social.COMMANDS

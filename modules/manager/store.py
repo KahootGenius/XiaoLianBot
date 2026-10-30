@@ -163,6 +163,14 @@ class Store:
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             message_id, group, member, ts, day, hour, int(valid), kind)
 
+    def first_valid_since(self, group, message_id, since_ts):
+        """Whether this recorded message is the group's first valid one since since_ts. Arrival
+        order decides, so two messages in the same second can't both be first."""
+        row = self._one("SELECT rowid FROM messages WHERE message_id = ?", message_id)
+        return row is not None and self._one(
+            "SELECT 1 FROM messages WHERE group_openid = ? AND ts >= ? AND valid = 1 AND rowid < ? LIMIT 1",
+            group, since_ts, row["rowid"]) is None
+
     def prune(self, messages_before, actions_before, departed_before):
         """Apply the retention periods promised in docs/PRIVACY_POLICY.md."""
         self._write("DELETE FROM messages WHERE ts < ?", messages_before)
@@ -335,6 +343,14 @@ class Store:
         return self._all(
             "SELECT * FROM achievements WHERE group_openid = ? AND member_openid = ? ORDER BY earned_at",
             group, member)
+
+    def badge_holders(self, group):
+        """code -> how many people still in the group have that badge."""
+        rows = self._all(
+            "SELECT a.code, COUNT(*) AS n FROM achievements a JOIN members m "
+            "ON m.group_openid = a.group_openid AND m.member_openid = a.member_openid "
+            "WHERE a.group_openid = ? AND m.status = 'active' GROUP BY a.code", group)
+        return {r["code"]: r["n"] for r in rows}
 
     def achievements_since(self, group, since_ts):
         return self._all(

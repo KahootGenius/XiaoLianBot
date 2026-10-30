@@ -108,7 +108,7 @@ def _short(text, limit=30):
 
 class SocialModule:
     def __init__(self, gateway, store=None, clock=None, is_admin=None, activity=None, rng=None, config=None,
-                 nickname_of=None):
+                 nickname_of=None, count=None):
         self.gw = gateway
         self.store = store or FunStore(root_path("data", "fun.db"))
         self.tz = pytz.timezone('Asia/Shanghai')
@@ -120,6 +120,9 @@ class SocialModule:
         # (group, member_openid) -> their nickname while they're in a group the manager tracks ("" when
         # they have none), else None. For people in a 翻牌子 table who haven't posted this week.
         self.nickname_of = nickname_of or (lambda group, member: None)
+        # (group, member_openid, nickname, counter) -> congratulations for any badge that earned, from
+        # the group manager's achievements. Birthdays, polls voted in and 征集 joined each count once.
+        self.count = count or (lambda group, member, nickname, key: [])
         self.rng = rng or random.Random()
         # Members with their own chances of drawing particular people (config.yaml social.flip.special).
         social = (config or {}).get("social")
@@ -192,7 +195,9 @@ class SocialModule:
         if self.store.daily(group, member, "birthday")[0] == today.isoformat():
             return
         self.store.mark_daily(group, member, "birthday", today.isoformat())
-        await self._reply(message, t("social.birthday.wish", member=self._name(message)))
+        lines = [t("social.birthday.wish", member=self._name(message))]
+        lines += self.count(group, member, message.nickname, "birthday")
+        await self._reply(message, "\n".join(lines))
 
     async def handle_social(self, message):
         text = (message.content or "").strip()
@@ -355,10 +360,14 @@ class SocialModule:
         if not 0 <= index < count:
             await self._reply(message, t("social.poll.bad_choice", first=LETTERS[0], last=LETTERS[count - 1]))
             return
-        self.store.vote(poll["id"], message.member_openid, message.nickname, index, int(self._now().timestamp()))
+        first = self.store.vote(poll["id"], message.member_openid, message.nickname, index,
+                                int(self._now().timestamp()))
         total = len(self.store.votes(poll["id"]))
-        await self._reply(message, t("social.poll.voted", member=self._name(message), label=LETTERS[index],
-                                     option=poll["options"][index], total=total))
+        lines = [t("social.poll.voted", member=self._name(message), label=LETTERS[index],
+                   option=poll["options"][index], total=total)]
+        if first:                           # changing a vote doesn't count again
+            lines += self.count(message.group_openid, message.member_openid, message.nickname, "vote")
+        await self._reply(message, "\n".join(lines))
 
     async def cmd_close(self, message, args):
         """/结束投票: the poll's starter or an admin closes it and shows the result."""
@@ -441,8 +450,11 @@ class SocialModule:
         else:
             self.store.add_opinion(call["id"], member, message.nickname, text, int(self._now().timestamp()))
             opinions = self.store.opinions(call["id"])
-            await self._reply(message, t("social.opinion.added", member=self._name(message),
-                                         people=self._people(opinions), count=len(opinions)))
+            lines = [t("social.opinion.added", member=self._name(message), people=self._people(opinions),
+                       count=len(opinions))]
+            if self.store.join_call(call["id"], member):      # once per 征集, even after a 撤回
+                lines += self.count(group, member, message.nickname, "opinion")
+            await self._reply(message, "\n".join(lines))
 
     async def cmd_end_call(self, message, args):
         """/结束征集: the call's starter or an admin ends it. Every opinion is listed, then her summary."""

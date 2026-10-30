@@ -373,21 +373,38 @@ class ManagerModule:
         best = max(best, streak)
         snippet = judgement.text[:SNIPPET_LENGTH] if self.settings.store_snippets else None
         self.store.mark_valid(group, member, ts, snippet, streak, best, today.isoformat())
-        self.store.bump(group, member, achievements.counter_increments(judgement, local, first_of_day))
+        opener = self._opens_the_day(message, group_row, local)
+        self.store.bump(group, member, achievements.counter_increments(judgement, local, first_of_day, opener))
 
         replies = []
         if reminded:
             self.store.clear_reminded(group, member)
             self.store.log(ts, group, member, "reminder_cleared")
             replies.append(t("manager.welcome_back"))
-        replies += self._award_badges(group, member, message.nickname, streak, comeback, ts)
+        replies += self._award_badges(group, member, message.nickname, streak, comeback, ts, today)
         for text in replies:
             await self._reply(message, text)
 
-    def _award_badges(self, group, member, nickname, streak, comeback, ts):
+    def _opens_the_day(self, message, group_row, local):
+        """Whether this valid message is the group's first of the day (from OPENER_HOUR on).
+        Only known with every-message access; otherwise it would be the first @ to the bot."""
+        if group_row["tracking_start"] is None or local.hour < achievements.OPENER_HOUR:
+            return False
+        start = self.tz.localize(datetime.combine(local.date(), dtime(achievements.OPENER_HOUR)))
+        return self.store.first_valid_since(message.group_openid, message.id, int(start.timestamp()))
+
+    def count(self, group, member, nickname, key):
+        """Another feature counting toward a badge: a birthday, a poll voted in, a 征集 joined,
+        a night's sleep. Returns the congratulations to add to its reply if that earned one."""
+        if not self.manages(group) or not member:
+            return []
+        self.store.bump(group, member, {key: 1})
+        return self._award_badges(group, member, nickname, 0, False, int(self.clock().timestamp()))
+
+    def _award_badges(self, group, member, nickname, streak, comeback, ts, today=None):
         counters = self.store.counters(group, member)
         texts = []
-        for code in achievements.qualified(counters, streak, comeback):
+        for code in achievements.qualified(counters, streak, comeback, today):
             if not self.store.award(group, member, code, ts):
                 continue
             badge = achievements.BY_CODE[code]
@@ -495,9 +512,7 @@ class ManagerModule:
             lines.append(t("manager.status.last_valid", date=self._date(row["last_valid_at"]), ago=when, snippet=snippet))
         else:
             lines.append(t("manager.status.no_valid"))
-        yesterday = (now.astimezone(self.tz).date() - timedelta(days=1)).isoformat()
-        streak = row["streak"] if row["streak_day"] and row["streak_day"] >= yesterday else 0
-        lines.append(t("manager.status.streak", streak=streak, best=row["best_streak"]))
+        lines.append(t("manager.status.streak", streak=self._current_streak(row, now), best=row["best_streak"]))
         lines.append(t("manager.status.week", count=week_count) + (t("manager.status.rank", rank=rank) if rank else ""))
         lines.append(t("manager.status.total", count=counters.get("valid", 0), earned=len(badges),
                        total=len(achievements.BADGES)))
@@ -506,6 +521,11 @@ class ManagerModule:
         lines.append(comment)
         await self._reply(message, "\n".join(lines),
                           buttons=[[("排行", "/排行"), ("成就", "/成就"), ("今日运势", "/今日运势")]])
+
+    def _current_streak(self, row, now):
+        """Days in a row with a valid message, still counting while yesterday was one of them."""
+        yesterday = (now.astimezone(self.tz).date() - timedelta(days=1)).isoformat()
+        return row["streak"] if row and row["streak_day"] and row["streak_day"] >= yesterday else 0
 
     def _status_line(self, verdict, snap, now):
         def state(key, **kwargs):
@@ -566,15 +586,28 @@ class ManagerModule:
         await self._reply(message, "\n".join(lines), buttons=[[other, ("我的状态", "/我的状态")]])
 
     async def cmd_achievements(self, message, group, args):
-        earned = {r["code"]: r["earned_at"] for r in self.store.achievements(group, message.member_openid)}
+        member = message.member_openid
+        earned = {r["code"]: r["earned_at"] for r in self.store.achievements(group, member)}
+        holders = self.store.badge_holders(group)
         lines = [t("manager.badges.title", member=self._name(message.nickname), earned=len(earned),
                    total=len(achievements.BADGES))]
         for badge in achievements.BADGES:
             if badge.code in earned:
                 lines.append(t("manager.badges.row", icon=badge.icon, badge=badge.name, desc=badge.desc,
-                               date=self._date(earned[badge.code])))
-        locked = [b.name for b in achievements.BADGES if b.code not in earned]
-        lines.append(t("manager.badges.locked", names=join(locked)) if locked else t("manager.badges.all_done"))
+                               date=self._date(earned[badge.code]), holders=max(holders.get(badge.code, 0), 1)))
+        locked = [b.name for b in achievements.BADGES if b.code not in earned and not b.hidden]
+        secret = sum(b.hidden and b.code not in earned for b in achievements.BADGES)
+        if locked:
+            lines.append(t("manager.badges.locked", names=join(locked)))
+        if secret:
+            lines.append(t("manager.badges.hidden", count=secret))
+        if not locked and not secret:
+            lines.append(t("manager.badges.all_done"))
+        streak = self._current_streak(self.store.member(group, member), self.clock())
+        goal = achievements.next_goal(earned, self.store.counters(group, member), streak)
+        if goal:
+            badge, (have, need) = goal
+            lines.append(t("manager.badges.next", badge=f"{badge.icon}{badge.name}", have=have, need=need))
         await self._reply(message, "\n".join(lines), buttons=[[("我的状态", "/我的状态"), ("排行", "/排行")]])
 
     async def cmd_leave(self, message, group, args):

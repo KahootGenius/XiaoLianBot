@@ -77,7 +77,9 @@ tunnels included.
 - `/我的状态`: activity card showing your last valid message, streak, weekly rank, achievements and
   days left.
 - `/排行`: the week's (or `/排行 月` the month's) leaderboard.
-- `/成就`: 11 badges, such as 七日之约, 热心解答, 夜猫子 and 好久不见. They're announced in the
+- `/成就`: 30 badges, such as 七日之约, 开门红 (first to speak after 5 a.m.), 积极投票 and 好久不见.
+  Four stay hidden until someone earns them: a birthday and three holidays. Each badge shows how
+  many members have it, and the list ends with the one you're closest to. They're announced in the
   group, at most 3 per hour.
 - **Weekly digest (群聊小报):** posted every Sunday at 21:00, with message counts, the busiest hour,
   top talkers, newcomers and new badges.

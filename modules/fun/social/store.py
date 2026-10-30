@@ -1,6 +1,6 @@
 """SQLite persistence for the social features (data/fun.db): birthdays, polls,
-征集意见 with their opinions, and once-a-day marks (birthday wishes, 翻牌子). See
-docs/PRIVACY_POLICY.md for how long each is kept.
+征集意见 with their opinions and who joined them, and once-a-day marks (birthday
+wishes, 翻牌子). See docs/PRIVACY_POLICY.md for how long each is kept.
 """
 import json
 import os
@@ -54,6 +54,12 @@ CREATE TABLE IF NOT EXISTS opinions (
     created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_opinions_call ON opinions (call_id);
+-- Who gave an opinion in each 征集, kept after a 撤回 so it counts toward a badge only once.
+CREATE TABLE IF NOT EXISTS joined (
+    call_id INTEGER NOT NULL,
+    member_openid TEXT NOT NULL,
+    PRIMARY KEY (call_id, member_openid)
+);
 CREATE TABLE IF NOT EXISTS daily (
     group_openid TEXT NOT NULL,
     member_openid TEXT NOT NULL,
@@ -132,9 +138,12 @@ class FunStore:
         self._write("UPDATE polls SET closed_at = ? WHERE id = ? AND closed_at IS NULL", ts, poll_id)
 
     def vote(self, poll_id, member, nickname, choice, ts):
+        """Records or changes their vote; True when it's their first in this poll."""
+        first = self._one("SELECT 1 FROM votes WHERE poll_id = ? AND member_openid = ?", poll_id, member) is None
         self._write("INSERT INTO votes (poll_id, member_openid, nickname, choice, voted_at) VALUES (?, ?, ?, ?, ?) "
                     "ON CONFLICT (poll_id, member_openid) DO UPDATE SET nickname = excluded.nickname, "
                     "choice = excluded.choice, voted_at = excluded.voted_at", poll_id, member, nickname, choice, ts)
+        return first
 
     def votes(self, poll_id):
         return self._all("SELECT * FROM votes WHERE poll_id = ? ORDER BY voted_at", poll_id)
@@ -168,6 +177,11 @@ class FunStore:
         self._write("DELETE FROM opinions WHERE id = ?", row["id"])
         return row["text"]
 
+    def join_call(self, call_id, member):
+        """Notes that they gave an opinion in this 征集; True the first time."""
+        return self._write("INSERT OR IGNORE INTO joined (call_id, member_openid) VALUES (?, ?)",
+                           call_id, member).rowcount == 1
+
     # ---- once a day
 
     def daily(self, group, member, kind):
@@ -185,7 +199,7 @@ class FunStore:
 
     def prune(self, before_day, closed_before_ts, calls_closed_before_ts):
         """Once-a-day marks from earlier days, polls closed long ago with their votes, and
-        征集意见 closed long ago with their opinions."""
+        征集意见 closed long ago with their opinions and who joined them."""
         self._write("DELETE FROM daily WHERE day < ?", before_day)
         old = [r["id"] for r in self._all("SELECT id FROM polls WHERE closed_at < ?", closed_before_ts)]
         for poll_id in old:
@@ -194,6 +208,7 @@ class FunStore:
         old = [r["id"] for r in self._all("SELECT id FROM opinion_calls WHERE closed_at < ?", calls_closed_before_ts)]
         for call_id in old:
             self._write("DELETE FROM opinions WHERE call_id = ?", call_id)
+            self._write("DELETE FROM joined WHERE call_id = ?", call_id)
             self._write("DELETE FROM opinion_calls WHERE id = ?", call_id)
 
     def forget_member(self, group, member):
@@ -207,11 +222,14 @@ class FunStore:
                     group, member)
         self._write("DELETE FROM opinions WHERE member_openid = ? AND call_id IN "
                     "(SELECT id FROM opinion_calls WHERE group_openid = ?)", member, group)
+        self._write("DELETE FROM joined WHERE member_openid = ? AND call_id IN "
+                    "(SELECT id FROM opinion_calls WHERE group_openid = ?)", member, group)
         self._write("UPDATE opinion_calls SET creator = '', creator_name = NULL WHERE group_openid = ? AND creator = ?",
                     group, member)
 
     def forget_group(self, group):
         self._write("DELETE FROM votes WHERE poll_id IN (SELECT id FROM polls WHERE group_openid = ?)", group)
         self._write("DELETE FROM opinions WHERE call_id IN (SELECT id FROM opinion_calls WHERE group_openid = ?)", group)
+        self._write("DELETE FROM joined WHERE call_id IN (SELECT id FROM opinion_calls WHERE group_openid = ?)", group)
         for table in ("polls", "opinion_calls", "birthdays", "daily"):
             self._write(f"DELETE FROM {table} WHERE group_openid = ?", group)
