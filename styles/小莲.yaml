@@ -115,6 +115,7 @@ manager:
     /小报 预览本周小报
     /征集意见 主题 发起意见征集 · /结束征集 列出大家的意见
     /艾特测试 测试 @ 的显示效果
+    /看图测试 发图或回复一张图时用，看 QQ 发来的图能不能读取
     /删除数据 @某人或完整昵称 按本人要求删除其全部记录
     /重置对话 清空本群和我的聊天上下文（群友记忆保留）
 
@@ -582,6 +583,26 @@ ai:
     forget_impression_button: 忘记印象
   # /重置对话（管理员）
   reset: "好的，本群和{name}的聊天记录、总结都清空了，从头开始～（群友记忆还在，各自可以用 /忘记 删除）"
+  # /看图测试（管理员）：QQ 发来的图是什么样、能不能下载。图只在内存里放一下，不保存，也不发给 DeepSeek
+  picture_test:
+    usage: "用法：发图时 @我 /看图测试，或者回复一张图时 @我 /看图测试。大表情不能带文字，回复它就行。"
+    quote_empty: 这条是回复，但 QQ 没有把被引用的图发给我。
+    title: "🔍 看图测试：找到 {count} 张图"
+    row: "{n}. {where}：{kind}，{width}×{height}，{result}"
+    own: 这条消息里的图
+    quoted: 被引用的图
+    ok: "✅ 下载成功（{format}，{kb} KB，{seconds} 秒）"
+    failed: "❌ 下载失败：{why}"
+    shape: "消息结构：{shape}"
+    # 下载失败的原因。{detail}：http 是状态码，too_big 是上限（MB），network 是错误类型
+    why:
+      not_qq: 链接不在 QQ 的服务器上
+      http: "服务器返回 {detail}"
+      too_big: "图片超过 {detail} MB"
+      not_image: 下载到的不是 DeepSeek 能读的图片
+      timeout: 超时了
+      network: "连不上（{detail}）"
+      redirects: 跳转次数太多
 
 # ---------------------------------------------------------------- 互动
 social:

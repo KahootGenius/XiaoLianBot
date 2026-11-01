@@ -5,7 +5,7 @@ from botpy import logging
 from core.config import load_config
 from core.style import ADMIN, STYLES
 from modules.help import HelpModule
-from modules.ai import ai_chat
+from modules.ai import ai_chat, vision
 from modules.ai.ai_chat import AIChatModule
 from modules.ai.deepseek import DeepSeekModule
 from modules.fun.blackjack import BlackjackModule
@@ -163,6 +163,7 @@ class MyClient(botpy.Client):
     async def _handle_command(self, message):
         if not self._first_time(message.id):
             return
+        vision.note(message)
         if await self.help_module.handle_help(message):
             return
         if await self.manager_module.handle_manager(message):

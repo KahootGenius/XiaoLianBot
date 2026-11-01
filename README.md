@@ -219,6 +219,7 @@ main.py                 entry point: client, event routing, command chain
 core/                   config loading; style.py loads the style files
 modules/
   ai/                   AI chat: ai_chat.py runs it, context.py builds each request, search.py looks things up,
+                        vision.py fetches pictures from QQ (for now only /看图测试, an admin check),
                         memory.py reads the memory notes and checks, store.py keeps data/chat.db,
                         memory_admin.py lists and edits memories, stickers.py reads the sticker
                         folder, rehearse.py tries a persona; /deepseek

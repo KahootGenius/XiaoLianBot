@@ -72,6 +72,21 @@ class RichGroupMessage(GroupMessage):
         return self.raw.get("attachments") or []
 
     @property
+    def images(self):
+        """The pictures in this message, [(attachment, whether it's quoted)]: its own, then those of
+        any message it quotes, which QQ nests in msg_elements. Each link once."""
+        found, seen, parts = [], set(), [(self.raw, False)]
+        while parts:
+            part, quoted = parts.pop(0)
+            for attachment in part.get("attachments") or []:
+                url = attachment.get("url")
+                if str(attachment.get("content_type") or "").lower().startswith("image/") and url not in seen:
+                    seen.add(url)
+                    found.append((attachment, quoted))
+            parts += [(element, True) for element in part.get("msg_elements") or []]
+        return found
+
+    @property
     def mention_list(self):
         return self.raw.get("mentions") or []
 

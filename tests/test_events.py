@@ -24,6 +24,20 @@ class RichGroupMessageTest(unittest.TestCase):
         self.assertEqual(m.raw_content, PAYLOAD["content"])
         self.assertEqual(m.attachments_raw[0]["content_type"], "image/png")
 
+    def test_images_are_its_own_then_those_it_quotes_each_once(self):
+        mine = {"content_type": "image/png", "url": "u1"}
+        quoted = {"content_type": "IMAGE/JPEG", "url": "u2"}
+        deeper = {"content_type": "image/gif", "url": "u3"}
+        payload = dict(PAYLOAD, attachments=[mine, {"content_type": "voice", "url": "v"}],
+                       msg_elements=[{"attachments": [quoted, mine, {"content_type": "video/mp4", "url": "w"}],
+                                      "msg_elements": [{"attachments": [deeper]}]}])
+        m = RichGroupMessage(None, "evt", payload, "GROUP_AT_MESSAGE_CREATE")
+        self.assertEqual(m.images, [(mine, False), (quoted, True), (deeper, True)])
+
+    def test_a_message_without_pictures_has_none(self):
+        payload = {key: value for key, value in PAYLOAD.items() if key != "attachments"}
+        self.assertEqual(RichGroupMessage(None, "evt", payload, "GROUP_MESSAGE_CREATE").images, [])
+
     def test_content_reads_naturally_for_command_modules(self):
         m = RichGroupMessage(None, "evt", PAYLOAD, "GROUP_MESSAGE_CREATE")
         self.assertEqual(m.content, "/请假 30 考试 @小红")

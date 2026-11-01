@@ -41,7 +41,7 @@ from botpy import logging
 from openai import OpenAI
 from core.config import content_path, load_config, root_path
 from core.style import STYLES, current, join, placeholders, render, t
-from modules.ai import context, memory, search, stickers, voice
+from modules.ai import context, memory, search, stickers, vision, voice
 from modules.ai.store import ChatStore
 
 
@@ -111,7 +111,7 @@ PROMPT_FIELDS = {
     "consolidation": {"member", "facts", "notes", "max_text", "max_facts"},
 }
 # Commands this module answers before chatting. Listed so team-game actions can't take them.
-COMMANDS = ("/我的记忆", "/忘记", "/重置对话", "/服务器QA")
+COMMANDS = ("/我的记忆", "/忘记", "/重置对话", "/看图测试", "/服务器QA")
 FORGET_ALL_WORDS = ("全部", "所有", "all")
 FORGET_IMPRESSION_WORDS = ("印象",)
 CONSOLIDATE_HOUR = 4        # Beijing time: when the night's consolidation runs, like sleep
@@ -168,7 +168,7 @@ def read_special_people(value):
 class AIChatModule:
     def __init__(self, gateway, config=None, store=None, client=None, is_admin=None, clock=None,
                  prompts_path=CHAT_PROMPTS_FILE, nickname_of=None, stickers_dir=None,
-                 library_path=stickers.LIBRARY_FILE, speaker=None, searcher=None):
+                 library_path=stickers.LIBRARY_FILE, speaker=None, searcher=None, fetch_picture=None):
         self.gw = gateway
         self.config = load_config() if config is None else config
         deepseek = self.config.get("deepseek") or {}
@@ -282,7 +282,9 @@ class AIChatModule:
         self.qa_system_prompt = self._load_qa_prompt()
         self.prompts = load_chat_prompts(prompts_path)
         self.store = store or ChatStore(root_path("data", "chat.db"))
-        self.commands = {"/我的记忆": self.cmd_my_memory, "/忘记": self.cmd_forget, "/重置对话": self.cmd_reset}
+        self.fetch_picture = fetch_picture or vision.fetch
+        self.commands = {"/我的记忆": self.cmd_my_memory, "/忘记": self.cmd_forget, "/重置对话": self.cmd_reset,
+                         "/看图测试": self.cmd_picture_test}
 
     def _load_qa_prompt(self):
         """Load the server-QA system prompt from its dedicated prompt file."""
@@ -999,6 +1001,38 @@ class AIChatModule:
         self.heard_since.pop(message.group_openid, None)
         self._deleted(message.group_openid)
         await self._reply(message, t("ai.reset"))
+
+    async def cmd_picture_test(self, message, args):
+        """/看图测试 (admins): what QQ really sends for a picture, and whether it can be fetched. The
+        picture is held in memory for a moment: it isn't kept, and it doesn't go to DeepSeek."""
+        if not self.is_admin(message.group_openid, message.member_openid, message.role):
+            await self._reply(message, t("common.not_admin"))
+            return
+        images = message.images
+        if images:
+            lines = [t("ai.picture_test.title", count=len(images))]
+            for n, (attachment, quoted) in enumerate(images[:vision.MAX_PICTURES], 1):
+                lines.append(await self._picture_row(n, attachment, quoted))
+        elif message.message_type == vision.QUOTE:
+            lines = [t("ai.picture_test.quote_empty")]
+        else:
+            await self._reply(message, t("ai.picture_test.usage"))
+            return
+        lines.append(t("ai.picture_test.shape", shape=vision.shape(message.raw, hosts=False)))
+        await self._reply(message, "\n".join(lines))
+
+    async def _picture_row(self, n, attachment, quoted):
+        """A line of /看图测试: the picture as QQ describes it, and what fetching it did."""
+        started = time.monotonic()
+        try:
+            data, kind = await self.fetch_picture(attachment.get("url"))
+            result = t("ai.picture_test.ok", format=kind, kb=len(data) // 1024,
+                       seconds=f"{time.monotonic() - started:.1f}")
+        except vision.PictureError as e:
+            result = t("ai.picture_test.failed", why=t(f"ai.picture_test.why.{e.reason}", detail=e.detail))
+        return t("ai.picture_test.row", n=n, where=t(f"ai.picture_test.{'quoted' if quoted else 'own'}"),
+                 kind=attachment.get("content_type"), width=attachment.get("width") or "?",
+                 height=attachment.get("height") or "?", result=result)
 
     async def handle_server_qa(self, message):
         """Handle server-QA mode, which uses its own dedicated system prompt."""

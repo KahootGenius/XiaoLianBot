@@ -11,9 +11,10 @@ from datetime import timedelta
 from types import SimpleNamespace
 from core.config import root_path
 from core.style import DEFAULT_STYLE, StyleBook
-from modules.ai import context, memory, memory_admin, rehearse, search, voice
+from modules.ai import context, memory, memory_admin, rehearse, search, vision, voice
 from modules.ai.ai_chat import AIChatModule, load_chat_prompts, read_special_people
 from modules.ai.store import ChatStore
+from modules.manager.events import RichGroupMessage
 from tests.test_manager import START, FakeGateway, FakeMessage
 
 G, G2 = "G", "G2"
@@ -84,7 +85,7 @@ class FakeSpeaker:
 
 class AIChatTestCase(unittest.IsolatedAsyncioTestCase):
     def make(self, nickname_of=None, deepseek=None, stickers_dir=None, speaker=None, voice_config=None,
-             searcher=None, **chat_config):
+             searcher=None, fetch_picture=None, **chat_config):
         self.now = START
         self.gw = FakeGateway()
         self.ai_client = FakeDeepSeek()
@@ -94,7 +95,7 @@ class AIChatTestCase(unittest.IsolatedAsyncioTestCase):
         self.ai = AIChatModule(self.gw, config, store=self.store, client=self.ai_client,
                                is_admin=lambda group, member, role=None: member == "ADMIN",
                                clock=lambda: self.now, nickname_of=nickname_of, stickers_dir=stickers_dir,
-                               library_path=None, speaker=speaker, searcher=searcher)
+                               library_path=None, speaker=speaker, searcher=searcher, fetch_picture=fetch_picture)
         return self.ai
 
     async def say(self, member, text, group=G, name=None):
@@ -460,6 +461,72 @@ class WebSearchTest(AIChatTestCase):
         page = dict(FakeSearch.PAGE, summary="长" * 500, site_name=None, date=None)
         self.assertEqual(search.lines([page]), [f"- 上海天气预报（）{'长' * search.RESULT_CHARS}"])
         self.assertEqual(search.lines([{"title": "只有简介", "snippet": "短", "rerank_score": 2}]), ["- 只有简介（）短"])
+
+
+class PictureTestCommandTest(AIChatTestCase):
+    """/看图测试 shows what QQ really sends, so the real thing can be built on facts."""
+    LINK = "https://multimedia.nt.qq.com.cn/download?rkey=SECRET"
+    PHOTO = {"content_type": "image/jpeg", "url": LINK, "width": 1080, "height": 1920, "size": 153022}
+
+    async def fetched(self, url):
+        self.links.append(url)
+        result = self.results.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    async def check(self, member="ADMIN", **payload):
+        self.make(fetch_picture=self.fetched)
+        raw = {"id": "m1", "group_openid": G, "content": "/看图测试",
+               "author": {"member_openid": member, "username": NAMES[member]}, **payload}
+        await self.ai.handle_ai_chat(RichGroupMessage(None, "evt", raw, "GROUP_AT_MESSAGE_CREATE"))
+        return self.gw.sent[-1][1]
+
+    def setUp(self):
+        self.links, self.results = [], [(b"x" * 2048, "image/webp")]
+
+    async def test_it_reports_each_picture_without_keeping_or_sending_it(self):
+        text = await self.check(attachments=[self.PHOTO], message_type=0)
+        self.assertEqual(text.split("\n")[:2], ["🔍 看图测试：找到 1 张图", "1. 这条消息里的图：image/jpeg，1080×1920，"
+                                                "✅ 下载成功（image/webp，2 KB，0.0 秒）"])
+        self.assertIn("消息结构：type=0 text=5 image/jpeg 1080x1920 153022B", text)
+        self.assertEqual(self.links, [self.LINK])
+        self.assertEqual(self.ai_client.requests("chat"), [])       # nothing went to DeepSeek
+        self.assertEqual(list(self.store.recent_turns(G)), [])      # nor into the chat
+
+    async def test_a_quoted_picture_says_so_and_a_failure_says_why(self):
+        self.results = [vision.PictureError("http", 403)]
+        text = await self.check(message_type=103, msg_elements=[{"attachments": [self.PHOTO]}])
+        self.assertIn("1. 被引用的图：image/jpeg，1080×1920，❌ 下载失败：服务器返回 403", text)
+        self.assertIn("elements[", text)
+
+    async def test_every_failure_has_words(self):
+        for reason, detail, words in (("not_qq", "", "QQ 的服务器"), ("too_big", 10, "超过 10 MB"), ("timeout", "", "超时"),
+                                      ("not_image", "", "不是"), ("redirects", "", "跳转"),
+                                      ("network", "ClientPayloadError", "连不上（ClientPayloadError）")):
+            self.results = [vision.PictureError(reason, detail)]
+            self.assertIn(words, await self.check(attachments=[self.PHOTO]))
+
+    async def test_a_quote_qq_sent_without_the_picture_is_the_finding(self):
+        text = await self.check(message_type=103, msg_elements=[{"content": "[图片]"}])
+        self.assertIn("QQ 没有把被引用的图发给我", text)
+        self.assertIn("消息结构：type=103 text=5 elements[type=None text=4]", text)
+
+    async def test_without_a_picture_it_explains_itself(self):
+        self.assertIn("用法：发图时 @我 /看图测试", await self.check())
+        self.assertEqual(self.links, [])
+
+    async def test_only_a_few_pictures_are_fetched(self):
+        photos = [dict(self.PHOTO, url=f"{self.LINK}{n}") for n in range(5)]
+        self.results *= 5
+        text = await self.check(attachments=photos)
+        self.assertIn("找到 5 张图", text)
+        self.assertEqual(len(self.links), vision.MAX_PICTURES)
+
+    async def test_it_is_for_admins_and_never_shows_a_link(self):
+        self.assertIn("只有管理员", await self.check("A", attachments=[self.PHOTO]))
+        self.assertEqual(self.links, [])
+        self.assertNotIn("qq.com", await self.check(attachments=[self.PHOTO]))
 
 
 class DepartedMemberTest(AIChatTestCase):

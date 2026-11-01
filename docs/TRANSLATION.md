@@ -114,6 +114,7 @@ Admins can use every action except `/抓` on any team.
 | `/我的记忆` | "My memories": what the bot has noted about me in this group | `ai/ai_chat.py` |
 | `/忘记 <序号…>`, `/忘记 印象`, `/忘记 全部` | "Forget": delete some or all of my memories, or the bot's impression of me | `ai/ai_chat.py` |
 | `/重置对话` | "Reset the conversation" (admins): clear this group's chat context and summary | `ai/ai_chat.py` |
+| `/看图测试` | "Picture test" (admins): sent with a picture, or quoting one, shows what QQ sends and whether it can be fetched. The picture isn't kept or sent anywhere | `ai/ai_chat.py` |
 | `/deepseek` | Post a fixed image | `ai/deepseek.py` |
 
 Anything not matching the above falls through to general AI chat.
