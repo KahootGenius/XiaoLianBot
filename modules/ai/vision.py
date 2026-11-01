@@ -8,9 +8,9 @@ the same check for the log.
 
 She looks at a picture directly, in the reply call. Before that a separate call that knows nothing
 about the group says whether real people are in it (prompts/chat.yaml person_check). If so, her
-reply gets nothing about the group either. In tests she pinned photos of strangers on members she
-remembered in 21 replies of 25; a rule against it still left 15, and a neutral description of the
-picture in place of the picture itself, 22. She can't name someone she was never told about.
+reply knows only the sender. In tests she pinned photos of strangers on members she remembered in
+21 replies of 25; a rule against it still left 15, and a neutral description of the picture in
+place of the picture itself, 22. She can't name someone she was never told about.
 """
 import asyncio
 import base64
@@ -24,7 +24,7 @@ from botpy import logging
 _log = logging.get_logger()
 
 TIMEOUT = 8                     # seconds for one picture
-MAX_BYTES = 10 * 1024 * 1024    # the server has 1 GB of memory, and phones send far less than this
+MAX_BYTES = 10 * 1024 * 1024    # a small server has to hold it, and phones send far less than this
 MAX_PICTURES = 3                # from one message
 MAX_REDIRECTS = 3
 PER_DAY = 50                    # pictures a group can show her a day (ai_chat.vision.per_day)
@@ -41,7 +41,7 @@ FORMATS = ((b"\xff\xd8\xff", "image/jpeg"), (b"\x89PNG\r\n\x1a\n", "image/png"),
 class Sight:
     """What she has of a message's pictures, for her reply."""
     pictures: list = field(default_factory=list)    # as data URLs, for the request
-    strangers: bool = False     # real people may be in them: her reply gets nothing about the group
+    strangers: bool = False     # real people may be in them: her reply knows only the sender
     missed: bool = False        # the message has pictures she can't see, which she should say
 
 

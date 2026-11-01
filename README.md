@@ -112,10 +112,11 @@ seekchat (`Desktop/ai`):
   Search API finds recent pages for her to answer from. Most messages need none. A group gets 30
   searches a day (`ai_chat.web_search_per_day`), and `ai_chat.web_search: false` turns it off.
 - **She can look at pictures, in the groups you list.** With `ai_chat.vision.groups`, when someone
-  @s her with a picture, or while quoting one, she reads it with `deepseek-flash` and answers in
-  character. Elsewhere she says she can't see it. A separate call that gets only the picture says
-  first whether real people are in it. If so, that reply and any for the next 2 minutes get nothing
-  about the group, so she can't pin a stranger on someone she remembers. A group gets 50 pictures a
+  @s her with a picture, or while quoting one, she looks at it with `deepseek-flash` and reacts
+  like a member of the group, using the chat and what she knows about them, rather than saying
+  what's in it. Elsewhere she says she can't see it. A separate call that gets only the picture says
+  first whether real people are in it. If so, that reply and any for the next 2 minutes know only
+  the sender, so she can't pin a stranger on someone else she remembers. A group gets 50 pictures a
   day, and neither pictures nor links are kept.
 - **She varies.** Before each reply a cheap flash call judges what the message needs, as in
   seekchat: 严谨 (0.6), 平衡 (1.0) or 奔放 (1.15) sets the temperature, and 短/中/长 the length. The

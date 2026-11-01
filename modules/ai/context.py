@@ -23,7 +23,7 @@ FRESHNESS = {"今天": 1, "这周": 7, "最近": 90}
 SEARCH_WORDS = 80   # characters; the API takes 128 with its operators
 LORE_TURNS = 4      # lore keywords are looked for in the last few turns...
 LORE_LIMIT = 3      # ...and at most this many entries ride along
-OWN_LINES = 5       # of the sender's recent lines stay when real people are in a picture
+CAREFUL_TURNS = 10  # of the chat are kept when real people are in a picture
 DAY_EVENTS = 4      # her day: at most this many things happen in it (the prompt asks for three)...
 DAY_TEXT = 40       # ...each at most this many characters
 # A bracketed action in a reply, like "（歪了歪头）". Short, so a long aside isn't taken for one.
@@ -103,10 +103,22 @@ def no_people(raw):
     return first_json(raw).get("people") == 0
 
 
-def own_lines(window, member):
-    """What's left of the chat when real people are in a picture: the sender's own recent lines.
-    Anyone else's, or her replies to them, could give her someone to pin the picture on."""
-    return [turn for turn in window if turn["role"] == "user" and turn["member_openid"] == member][-OWN_LINES:]
+def with_sender(window, member, someone):
+    """The chat when real people are in a picture: the sender's lines and her replies to them, so she
+    can follow what they're talking about. Anyone else's stay out, even without a name: 「刚才说去
+    拉琴的那位」 names them to everyone who was there."""
+    window = window[-CAREFUL_TURNS:]
+    others = {turn["name"] for turn in window if turn["role"] == "user" and turn["member_openid"] != member}
+    kept = []
+    for before, turn in zip([None] + window[:-1], window):
+        if turn["role"] == "user" and turn["member_openid"] == member:
+            kept.append(turn)
+        elif turn["role"] == "assistant" and before is not None and before["member_openid"] == member:
+            text = turn["content"]
+            for name in sorted(others, key=len, reverse=True):
+                text = text.replace(name, someone)
+            kept.append(dict(turn, content=text))
+    return kept
 
 
 def parse_day(raw):

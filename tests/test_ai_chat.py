@@ -534,7 +534,7 @@ class PictureTestCommandTest(AIChatTestCase):
 
 class SeeingPicturesTest(AIChatTestCase):
     """In the groups listed she looks at pictures. Who's in a picture must never be pinned on someone
-    she knows, so when real people are in it her reply gets nothing about the group."""
+    she knows, so when real people are in it her reply knows only the sender."""
     PHOTO = {"content_type": "image/jpeg", "url": "https://multimedia.nt.qq.com.cn/download?rkey=SECRET"}
     SEEN = "data:image/png;base64,eA=="
 
@@ -558,9 +558,11 @@ class SeeingPicturesTest(AIChatTestCase):
         self.store.add_memory(G, "B", "小红周末在街头拉小提琴", 1, kind="fact")
         self.store.set_impression(G, "B", "小红是文艺青年", 1)
         self.store.set_summary(G, "总结：阿强常背大包徒步", 0, 1)
-        self.store.add_turn(G, "A", "小明", "user", "等下给你看张图", 1)
-        self.store.add_turn(G, "B", "小红", "user", "我是小红，今天好冷", 2)
-        self.store.add_turn(G, None, "小莲", "assistant", "老王今天也很精神", 3)
+        self.store.set_impression(G, "A", "小明总是喊累", 1)
+        self.store.add_turn(G, "B", "小红", "user", "我是小红，今天好冷", 1)
+        self.store.add_turn(G, None, "小莲", "assistant", "老王今天也很精神", 2)
+        self.store.add_turn(G, "A", "小明", "user", "等下给你看张图", 3)
+        self.store.add_turn(G, None, "小莲", "assistant", "好，小红刚才也说要看", 4)
         self.ai.teams_today = lambda group: [("老王", [("阿强", [])])]
         self.ai.social_today = lambda group: {"birthdays": ["小红"], "poll": None}
         self.ai.special = {"C": "老王是群主"}
@@ -586,7 +588,7 @@ class SeeingPicturesTest(AIChatTestCase):
         self.assertEqual(request["messages"][-1]["content"],
                          [{"type": "text", "text": "小明：[图片] 看看这张图"},
                           {"type": "image_url", "image_url": {"url": self.SEEN}}])
-        self.assertIn("【看图】\n这条消息带了图，你看得到。", request["messages"][0]["content"])
+        self.assertIn("【看图】\n这条消息带了图，你看得到，群里的人也都看得到。你是在群里接话", request["messages"][0]["content"])
         self.assertEqual(self.links, [self.PHOTO["url"]])
         self.assertEqual([turn["content"] for turn in self.store.recent_turns(G)], ["[图片] 看看这张图", "回复1"])
         self.assertEqual(self.store.posts_since(G, "picture", 0), 1)
@@ -618,17 +620,19 @@ class SeeingPicturesTest(AIChatTestCase):
             self.assertIn(word, sent)
         self.assertNotIn("图里的真人是谁你不知道", sent)
 
-    async def test_with_real_people_her_reply_gets_nothing_about_the_group(self):
+    async def test_with_real_people_her_reply_knows_only_the_sender(self):
         self.looking()
         self.knows_the_group()
         self.ai_client.answers["people"] = ['{"people": 2}']
         self.assertEqual(await self.show(), "回复1")
         request = self.ai_client.requests("chat")[-1]
         sent = self.everything_in(request)
-        for word in ("小红", "阿强", "老王", "咖啡店"):
+        for word in ("小红", "阿强", "老王", "今天好冷", "很精神"):
             self.assertNotIn(word, sent)
         self.assertIn("图里的真人是谁你不知道", sent)
-        self.assertIn("等下给你看张图", sent)                       # the sender's own words stay
+        for word in ("等下给你看张图", "小明在咖啡店打工", "小明总是喊累"):     # what's the sender's stays
+            self.assertIn(word, sent)
+        self.assertIn("好，某位群友刚才也说要看", sent)                    # her reply to them, without the name
         self.assertEqual(request["messages"][-1]["content"][1]["image_url"]["url"], self.SEEN)     # she still sees it
 
     async def test_right_after_real_people_a_follow_up_cant_meet_her_memories(self):
@@ -643,8 +647,10 @@ class SeeingPicturesTest(AIChatTestCase):
         self.assertIn("图里的真人是谁你不知道", sent)
         self.assertEqual(self.ai_client.requests("observer"), [])
         self.assertEqual(self.ai_client.requests("people")[1:], [])      # no picture, so nothing to check
-        await self.show("那阿强呢", member="B", images=[])              # whoever asks
-        self.assertNotIn("小红周末在街头拉小提琴", self.everything_in(self.ai_client.requests("chat")[-1]))
+        await self.show("那阿强呢", member="B", images=[])              # whoever asks, she knows only them
+        sent = self.everything_in(self.ai_client.requests("chat")[-1])
+        self.assertIn("小红周末在街头拉小提琴", sent)
+        self.assertNotIn("小明在咖啡店打工", sent)
 
     async def test_after_a_while_she_knows_the_group_again(self):
         self.looking()
@@ -774,10 +780,20 @@ class SeeingPicturesTest(AIChatTestCase):
         self.assertNotIn("【看图】", request["messages"][0]["content"])
         self.assertEqual(self.store.recent_turns(G)[0]["content"], "今晚吃啥")
 
-    def test_own_lines_are_the_senders_newest(self):
-        rows = [{"role": "user", "member_openid": "A" if n % 2 else "B", "content": str(n)} for n in range(20)]
-        rows.append({"role": "assistant", "member_openid": None, "content": "她"})
-        self.assertEqual([row["content"] for row in context.own_lines(rows, "A")], ["11", "13", "15", "17", "19"])
+    def test_with_sender_keeps_their_lines_and_her_replies_to_them(self):
+        def said(member, name, content):
+            return {"role": "user", "member_openid": member, "name": name, "content": content}
+
+        def she(content):
+            return {"role": "assistant", "member_openid": None, "name": "她", "content": content}
+
+        rows = [she("开头"), said("B", "小红", "我去拉琴了"), she("小明你呢"), said("A", "小明", "我累了"),
+                she("小红也累了"), said("B", "小红", "我才不累"), she("好吧"), said("A", "小明", "看图")]
+        kept = context.with_sender(rows, "A", "某位群友")
+        self.assertEqual([row["content"] for row in kept], ["我累了", "某位群友也累了", "看图"])
+        self.assertEqual(context.with_sender([said("A", "小明", "看图")], "A", "某位群友")[0]["content"], "看图")
+        many = [said("A", "小明", str(n)) for n in range(30)]
+        self.assertEqual(len(context.with_sender(many, "A", "某位群友")), context.CAREFUL_TURNS)
 
 
 class DepartedMemberTest(AIChatTestCase):

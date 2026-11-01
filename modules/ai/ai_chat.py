@@ -102,6 +102,7 @@ PROMPT_FIELDS = {
     "web_results": {"query", "results"},
     "empty_mention": {"member"},
     "picture_mark": set(),
+    "someone": set(),
     "person_check": set(),
     "topic": {"hours"},
     "topic_cue": {"hours"},
@@ -492,8 +493,8 @@ class AIChatModule:
     def _prompt(self, group, member, member_name, window, length=None, found=None, sight=vision.NOTHING):
         """(instructions, evidence) for one reply. `length` is the pre-reply call's 短/中/长, if it gave
         one, `found` what a web search for this message turned up, as look_up returns it, and `sight`
-        what she has of its pictures. When real people are in them she's told nothing about the
-        group: no rule stops her pinning them on someone she knows, but she can't name a stranger."""
+        what she has of its pictures. When real people are in them she knows only the sender: no rule
+        stops her pinning them on someone she knows, but she can't name someone she isn't told about."""
         style = current()
         alone = sight.strangers
         lore = None if alone else context.lore_for(style.lookup("lore"), window)
@@ -517,7 +518,7 @@ class AIChatModule:
         summary = None if alone else self.store.summary(group)
         if summary:
             evidence.append(f"{render(self.prompts['summary_prefix'])}\n{summary['summary']}")
-        if self.memory_on and not alone:
+        if self.memory_on:
             # The members speaking in the window, the current speaker first.
             speakers = {}
             for turn in reversed(window):
@@ -647,7 +648,7 @@ class AIChatModule:
             self._spawn(self.plan_day())        # ready for her next reply; this one goes without
         sight = await self._sight(group, images)
         if sight.strangers:
-            window = context.own_lines(window, member)
+            window = context.with_sender(window, member, render(self.prompts["someone"]))
         register, length, wanted = (await self.perceive(name, said, window) if self.dynamic or self.searcher
                                     else (None, None, None))
         if not self.dynamic:
