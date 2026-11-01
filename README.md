@@ -111,6 +111,12 @@ seekchat (`Desktop/ai`):
   the latest version of something), the judgement before the reply writes a search, and DeepSeek's
   Search API finds recent pages for her to answer from. Most messages need none. A group gets 30
   searches a day (`ai_chat.web_search_per_day`), and `ai_chat.web_search: false` turns it off.
+- **She can look at pictures, in the groups you list.** With `ai_chat.vision.groups`, when someone
+  @s her with a picture, or while quoting one, she reads it with `deepseek-flash` and answers in
+  character. Elsewhere she says she can't see it. A separate call that gets only the picture says
+  first whether real people are in it. If so, that reply and any for the next 2 minutes get nothing
+  about the group, so she can't pin a stranger on someone she remembers. A group gets 50 pictures a
+  day, and neither pictures nor links are kept.
 - **She varies.** Before each reply a cheap flash call judges what the message needs, as in
   seekchat: 严谨 (0.6), 平衡 (1.0) or 奔放 (1.15) sets the temperature, and 短/中/长 the length. The
   actions in her last few replies are listed so she picks new ones.
@@ -219,7 +225,7 @@ main.py                 entry point: client, event routing, command chain
 core/                   config loading; style.py loads the style files
 modules/
   ai/                   AI chat: ai_chat.py runs it, context.py builds each request, search.py looks things up,
-                        vision.py fetches pictures from QQ (for now only /看图测试, an admin check),
+                        vision.py fetches pictures from QQ and says what she has of them,
                         memory.py reads the memory notes and checks, store.py keeps data/chat.db,
                         memory_admin.py lists and edits memories, stickers.py reads the sticker
                         folder, rehearse.py tries a persona; /deepseek

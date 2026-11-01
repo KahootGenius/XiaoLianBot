@@ -32,7 +32,7 @@ class FakeDeepSeek:
     def __init__(self):
         self.calls = []
         self.answers = {"chat": [], "register": [], "observer": [], "check": [], "consolidation": [], "summary": [],
-                        "day": [], "topic": []}
+                        "day": [], "topic": [], "people": []}
         self.hooks = {}
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
 
@@ -44,6 +44,8 @@ class FakeDeepSeek:
             return "topic"
         if len(messages) == 1:
             content = messages[0]["content"]
+            if isinstance(content, list):
+                return "people"
             if "需要什么风格和篇幅" in content:
                 return "register"
             if "睡一觉" in content:
@@ -60,7 +62,8 @@ class FakeDeepSeek:
         answer = queue.pop(0) if queue else {"chat": f"回复{len(self.requests('chat'))}", "register": BALANCED,
                                              "observer": NOTHING, "check": KEEP_ALL, "consolidation": CONSOLIDATED,
                                              "summary": "总结：小明在准备考研", "day": DAY_PLAN,
-                                             "topic": f"话题{len(self.requests('topic'))}"}[kind]
+                                             "topic": f"话题{len(self.requests('topic'))}",
+                                             "people": '{"people": 0}'}[kind]
         if isinstance(answer, Exception):
             raise answer
         return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=answer))])
@@ -529,6 +532,254 @@ class PictureTestCommandTest(AIChatTestCase):
         self.assertNotIn("qq.com", await self.check(attachments=[self.PHOTO]))
 
 
+class SeeingPicturesTest(AIChatTestCase):
+    """In the groups listed she looks at pictures. Who's in a picture must never be pinned on someone
+    she knows, so when real people are in it her reply gets nothing about the group."""
+    PHOTO = {"content_type": "image/jpeg", "url": "https://multimedia.nt.qq.com.cn/download?rkey=SECRET"}
+    SEEN = "data:image/png;base64,eA=="
+
+    def setUp(self):
+        self.links, self.results = [], []
+
+    async def fetched(self, url):
+        self.links.append(url)
+        result = self.results.pop(0) if self.results else (b"x", "image/png")
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    def looking(self, **chat_config):
+        chat_config.setdefault("vision", {"groups": [G]})
+        return self.make(fetch_picture=self.fetched, **chat_config)
+
+    def knows_the_group(self):
+        """Everything she might pin a picture on: every line of it has 小红, 阿强 or 老王 in it."""
+        self.store.add_memory(G, "A", "小明在咖啡店打工", 1, kind="fact")
+        self.store.add_memory(G, "B", "小红周末在街头拉小提琴", 1, kind="fact")
+        self.store.set_impression(G, "B", "小红是文艺青年", 1)
+        self.store.set_summary(G, "总结：阿强常背大包徒步", 0, 1)
+        self.store.add_turn(G, "A", "小明", "user", "等下给你看张图", 1)
+        self.store.add_turn(G, "B", "小红", "user", "我是小红，今天好冷", 2)
+        self.store.add_turn(G, None, "小莲", "assistant", "老王今天也很精神", 3)
+        self.ai.teams_today = lambda group: [("老王", [("阿强", [])])]
+        self.ai.social_today = lambda group: {"birthdays": ["小红"], "poll": None}
+        self.ai.special = {"C": "老王是群主"}
+        self.ai.nickname_of = lambda group, member: {"C": "老王"}.get(member)
+
+    async def show(self, text="看看这张图", member="A", images=None, group=G):
+        before = len(self.gw.sent)
+        message = FakeMessage(group, member, NAMES.get(member, member), text, content=text, mentions_bot=True,
+                              images=[(self.PHOTO, False)] if images is None else images)
+        await self.ai.handle_ai_chat(message)
+        await self.ai.settle()
+        return "\n".join(content for _, content, _ in self.gw.sent[before:])
+
+    def everything_in(self, request):
+        return json.dumps(request["messages"], ensure_ascii=False)
+
+    async def test_a_picture_goes_in_her_message_and_only_a_mark_is_kept(self):
+        self.looking(deepseek={"model": "deepseek-v4-pro", "thinking": True})
+        self.assertEqual(await self.show(), "回复1")
+        request = self.ai_client.requests("chat")[-1]
+        self.assertEqual(request["model"], "deepseek-flash")        # v4-pro can't see
+        self.assertEqual(request["extra_body"], {"thinking": {"type": "disabled"}})
+        self.assertEqual(request["messages"][-1]["content"],
+                         [{"type": "text", "text": "小明：[图片] 看看这张图"},
+                          {"type": "image_url", "image_url": {"url": self.SEEN}}])
+        self.assertIn("【看图】\n这条消息带了图，你看得到。", request["messages"][0]["content"])
+        self.assertEqual(self.links, [self.PHOTO["url"]])
+        self.assertEqual([turn["content"] for turn in self.store.recent_turns(G)], ["[图片] 看看这张图", "回复1"])
+        self.assertEqual(self.store.posts_since(G, "picture", 0), 1)
+
+    async def test_a_picture_alone_is_a_message(self):
+        self.looking()
+        await self.show("")
+        self.assertEqual(self.store.recent_turns(G)[0]["content"], "[图片]")
+        self.assertEqual(self.ai_client.requests("chat")[-1]["messages"][-1]["content"][0]["text"], "小明：[图片]")
+
+    async def test_the_person_check_gets_the_picture_and_nothing_else(self):
+        self.looking()
+        self.knows_the_group()
+        await self.show()
+        [request] = self.ai_client.requests("people")
+        self.assertEqual(len(request["messages"]), 1)
+        self.assertEqual(request["model"], "deepseek-flash")
+        self.assertEqual(request["temperature"], 0)
+        self.assertEqual(request["messages"][0]["content"][1], {"type": "image_url", "image_url": {"url": self.SEEN}})
+        for word in ("小明", "小红", "阿强", "老王", "看看这张图"):
+            self.assertNotIn(word, self.everything_in(request))
+
+    async def test_without_real_people_she_keeps_what_she_knows(self):
+        self.looking()
+        self.knows_the_group()
+        await self.show()
+        sent = self.everything_in(self.ai_client.requests("chat")[-1])
+        for word in ("小红周末在街头拉小提琴", "总结：阿强常背大包徒步", "我是小红，今天好冷", "老王是群主"):
+            self.assertIn(word, sent)
+        self.assertNotIn("图里的真人是谁你不知道", sent)
+
+    async def test_with_real_people_her_reply_gets_nothing_about_the_group(self):
+        self.looking()
+        self.knows_the_group()
+        self.ai_client.answers["people"] = ['{"people": 2}']
+        self.assertEqual(await self.show(), "回复1")
+        request = self.ai_client.requests("chat")[-1]
+        sent = self.everything_in(request)
+        for word in ("小红", "阿强", "老王", "咖啡店"):
+            self.assertNotIn(word, sent)
+        self.assertIn("图里的真人是谁你不知道", sent)
+        self.assertIn("等下给你看张图", sent)                       # the sender's own words stay
+        self.assertEqual(request["messages"][-1]["content"][1]["image_url"]["url"], self.SEEN)     # she still sees it
+
+    async def test_right_after_real_people_a_follow_up_cant_meet_her_memories(self):
+        self.looking(memory=True)
+        self.knows_the_group()
+        self.ai_client.answers["people"] = ['{"people": 1}']
+        await self.show()
+        await self.show("这是小红吧？", images=[])
+        sent = self.everything_in(self.ai_client.requests("chat")[-1])
+        self.assertNotIn("小红周末在街头拉小提琴", sent)
+        self.assertNotIn("总结：阿强常背大包徒步", sent)
+        self.assertIn("图里的真人是谁你不知道", sent)
+        self.assertEqual(self.ai_client.requests("observer"), [])
+        self.assertEqual(self.ai_client.requests("people")[1:], [])      # no picture, so nothing to check
+        await self.show("那阿强呢", member="B", images=[])              # whoever asks
+        self.assertNotIn("小红周末在街头拉小提琴", self.everything_in(self.ai_client.requests("chat")[-1]))
+
+    async def test_after_a_while_she_knows_the_group_again(self):
+        self.looking()
+        self.knows_the_group()
+        self.ai_client.answers["people"] = ['{"people": 1}']
+        await self.show()
+        self.now += timedelta(seconds=vision.CAREFUL_SECONDS + 1)
+        await self.show("今晚吃啥", images=[])
+        sent = self.everything_in(self.ai_client.requests("chat")[-1])
+        self.assertIn("小红周末在街头拉小提琴", sent)
+        self.assertNotIn("图里的真人是谁你不知道", sent)
+
+    async def test_a_picture_without_people_leaves_her_as_she_was(self):
+        self.looking()
+        self.knows_the_group()
+        await self.show()
+        await self.show("今晚吃啥", images=[])
+        self.assertIn("小红周末在街头拉小提琴", self.everything_in(self.ai_client.requests("chat")[-1]))
+
+    async def test_another_groups_picture_changes_nothing_here(self):
+        self.looking(vision={"groups": [G, G2]})
+        self.knows_the_group()
+        self.ai_client.answers["people"] = ['{"people": 1}']
+        await self.show(group=G2)
+        await self.show("今晚吃啥", images=[])
+        self.assertIn("小红周末在街头拉小提琴", self.everything_in(self.ai_client.requests("chat")[-1]))
+
+    async def test_the_person_check_failing_counts_as_real_people(self):
+        for answer in ("看不清", '{"people": null}', '{"people": "0"}', RuntimeError("500")):
+            self.looking()
+            self.ai_client.answers["people"] = [answer]
+            await self.show()
+            self.assertIn("图里的真人是谁你不知道", self.everything_in(self.ai_client.requests("chat")[-1]), answer)
+
+    async def test_nothing_about_a_picture_reaches_the_note_taker(self):
+        self.looking(memory=True)
+        self.ai_client.answers["chat"] = ["图里是一把小提琴"]
+        await self.show("这是我的琴")
+        [observed] = self.ai_client.requests("observer")
+        self.assertIn("这是我的琴", observed["messages"][0]["content"])
+        self.assertNotIn("小提琴", observed["messages"][0]["content"])
+
+    async def test_a_mistake_about_real_people_cant_become_a_memory(self):
+        self.looking(memory=True)
+        self.ai_client.answers["people"] = ['{"people": 1}']
+        await self.show()
+        self.assertEqual(self.ai_client.requests("observer"), [])
+
+    async def test_a_group_not_listed_doesnt_fetch_and_she_says_she_didnt_see(self):
+        self.looking(vision={"groups": ["ANOTHER"]})
+        await self.show()
+        self.assertEqual(self.links, [])
+        self.assertEqual(self.ai_client.requests("people"), [])
+        request = self.ai_client.requests("chat")[-1]
+        self.assertIn("这条消息带了图，但你没看到图的内容", request["messages"][0]["content"])
+        self.assertEqual(request["messages"][-1]["content"], "小明：[图片] 看看这张图")
+        self.assertEqual(request["model"], "deepseek-flash")
+
+    async def test_a_group_has_a_daily_limit(self):
+        self.looking(vision={"groups": [G], "per_day": 2})
+        await self.show()
+        await self.show()
+        await self.show()
+        self.assertEqual(len(self.links), 2)
+        self.assertIn("但你没看到图的内容", self.ai_client.requests("chat")[-1]["messages"][0]["content"])
+        self.now += timedelta(days=1)
+        await self.show()
+        self.assertEqual(len(self.links), 3)
+
+    async def test_a_picture_she_cant_fetch_she_says_so(self):
+        self.looking()
+        self.results = [vision.PictureError("http", 403)]
+        await self.show()
+        self.assertIn("但你没看到图的内容", self.ai_client.requests("chat")[-1]["messages"][0]["content"])
+        self.assertEqual(self.ai_client.requests("people"), [])
+        self.assertEqual(self.store.posts_since(G, "picture", 0), 0)
+
+    async def test_she_sees_the_pictures_that_could_be_fetched(self):
+        self.looking()
+        self.results = [vision.PictureError("timeout"), (b"x", "image/png")]
+        await self.show(images=[(self.PHOTO, False), (dict(self.PHOTO, url="u2"), True)])
+        self.assertEqual(len(self.ai_client.requests("chat")[-1]["messages"][-1]["content"]), 2)
+
+    async def test_only_a_few_pictures_are_looked_at(self):
+        self.looking()
+        await self.show(images=[(dict(self.PHOTO, url=f"u{n}"), False) for n in range(5)])
+        self.assertEqual(len(self.links), vision.MAX_PICTURES)
+        self.assertEqual(len(self.ai_client.requests("chat")[-1]["messages"][-1]["content"]), vision.MAX_PICTURES + 1)
+
+    async def test_if_deepseek_refuses_she_answers_without_it_and_stops_trying_for_a_while(self):
+        self.looking()
+        self.ai_client.answers["chat"] = [RuntimeError("400 bad image"), "我没看到图"]
+        self.assertEqual(await self.show(), "我没看到图")
+        request = self.ai_client.requests("chat")[-1]
+        self.assertIsInstance(request["messages"][-1]["content"], str)
+        self.assertIn("但你没看到图的内容", request["messages"][0]["content"])
+        await self.show()
+        self.assertEqual(len(self.links), 1)
+        self.now += timedelta(seconds=vision.RETRY_SECONDS + 1)
+        await self.show()
+        self.assertEqual(len(self.links), 2)
+
+    async def test_with_real_people_a_refusal_still_tells_her_nothing_about_the_group(self):
+        self.looking()
+        self.knows_the_group()
+        self.ai_client.answers["people"] = ['{"people": 1}']
+        self.ai_client.answers["chat"] = [RuntimeError("400 bad image")]
+        await self.show()
+        sent = self.everything_in(self.ai_client.requests("chat")[-1])
+        self.assertNotIn("小红", sent)
+        self.assertIn("但你没看到图的内容", sent)
+
+    async def test_a_message_with_a_picture_makes_no_web_search(self):
+        searcher = FakeSearch()
+        self.looking(searcher=searcher)
+        self.ai_client.answers["register"] = ['{"register": "平衡", "length": "中", "search": "这是什么游戏", "fresh": "最近"}']
+        await self.show("这是什么游戏")
+        self.assertEqual(searcher.queries, [])
+
+    async def test_a_message_without_a_picture_is_untouched(self):
+        self.looking()
+        await self.say("A", "今晚吃啥")
+        self.assertEqual(self.links, [])
+        self.assertEqual(self.ai_client.requests("people"), [])
+        request = self.ai_client.requests("chat")[-1]
+        self.assertEqual(request["messages"][-1]["content"], "小明：今晚吃啥")
+        self.assertNotIn("【看图】", request["messages"][0]["content"])
+        self.assertEqual(self.store.recent_turns(G)[0]["content"], "今晚吃啥")
+
+    def test_own_lines_are_the_senders_newest(self):
+        rows = [{"role": "user", "member_openid": "A" if n % 2 else "B", "content": str(n)} for n in range(20)]
+        rows.append({"role": "assistant", "member_openid": None, "content": "她"})
+        self.assertEqual([row["content"] for row in context.own_lines(rows, "A")], ["11", "13", "15", "17", "19"])
+
+
 class DepartedMemberTest(AIChatTestCase):
     def test_gone_long_enough_she_forgets_them_but_keeps_the_groups_summary(self):
         self.make()
@@ -580,6 +831,18 @@ lore:
         self.assertIn("【相关设定】这些是你的世界里的设定，聊到时自然地用上：\n- 图书馆每天九点开门。", instructions)
         self.assertNotIn("期末考试", instructions)
         self.assertEqual(self.book.check("桃子"), [])          # the new keys are known to the checker
+
+    async def test_lore_stays_out_when_real_people_are_in_a_picture(self):
+        async def fetched(url):
+            return b"x", "image/png"
+
+        self.make(fetch_picture=fetched, vision={"groups": [G]})
+        self.ai_client.answers["people"] = ['{"people": 1}']
+        message = FakeMessage(G, "A", "小明", "图书馆门口", content="图书馆门口", mentions_bot=True,
+                              images=[({"content_type": "image/png", "url": "u"}, False)])
+        with self.book.scope(G):
+            await self.ai.handle_ai_chat(message)
+        self.assertNotIn("图书馆每天九点开门", self.last_chat()[0]["content"])
 
     async def test_the_default_style_adds_nothing(self):
         self.make()

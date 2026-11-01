@@ -28,6 +28,7 @@ class FakeMessage:
     role: str = None
     message_type: int = None
     attachments_raw: list = field(default_factory=list)
+    images: list = field(default_factory=list)
     mentions_bot: bool = False
     mentioned_members: list = field(default_factory=list)
 

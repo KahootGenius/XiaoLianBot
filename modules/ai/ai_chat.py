@@ -83,6 +83,9 @@ PROMPT_FIELDS = {
     "memory_rules": set(),
     "day_rules": set(),
     "search_rules": set(),
+    "vision_rules": set(),
+    "vision_strangers": set(),
+    "vision_missing": set(),
     "evidence_policy": set(),
     "evidence_title": set(),
     "now": {"date", "weekday", "time"},
@@ -98,6 +101,8 @@ PROMPT_FIELDS = {
     "impression_title": set(),
     "web_results": {"query", "results"},
     "empty_mention": {"member"},
+    "picture_mark": set(),
+    "person_check": set(),
     "topic": {"hours"},
     "topic_cue": {"hours"},
     "summary": set(),
@@ -254,6 +259,13 @@ class AIChatModule:
         self.searcher = searcher if chat.get("web_search", True) else None
         self.search_per_day = int(chat.get("web_search_per_day", search.PER_DAY))
         self.search_off_until = 0
+        # 看图: in the groups listed, she looks at the pictures members @ her with.
+        looking = chat.get("vision") if isinstance(chat.get("vision"), dict) else {}
+        self.vision_groups = [str(group) for group in looking.get("groups") or []]
+        self.vision_per_day = int(looking.get("per_day", vision.PER_DAY))
+        self.vision_model = str(looking.get("model") or DEFAULT_MODEL)
+        self.vision_off_until = 0
+        self.careful_until = {}     # group -> her replies stay careful until this, after real people in a picture
         # Today's team game and birthdays/poll, set by main.py: group -> what teams.today_for_ai and
         # social.today_for_ai return. Without them the bot only knows the time.
         self.teams_today = self.social_today = None
@@ -391,23 +403,24 @@ class AIChatModule:
             block.append(render(self.prompts["special_namesake"], member=member_name))
         return "\n".join(block)
 
-    def _today(self, group, window):
+    def _today(self, group, window, alone=False):
         """The first part of the evidence: the time, her day, today's game, birthdays and poll, and
-        the actions the bot's last replies used. Nicknames come from members, so this is data."""
+        the actions the bot's last replies used. Nicknames come from members, so this is data.
+        `alone` leaves out what's going on in the group, which is full of nicknames."""
         now = self.clock()
         lines = [render(self.prompts["now"], date=t("common.date", month=now.month, day=now.day),
                         weekday=WEEKDAYS[now.weekday()], time=now.strftime("%H:%M"))]
         day = self._her_day()
         if day:
             lines.append(render(self.prompts["her_day"], events="\n".join(f"- {event}" for event in day)))
-        if self.game_state and self.teams_today:
+        if self.game_state and self.teams_today and not alone:
             teams = [render(self.prompts["team_line"], captain=captain,
                             members=join([f"{name}（{join(statuses)}）" if statuses else name
                                           for name, statuses in members]))
                      for captain, members in self.teams_today(group)]
             if teams:
                 lines.append(render(self.prompts["today_teams"], teams="\n".join(teams)))
-        if self.game_state and self.social_today:
+        if self.game_state and self.social_today and not alone:
             today = self.social_today(group)
             if today["birthdays"]:
                 lines.append(render(self.prompts["today_birthdays"], members=join(today["birthdays"])))
@@ -476,11 +489,14 @@ class AIChatModule:
         row = self.store.impression(group, member)
         return row["text"] if row else None
 
-    def _prompt(self, group, member, member_name, window, length=None, found=None):
+    def _prompt(self, group, member, member_name, window, length=None, found=None, sight=vision.NOTHING):
         """(instructions, evidence) for one reply. `length` is the pre-reply call's 短/中/长, if it gave
-        one, and `found` what a web search for this message turned up, as look_up returns it."""
+        one, `found` what a web search for this message turned up, as look_up returns it, and `sight`
+        what she has of its pictures. When real people are in them she's told nothing about the
+        group: no rule stops her pinning them on someone she knows, but she can't name a stranger."""
         style = current()
-        lore = context.lore_for(style.lookup("lore"), window)
+        alone = sight.strangers
+        lore = None if alone else context.lore_for(style.lookup("lore"), window)
         # The parts that never change for a style come first, so DeepSeek's prefix cache can reuse them.
         instructions = [style.system_prompt, *self._samples(style),
                         render(self.prompts["group_rules"], member=member_name),
@@ -490,15 +506,18 @@ class AIChatModule:
                         self.stickers and render(self.prompts["stickers"], stickers=stickers.listing(self.stickers),
                                                  max=stickers.MAX_PER_REPLY),
                         self._can_speak(group) and render(self.prompts["voice"], max_chars=voice.MAX_CHARS),
-                        self._special_people(group, member, member_name, window),
+                        not alone and self._special_people(group, member, member_name, window),
                         lore and render(self.prompts["lore"], lore="\n".join(f"- {text}" for text in lore)),
                         self._her_day() and render(self.prompts["day_rules"]),
-                        found and render(self.prompts["search_rules"])]
-        evidence = [self._today(group, window)]
-        summary = self.store.summary(group)
+                        found and render(self.prompts["search_rules"]),
+                        sight.pictures and render(self.prompts["vision_rules"]),
+                        alone and render(self.prompts["vision_strangers"]),
+                        sight.missed and render(self.prompts["vision_missing"])]
+        evidence = [self._today(group, window, alone)]
+        summary = None if alone else self.store.summary(group)
         if summary:
             evidence.append(f"{render(self.prompts['summary_prefix'])}\n{summary['summary']}")
-        if self.memory_on:
+        if self.memory_on and not alone:
             # The members speaking in the window, the current speaker first.
             speakers = {}
             for turn in reversed(window):
@@ -552,25 +571,91 @@ class AIChatModule:
         _log.info(f"[Search] 搜了一次，用上 {len(pages)} 个网页")      # not the words: they aren't kept
         return (words, "\n".join(pages)) if pages else None
 
+    def _may_look(self, group):
+        """Whether she can look at a picture now: this group is listed, it hasn't used today's
+        pictures, and looking didn't fail a moment ago."""
+        return (group in self.vision_groups and self._now() >= self.vision_off_until
+                and self.store.posts_since(group, "picture", self._midnight()) < self.vision_per_day)
+
+    async def look(self, group, images):
+        """What she can have of a message's pictures, as a Sight. They're held in memory for this
+        reply only. If she can't get any she's told so, so that she doesn't play along."""
+        if not self._may_look(group):
+            return vision.Sight(missed=True)
+        pictures = []
+        for attachment, _ in images[:vision.MAX_PICTURES]:
+            try:
+                pictures.append(vision.data_url(*await self.fetch_picture(attachment.get("url"))))
+            except vision.PictureError as e:
+                _log.warning(f"[Vision] 有张图没拿到: {e.reason} {e.detail}")
+        if not pictures:
+            return vision.Sight(missed=True)
+        for _ in pictures:
+            self.store.add_post(group, "picture", self._now())
+        strangers = not await self.no_people_in(pictures)
+        _log.info(f"[Vision] 看了 {len(pictures)} 张图，{'有真人' if strangers else '没有真人'}")
+        return vision.Sight(pictures, strangers=strangers)
+
+    async def no_people_in(self, pictures):
+        """True only if a call that gets nothing but the pictures and a fixed question, so nothing
+        about the group, says no real people are in them. Unsure means she keeps to herself."""
+        try:
+            raw = await self._complete(self.client, self.vision_model, [
+                {"role": "user", "content": context.with_pictures(render(self.prompts["person_check"]), pictures)}],
+                temperature=0)
+        except Exception as e:
+            _log.warning(f"[Vision] 没判断出图里有没有真人: {str(e)[:200]}")
+            return False
+        return context.no_people(raw)
+
+    async def _sight(self, group, images):
+        """What she has of this message's pictures. Just after real people were in one nothing
+        changes for her, or 「这是小红吧」 would meet her memories of 小红 and she'd agree."""
+        if not images:
+            careful = self._now() < self.careful_until.get(group, 0)
+            return vision.Sight(strangers=True) if careful else vision.NOTHING
+        sight = await self.look(group, images)
+        if sight.strangers:
+            self.careful_until[group] = self._now() + vision.CAREFUL_SECONDS
+        return sight
+
+    async def _answer(self, group, member, name, window, length, found, sight, register):
+        """Her reply. If DeepSeek can't take the pictures she answers without them, and says so."""
+        instructions, evidence = self._prompt(group, member, name, window, length, found, sight)
+        messages = context.build_messages(instructions, evidence, window, sight.pictures)
+        temperature = self.register_temperatures.get(register, self.temperature)
+        if not sight.pictures:
+            return await self._complete(self.client, self.model, messages, thinking=self.thinking,
+                                        temperature=temperature)
+        try:        # thinking stays off: in tests it saw no more, three times slower
+            return await self._complete(self.client, self.vision_model, messages, temperature=temperature)
+        except Exception as e:
+            self.vision_off_until = self._now() + vision.RETRY_SECONDS
+            _log.warning(f"[Vision] 看图失败，{vision.RETRY_SECONDS // 60} 分钟内先不看: {str(e)[:200]}")
+        return await self._answer(group, member, name, window, length, found,
+                                  vision.Sight(strangers=sight.strangers, missed=True), register)
+
     async def chat(self, message, text):
         group, member = message.group_openid, message.member_openid
         name = message.nickname or t("common.someone")
-        said = text or render(self.prompts["empty_mention"], member=name)
+        images = message.images
+        mark = render(self.prompts["picture_mark"]) if images else ""
+        said = " ".join(filter(None, [mark, text])) or render(self.prompts["empty_mention"], member=name)
         self.store.add_turn(group, member, name, "user", said, self._now())
         window = context.select_window(self.store.recent_turns(group), self.context_tokens)
         if self.her_day and self._her_day() is None:
             self._spawn(self.plan_day())        # ready for her next reply; this one goes without
+        sight = await self._sight(group, images)
+        if sight.strangers:
+            window = context.own_lines(window, member)
         register, length, wanted = (await self.perceive(name, said, window) if self.dynamic or self.searcher
                                     else (None, None, None))
         if not self.dynamic:
             register = length = None
-        found = await self.look_up(group, *wanted) if wanted else None
-        instructions, evidence = self._prompt(group, member, name, window, length, found)
+        # With a picture she can't know what to search for until she has looked at it.
+        found = await self.look_up(group, *wanted) if wanted and not images else None
         try:
-            reply = (await self._complete(self.client, self.model,
-                                          context.build_messages(instructions, evidence, window),
-                                          thinking=self.thinking,
-                                          temperature=self.register_temperatures.get(register, self.temperature))).strip()
+            reply = (await self._answer(group, member, name, window, length, found, sight, register)).strip()
         except Exception as e:
             await self._reply(message, t("ai.error", error=e))
             return
@@ -578,8 +663,9 @@ class AIChatModule:
             return
         reply = await self._send_reply(message, reply)
         self.store.add_turn(group, None, current().name, "assistant", reply, self._now())
-        if self.memory_on and member:
-            self._spawn(self.observe(group, member, name, said, reply))
+        # What's in a picture never becomes a memory, and a mistake about who's in it can't stick.
+        if self.memory_on and member and not sight.strangers:
+            self._spawn(self.observe(group, member, name, said, mark or reply))
         self._spawn(self.maybe_summarize(group))
 
     def _notes(self, group, member):
@@ -1108,6 +1194,8 @@ class AIChatModule:
         if self.special:
             # The start of each ID, to check against what /我的ID says.
             _log.info(f"[AIChat] 特别的群友 {len(self.special)} 位，ID 开头：{'、'.join(o[:8] for o in self.special)}")
+        if self.vision_groups:
+            _log.info(f"[AIChat] {len(self.vision_groups)} 个群里她看得到 @ 她的图，模型 {self.vision_model}")
         if self.topic_groups:
             _log.info(f"[AIChat] {len(self.topic_groups)} 个群安静 {self.quiet_hours:g} 小时后她会开话题："
                       f"{self.topic_hours[0]}–{self.topic_hours[1]} 点之间，每天最多 {self.topics_per_day} 次")

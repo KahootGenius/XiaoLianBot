@@ -127,7 +127,7 @@ async def play(script, config, run, model=None, remember=False, out=sys.stdout, 
         clock.now = start + timedelta(minutes=i)
         message = SimpleNamespace(group_openid=GROUP, member_openid=ids.get(nickname, f"R-{nickname}"),
                                   nickname=nickname, content=text, id=f"r{run}-{i}", role=None,
-                                  mentions_bot=True, is_bot=False)
+                                  mentions_bot=True, is_bot=False, images=[])
         before = len(gateway.sent)
         with STYLES.scope(GROUP):
             await ai.handle_ai_chat(message)

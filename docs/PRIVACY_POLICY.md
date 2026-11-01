@@ -81,6 +81,8 @@
 
 **联网搜索：** 消息需要最新信息时（例如天气、汇率、新闻、最新版本），本机器人会根据这条消息写一个搜索词，发送至 **DeepSeek** 的搜索服务（api.deepseek.com）。搜索词不包含昵称或成员标识；查到的网页内容只用于这一条回复。运营者可以关闭这项功能。
 
+**看图：** 在运营者开启看图的群里，群友 @本机器人 时发的图片，或回复一张图片并 @本机器人 时被引用的那张图片，会发送至 **DeepSeek**（api.deepseek.com）用于识别和回复。没有 @ 本机器人的图片不会被读取。发送时会先单独询问一次图里有没有真人，这次询问只带图片；图里有真人时，本机器人不会辨认是谁，这条回复和之后 2 分钟内的回复都不使用群友记忆、群聊总结和其他群友的发言。图片的内容不会写入长期记忆。DeepSeek 的数据处理方式适用其自身隐私政策。
+
 **语音功能：** 若运营者配置了 MiniMax 密钥，本机器人偶尔会用语音回复：它要说的那句话会被发送至 **MiniMax**（api.minimax.io 或 api.minimax.cn）合成语音。发送的只有本机器人自己的话，**不包含**任何成员的消息、昵称或标识。MiniMax 的数据处理方式适用其自身隐私政策。未配置 MiniMax 密钥时，不存在这项传输。
 
 **群管理功能：** 有效发言的判断完全在本机器人服务器上完成，**不会**把群消息发送给任何第三方。提醒消息和移出操作通过 QQ 开放平台接口完成。
@@ -108,6 +110,7 @@
 - **意见征集**：结束 **30 天**后连同全部意见和参加记录一起删除；没人结束的征集 30 天后自动关闭。
 - **`/翻牌子` 的记录**：2 天后删除。
 - **联网搜索**：不保存搜索词和查到的内容，只记下每次搜索的时间，用于每个群每天的次数限制，**7 天**后删除。
+- **看图**：图片和图片链接都不保存：图片下载到服务器内存，用完就丢弃，不写入硬盘，聊天记录里只留一个「[图片]」记号。机器人对图片的回复和其他回复一样保存。只记下每次看图的时间，用于每个群每天的次数限制，**7 天**后删除。
 - **本机器人被移出某个群时**：立即删除该群的全部群管理数据、队伍名单、AI 对话记录、群聊总结、长期记忆、生日、投票和意见征集。
 - 群组绑定、订阅状态、游戏状态、睡眠记录**仅保存在服务器内存中**，机器人重启后即全部清除；睡眠记录在记录后 **24 小时**自动删除。
 - 运行日志保留期不超过 **30 天**，到期自动删除。
@@ -185,7 +188,12 @@ contacts, payment info.
 **Third parties:** only AI chat talks to DeepSeek, and, with a `voice` key, MiniMax. MiniMax gets
 only the line she's about to say: her own words, nothing from members. With `ai_chat.web_search`
 on, a message that needs live information also sends DeepSeek's Search API a query written from
-it, without nicknames or openids; neither the query nor the pages are stored. Each reply to DeepSeek sends:
+it, without nicknames or openids; neither the query nor the pages are stored. In groups under
+`ai_chat.vision.groups`, a picture a member @s the bot with, or quotes while @-ing it, also goes to
+DeepSeek as the picture itself, never QQ's link. Pictures that don't @ the bot aren't opened. A first
+call sends only the picture, to ask whether real people are in it. If they are, that reply and any
+for the next 2 minutes leave out memories, impressions, the summary, other members' messages and
+everything else listed below that names members, and take no notes. Each reply to DeepSeek sends:
 - the message
 - the group's recent conversation with the bot, with nicknames, and its summary
 - the memories of the members in that conversation, and the bot's impressions of them
@@ -199,7 +207,8 @@ it, without nicknames or openids; neither the query nor the pages are stored. Ea
 
 Before each reply, one call sends the message and the bot's previous reply, to judge how the reply
 should sound and how long it should be. After each reply, one or two more calls send that one
-exchange, to note memories and the impression and to check the memories were meant seriously.
+exchange, to note memories and the impression and to check the memories were meant seriously;
+for a message with a picture these get the member's words only, not the picture or her reply.
 Each night, a member's recent notes and memories are sent once to be consolidated. The
 weekly digest
 (counts and top talkers' nicknames) is sent for its closing comment. When a 征集意见 ends with 3
@@ -224,7 +233,8 @@ manager leaves the server except QQ API calls.
 | AI chat impressions | one per member, replaced when it changes; until `/忘记 印象`, `/忘记 全部`, `/删除数据`, 180 days after they leave, or the bot leaves | `ChatStore.set_impression` |
 | Group chat that didn't @ the bot (`ai_chat.hear_all`) | 7 days, like AI chat turns, after being folded into the summary | `ai_chat.keep_days`, `AIChatModule.housekeeping` |
 | Last message time in a topic group (`ai_chat.topics`) | one per group, replaced by the next; until the bot leaves | `ChatStore.set_heard`, `forget_group` |
-| Her day, and when she spoke up, sent a voice message or searched | 7 days, like AI chat turns | `ChatStore.prune` |
+| Her day, and when she spoke up, sent a voice message, searched or looked at a picture | 7 days, like AI chat turns | `ChatStore.prune` |
+| Pictures and their links | not stored: held in memory for one reply, and `/看图测试` sends them nowhere. The transcript keeps a `[图片]` mark | `modules/ai/vision.py`, `AIChatModule.look` |
 | Birthdays (`data/fun.db`) | until `/生日 删除`, `/删除数据`, 180 days after they leave, or the bot leaves | `FunStore` |
 | Polls and votes | 30 days after closing; open polls close after 7 days | `POLL_KEEP_DAYS`, `POLL_DAYS` in `modules/fun/social/module.py` |
 | 征集意见, their opinions and who joined them | 30 days after ending; one nobody ends closes after 30 days | `OPINION_KEEP_DAYS`, `OPINION_DAYS` |
@@ -251,3 +261,6 @@ manager leaves the server except QQ API calls.
 8. **Topics and voice:** the 「主动开话题」 sentences only apply when `ai_chat.topics` lists groups,
    and the 语音功能 paragraph says it doesn't apply without a MiniMax key, so both read correctly
    either way.
+9. **Pictures:** the 看图 paragraph is worded for groups where it's on, so it reads correctly either
+   way. Before listing a group in `ai_chat.vision.groups`, tell its members: pictures they @ the bot
+   with go to DeepSeek.

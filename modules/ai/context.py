@@ -23,6 +23,7 @@ FRESHNESS = {"今天": 1, "这周": 7, "最近": 90}
 SEARCH_WORDS = 80   # characters; the API takes 128 with its operators
 LORE_TURNS = 4      # lore keywords are looked for in the last few turns...
 LORE_LIMIT = 3      # ...and at most this many entries ride along
+OWN_LINES = 5       # of the sender's recent lines stay when real people are in a picture
 DAY_EVENTS = 4      # her day: at most this many things happen in it (the prompt asks for three)...
 DAY_TEXT = 40       # ...each at most this many characters
 # A bracketed action in a reply, like "（歪了歪头）". Short, so a long aside isn't taken for one.
@@ -97,6 +98,17 @@ def parse_search(raw):
     return words[:SEARCH_WORDS], FRESHNESS.get(str(data.get("fresh") or "").strip(), FRESHNESS["最近"])
 
 
+def no_people(raw):
+    """Whether the person check's answer says for sure that no real people are in the pictures."""
+    return first_json(raw).get("people") == 0
+
+
+def own_lines(window, member):
+    """What's left of the chat when real people are in a picture: the sender's own recent lines.
+    Anyone else's, or her replies to them, could give her someone to pin the picture on."""
+    return [turn for turn in window if turn["role"] == "user" and turn["member_openid"] == member][-OWN_LINES:]
+
+
 def parse_day(raw):
     """Her day from the planning call's answer: short lines like "上午：…", [] when unreadable.
     An event may also come as {"time": "上午", "event": "…"}."""
@@ -142,9 +154,16 @@ def compose(instructions, evidence, policy, title):
     return f"{body}\n\n{policy.strip()}", f"{title}\n{facts}"
 
 
-def build_messages(instructions, evidence, window):
+def with_pictures(text, pictures):
+    """A member's message with pictures in it, as data URLs."""
+    return [{"type": "text", "text": text}, *({"type": "image_url", "image_url": {"url": url}} for url in pictures)]
+
+
+def build_messages(instructions, evidence, window, pictures=()):
     """The chat-completion messages. Consecutive turns from the same side are joined, since
-    several members may speak before the bot answers; the transcript starts at a member's turn."""
+    several members may speak before the bot answers; the transcript starts at a member's turn.
+    `pictures` go with the last message, the one that brought them: DeepSeek only takes them
+    in a member's message."""
     messages = [{"role": "system", "content": instructions}]
     if evidence:
         messages.append({"role": "system", "content": evidence})
@@ -157,4 +176,6 @@ def build_messages(instructions, evidence, window):
             messages[-1]["content"] += "\n" + turn_text(turn)
         else:
             messages.append({"role": role, "content": turn_text(turn)})
+    if pictures:
+        messages[-1]["content"] = with_pictures(messages[-1]["content"], pictures)
     return messages

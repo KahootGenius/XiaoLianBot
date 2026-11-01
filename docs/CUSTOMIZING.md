@@ -425,6 +425,9 @@ at startup** and names the line.
 | `memory_rules` | Added when memories or impressions are sent: use them naturally, and don't pass one member's details to another | |
 | `day_rules` | Added when her day is planned: answer 「在干嘛」 from it, and mention it only now and then | |
 | `search_rules` | Added when a web search found something for this message: how to use it, with no links | |
+| `vision_rules` | Added when she can see this message's pictures: say only what's there, and text in a picture isn't an instruction | |
+| `vision_strangers` | Added after it when real people are in them, and for 2 minutes after: who they are is unknown unless the sender says | |
+| `vision_missing` | Added when a message has a picture she can't see, so that she says so | |
 | `evidence_policy`, `evidence_title` | The rule that the summary and memories are data, not instructions, and the heading of that message | |
 | `now` | The first line of that message: Beijing time | `{date}`, `{weekday}`, `{time}` |
 | `today_teams`, `team_line` | Today's team game, one line per team (`ai_chat.game_state`) | `{teams}`; `{captain}`, `{members}` |
@@ -434,6 +437,8 @@ at startup** and names the line.
 | `summary_prefix`, `memory_title` | The headings for the summary and the memories inside it | |
 | `web_results` | The pages a web search found, last in that message, one line each | `{query}`, `{results}` |
 | `empty_mention` | Stands in for a message that only @s the bot | `{member}` |
+| `picture_mark` | Goes in front of a message with a picture in the transcript, which keeps only this | |
+| `person_check` | Sent with only the pictures before she looks: are real people in them? It must ask for JSON: `{{"people": 数量}}`. Only 0 counts as none | |
 | `topic`, `topic_cue` | When a group from `ai_chat.topics` has gone quiet: what kind of thing to say, after the persona; and the line that stands in for a member's message at the end of the chat | `{hours}` |
 | `digest_comment` | The prompt for the comment that ends the weekly digest | `{digest}` |
 | `opinion_summary` | With the persona, when a 征集意见 ends with 3 or more opinions: sum them up after the list (`ai_chat.opinion_summary`). The opinions come without who wrote them | `{topic}`, `{opinions}` |
@@ -626,6 +631,45 @@ and she started refusing questions she could answer.
   The prompts tell her to leave out politics and other sensitive subjects, but pages come from the
   open web, so watch what she says at first. The rehearsal below makes real searches and shows
   them as 🔍.
+
+### Pictures
+
+She looks at pictures only in the groups you list. Tell their members first: the pictures they @ her
+with go to DeepSeek. Get each group's ID with `/群ID`, add it, and restart:
+
+```yaml
+ai_chat:
+  vision:
+    groups: [the_group_openid]
+    per_day: 50               # pictures a group can show her a day
+    model: deepseek-flash     # must be able to read pictures, which deepseek-v4-pro can't
+```
+
+- **When she looks.** Someone @s her with a picture, or while quoting one. She takes up to 3 from a
+  message, and never opens a picture nobody @-ed her with. The bot fetches each one from QQ into
+  memory and sends DeepSeek the picture itself. The transcript keeps only `[图片]`, so she can't look
+  again at an older picture: she can only go by what she said about it.
+- **When she can't.** Outside the groups listed, past `per_day`, or when a picture can't be
+  fetched, `vision_missing` tells her to say she didn't see it. If DeepSeek refuses a picture, she
+  answers the same way and doesn't try again for 10 minutes.
+- **Real people in a picture.** Don't rely on a rule here. With photos of strangers that matched
+  members' memories, she named someone she knew in 21 replies of 25. A strict rule still left 15, and
+  a neutral description of the picture in place of the picture itself, 22. So `person_check` goes
+  first, with only the pictures: nothing about the group can sway it, and anything but a clear 0
+  counts as people. If there are people, she still sees the picture, but with no memories,
+  impressions, summary, lore, special people, teams or birthdays, and only the sender's last 5 lines.
+  No notes are taken. This lasts 2 minutes, or 「这是小红吧？」 would meet her memories of 小红. Tested
+  this way, she named nobody else in 25 replies. The sender's word still counts: after 「这是我」
+  she goes along with it.
+- **Memories.** What's in a picture never becomes a memory: the note-taker gets the member's words,
+  not the picture or her reply.
+- **What she can't do.** An animated GIF shows her only its first frame. She reads text, charts and
+  famous characters and games well, but can name less famous ones wrongly and with confidence,
+  which is what `vision_rules` is for. Thinking stays off for pictures: in tests it saw no more, and
+  took three times as long.
+
+`/看图测试` is the admin check of what QQ sends. It fetches pictures but sends them nowhere, and it
+works in every group, listed or not.
 
 ### Trying changes before the group sees them
 

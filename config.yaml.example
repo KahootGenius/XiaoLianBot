@@ -71,6 +71,10 @@ secret: "YOUR_APP_SECRET"
 #   web_search: true         # she looks up what she can't know (news, weather, latest versions) with
 #                            # DeepSeek's Search API and deepseek.api_key: about $0.75 per 1000 searches
 #   web_search_per_day: 30   # searches a group can make a day; after that she says she doesn't know
+#   vision:                  # she looks at pictures members @ her with; only in the groups listed
+#     groups: []             # group_openid of each (@机器人 /群ID); elsewhere she says she can't see them
+#     per_day: 50            # pictures a group can show her a day; after that she says she didn't see it
+#     model: deepseek-flash  # must be able to read pictures, which deepseek-v4-pro can't
 #   topics:                  # she says something when a group has gone quiet; only in the groups listed
 #     groups: []             # group_openid of each (@机器人 /群ID); the bot must get every message there
 #     quiet_hours: 3         # how long nobody has spoken

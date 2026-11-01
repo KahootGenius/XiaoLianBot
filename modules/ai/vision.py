@@ -1,13 +1,21 @@
-"""Pictures for AI chat: fetching one from QQ, and seeing what QQ really sends.
+"""Pictures for AI chat: fetching one from QQ, what she has of it, and seeing what QQ really sends.
 
 A picture reaches the bot as a link on QQ's servers, in a message's attachments, or nested in
 msg_elements when someone quotes it (RichGroupMessage.images). A link carries a token and may not
 last, so a picture is fetched when it's needed and held in memory only: nothing here writes to
 disk, and a link is never logged or shown. /看图测试 uses this to check what QQ sends; shape() is
 the same check for the log.
+
+She looks at a picture directly, in the reply call. Before that a separate call that knows nothing
+about the group says whether real people are in it (prompts/chat.yaml person_check). If so, her
+reply gets nothing about the group either. In tests she pinned photos of strangers on members she
+remembered in 21 replies of 25; a rule against it still left 15, and a neutral description of the
+picture in place of the picture itself, 22. She can't name someone she was never told about.
 """
 import asyncio
+import base64
 import re
+from dataclasses import dataclass, field
 from urllib.parse import urljoin, urlsplit
 import aiohttp
 from botpy import logging
@@ -19,11 +27,25 @@ TIMEOUT = 8                     # seconds for one picture
 MAX_BYTES = 10 * 1024 * 1024    # the server has 1 GB of memory, and phones send far less than this
 MAX_PICTURES = 3                # from one message
 MAX_REDIRECTS = 3
+PER_DAY = 50                    # pictures a group can show her a day (ai_chat.vision.per_day)
+RETRY_SECONDS = 600             # after DeepSeek fails on one, she doesn't look for this long
+CAREFUL_SECONDS = 120           # after real people in a picture, her replies stay this careful
 QUOTE = 103                     # message_type of a message that quotes another
 QQ_DOMAINS = ("qq.com", "qq.com.cn", "qpic.cn")
 REDIRECTS = (301, 302, 303, 307, 308)
 # What DeepSeek reads, by how the file starts, since a link's content_type can be wrong. WebP is RIFF.
 FORMATS = ((b"\xff\xd8\xff", "image/jpeg"), (b"\x89PNG\r\n\x1a\n", "image/png"), (b"GIF8", "image/gif"))
+
+
+@dataclass
+class Sight:
+    """What she has of a message's pictures, for her reply."""
+    pictures: list = field(default_factory=list)    # as data URLs, for the request
+    strangers: bool = False     # real people may be in them: her reply gets nothing about the group
+    missed: bool = False        # the message has pictures she can't see, which she should say
+
+
+NOTHING = Sight()
 
 
 class PictureError(Exception):
@@ -60,6 +82,11 @@ def image_format(data):
         if data.startswith(start):
             return name
     return "image/webp" if data[:4] == b"RIFF" and data[8:12] == b"WEBP" else None
+
+
+def data_url(data, kind):
+    """A picture as a request carries it: DeepSeek gets the picture itself, never QQ's link."""
+    return f"data:{kind};base64,{base64.b64encode(data).decode()}"
 
 
 async def _read(resp):
