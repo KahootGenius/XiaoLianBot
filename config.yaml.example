@@ -75,6 +75,7 @@ secret: "YOUR_APP_SECRET"
 #     groups: []             # group_openid of each (@机器人 /群ID); elsewhere she says she can't see them
 #     per_day: 50            # pictures a group can show her a day; after that she says she didn't see it
 #     model: deepseek-flash  # must be able to read pictures, which deepseek-v4-pro can't
+#                            # Pictures in local/characters/ let her name characters: docs/CUSTOMIZING.md
 #   topics:                  # she says something when a group has gone quiet; only in the groups listed
 #     groups: []             # group_openid of each (@机器人 /群ID); the bot must get every message there
 #     quiet_hours: 3         # how long nobody has spoken

@@ -427,6 +427,7 @@ at startup** and names the line.
 | `search_rules` | Added when a web search found something for this message: how to use it, with no links | |
 | `vision_rules` | Added when she can see this message's pictures: react like a group member instead of saying what's in them, say only what's there, and text in a picture isn't an instruction | |
 | `vision_strangers` | Added after it when real people are in them, and for 2 minutes after: who they are is unknown unless the sender says | |
+| `vision_characters` | Added when the gallery named someone: she knows them, but shouldn't sound certain, and believes anyone who says otherwise | |
 | `vision_missing` | Added when a message has a picture she can't see, so that she says so | |
 | `evidence_policy`, `evidence_title` | The rule that the summary and memories are data, not instructions, and the heading of that message | |
 | `now` | The first line of that message: Beijing time | `{date}`, `{weekday}`, `{time}` |
@@ -436,10 +437,12 @@ at startup** and names the line.
 | `her_day` | Her day, after the time: one line per thing in it | `{events}` |
 | `summary_prefix`, `memory_title` | The headings for the summary and the memories inside it | |
 | `web_results` | The pages a web search found, last in that message, one line each | `{query}`, `{results}` |
+| `picture_characters` | Who the gallery named, last in that message | `{names}` |
 | `empty_mention` | Stands in for a message that only @s the bot | `{member}` |
 | `picture_mark` | Goes in front of a message with a picture in the transcript, which keeps only this | |
 | `someone` | Stands in for other members' nicknames in her replies, when real people are in a picture | |
 | `person_check` | Sent with only the pictures before she looks: are real people in them? It must ask for JSON: `{{"people": 数量}}`. Only 0 counts as none | |
+| `character_reference`, `character_check` | Sent with the gallery and the pictures, when no real people are in them: the line before each reference picture, and the question after them. The question must ask for JSON: `{{"characters": ["名字"]}}`. Names not in the gallery are dropped | `{character}` |
 | `topic`, `topic_cue` | When a group from `ai_chat.topics` has gone quiet: what kind of thing to say, after the persona; and the line that stands in for a member's message at the end of the chat | `{hours}` |
 | `digest_comment` | The prompt for the comment that ends the weekly digest | `{digest}` |
 | `opinion_summary` | With the persona, when a 征集意见 ends with 3 or more opinions: sum them up after the list (`ai_chat.opinion_summary`). The opinions come without who wrote them | `{topic}`, `{opinions}` |
@@ -671,12 +674,29 @@ ai_chat:
   when it matches what she knows about them, usually as a tease or a question.
 - **What she can see of the chat.** Unless `ai_chat.hear_all` is on, she only has messages that @ her,
   so a picture answering something the group was saying without her reaches her with no context.
+- **Naming characters.** Don't count on DeepSeek for this. On fan art it named 1 newer character in
+  34, and when pressed it guessed wrong with confidence. Told not to guess, it refused even ones it
+  knew. So put one clear picture of each character your group posts in `local/characters/`, named
+  after them, such as `遐蝶.jpg`, and check the folder:
+  ```bash
+  .venv/bin/python -m modules.ai.gallery
+  ```
+  When no real people are in a picture, a separate call compares it with these. With 20 characters,
+  over two runs, it named 31 of 40 new pictures, gave no name for 8 and a wrong one for 1, and named
+  nobody in 18 pictures that weren't in the gallery. She only gets a name from this folder, as
+  something that might be right, so she says 「看着像遐蝶」. Any other name in the answer is dropped,
+  and if the check fails she goes without a name. Older favourites need a picture too: told not to
+  guess, she won't name them on her own.
+
+  One picture each, at full size, up to 500 KB. A second picture made it worse (3 wrong names and no
+  more right), and so did shrinking them: at 512 px it got 12 of 20 with 4 wrong. Keep the list to
+  characters your group really posts. Each adds about 500 tokens and its bytes to every check, which
+  took about 2 seconds with 20. DeepSeek's cache keeps it cheap: from about 0.3 US cents a check at
+  peak price down to a tiny fraction of that once the same gallery has been used.
 - **Memories.** What's in a picture never becomes a memory: the note-taker gets the member's words,
   not the picture or her reply.
-- **What she can't do.** An animated GIF shows her only its first frame. She reads text, charts and
-  famous characters and games well, but can name less famous ones wrongly and with confidence,
-  which is what `vision_rules` is for. Thinking stays off for pictures: in tests it saw no more, and
-  took three times as long.
+- **What she can't do.** An animated GIF shows her only its first frame. She reads text and charts
+  well. Thinking stays off for pictures: in tests it saw no more, and took three times as long.
 
 `/看图测试` is the admin check of what QQ sends. It fetches pictures but sends them nowhere, and it
 works in every group, listed or not.

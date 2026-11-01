@@ -81,7 +81,7 @@
 
 **联网搜索：** 消息需要最新信息时（例如天气、汇率、新闻、最新版本），本机器人会根据这条消息写一个搜索词，发送至 **DeepSeek** 的搜索服务（api.deepseek.com）。搜索词不包含昵称或成员标识；查到的网页内容只用于这一条回复。运营者可以关闭这项功能。
 
-**看图：** 在运营者开启看图的群里，群友 @本机器人 时发的图片，或回复一张图片并 @本机器人 时被引用的那张图片，会发送至 **DeepSeek**（api.deepseek.com）用于识别和回复。没有 @ 本机器人的图片不会被读取。发送时会先单独询问一次图里有没有真人，这次询问只带图片；图里有真人时，本机器人不会辨认是谁，这条回复和之后 2 分钟内的回复只使用发图的人自己的记忆和发言，不使用其他群友的记忆和发言，也不使用群聊总结。图片的内容不会写入长期记忆。DeepSeek 的数据处理方式适用其自身隐私政策。
+**看图：** 在运营者开启看图的群里，群友 @本机器人 时发的图片，或回复一张图片并 @本机器人 时被引用的那张图片，会发送至 **DeepSeek**（api.deepseek.com）用于识别和回复。没有 @ 本机器人的图片不会被读取。发送时会先单独询问一次图里有没有真人，这次询问只带图片；图里没有真人时，还会把它和运营者准备的角色参考图一起发送，比对图里是不是这些角色；图里有真人时，本机器人不会辨认是谁，这条回复和之后 2 分钟内的回复只使用发图的人自己的记忆和发言，不使用其他群友的记忆和发言，也不使用群聊总结。图片的内容不会写入长期记忆。DeepSeek 的数据处理方式适用其自身隐私政策。
 
 **语音功能：** 若运营者配置了 MiniMax 密钥，本机器人偶尔会用语音回复：它要说的那句话会被发送至 **MiniMax**（api.minimax.io 或 api.minimax.cn）合成语音。发送的只有本机器人自己的话，**不包含**任何成员的消息、昵称或标识。MiniMax 的数据处理方式适用其自身隐私政策。未配置 MiniMax 密钥时，不存在这项传输。
 
@@ -191,7 +191,9 @@ on, a message that needs live information also sends DeepSeek's Search API a que
 it, without nicknames or openids; neither the query nor the pages are stored. In groups under
 `ai_chat.vision.groups`, a picture a member @s the bot with, or quotes while @-ing it, also goes to
 DeepSeek as the picture itself, never QQ's link. Pictures that don't @ the bot aren't opened. A first
-call sends only the picture, to ask whether real people are in it. If they are, that reply and any
+call sends only the picture, to ask whether real people are in it. If none are, a second sends it
+with the operator's reference pictures from `local/characters/`, to see if it shows one of those
+characters. If they are, that reply and any
 for the next 2 minutes send only what's the sender's own: their memories, impression and recent
 messages, and her replies to them. Other members' memories and messages, the summary and everything
 else listed below that names members stay out, and no notes are taken. Each reply to DeepSeek sends:

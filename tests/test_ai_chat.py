@@ -32,7 +32,7 @@ class FakeDeepSeek:
     def __init__(self):
         self.calls = []
         self.answers = {"chat": [], "register": [], "observer": [], "check": [], "consolidation": [], "summary": [],
-                        "day": [], "topic": [], "people": []}
+                        "day": [], "topic": [], "people": [], "characters": []}
         self.hooks = {}
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
 
@@ -45,7 +45,7 @@ class FakeDeepSeek:
         if len(messages) == 1:
             content = messages[0]["content"]
             if isinstance(content, list):
-                return "people"
+                return "people" if "真实的人" in content[0]["text"] else "characters"
             if "需要什么风格和篇幅" in content:
                 return "register"
             if "睡一觉" in content:
@@ -63,7 +63,7 @@ class FakeDeepSeek:
                                              "observer": NOTHING, "check": KEEP_ALL, "consolidation": CONSOLIDATED,
                                              "summary": "总结：小明在准备考研", "day": DAY_PLAN,
                                              "topic": f"话题{len(self.requests('topic'))}",
-                                             "people": '{"people": 0}'}[kind]
+                                             "people": '{"people": 0}', "characters": '{"characters": []}'}[kind]
         if isinstance(answer, Exception):
             raise answer
         return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=answer))])
@@ -88,7 +88,7 @@ class FakeSpeaker:
 
 class AIChatTestCase(unittest.IsolatedAsyncioTestCase):
     def make(self, nickname_of=None, deepseek=None, stickers_dir=None, speaker=None, voice_config=None,
-             searcher=None, fetch_picture=None, **chat_config):
+             searcher=None, fetch_picture=None, gallery_dir=None, **chat_config):
         self.now = START
         self.gw = FakeGateway()
         self.ai_client = FakeDeepSeek()
@@ -98,7 +98,8 @@ class AIChatTestCase(unittest.IsolatedAsyncioTestCase):
         self.ai = AIChatModule(self.gw, config, store=self.store, client=self.ai_client,
                                is_admin=lambda group, member, role=None: member == "ADMIN",
                                clock=lambda: self.now, nickname_of=nickname_of, stickers_dir=stickers_dir,
-                               library_path=None, speaker=speaker, searcher=searcher, fetch_picture=fetch_picture)
+                               library_path=None, speaker=speaker, searcher=searcher, fetch_picture=fetch_picture,
+                               gallery_dir=gallery_dir)
         return self.ai
 
     async def say(self, member, text, group=G, name=None):
@@ -779,6 +780,80 @@ class SeeingPicturesTest(AIChatTestCase):
         self.assertEqual(request["messages"][-1]["content"], "小明：今晚吃啥")
         self.assertNotIn("【看图】", request["messages"][0]["content"])
         self.assertEqual(self.store.recent_turns(G)[0]["content"], "今晚吃啥")
+
+    def gallery(self, *names):
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder)
+        for name in names:
+            with open(os.path.join(folder, f"{name}.png"), "wb") as f:
+                f.write(b"\x89PNG\r\n\x1a\n" + name.encode())
+        return folder
+
+    async def test_the_character_check_gets_the_references_and_the_picture_and_nothing_else(self):
+        self.looking(gallery_dir=self.gallery("遐蝶", "芙宁娜"))
+        self.knows_the_group()
+        await self.show()
+        [request] = self.ai_client.requests("characters")
+        self.assertEqual(len(request["messages"]), 1)
+        self.assertEqual(request["temperature"], 0)
+        parts = request["messages"][0]["content"]
+        self.assertEqual([part["text"] for part in parts if part["type"] == "text"][:2], ["这是「芙宁娜」：", "这是「遐蝶」："])
+        self.assertEqual([part["type"] for part in parts], ["text", "image_url"] * 3)
+        self.assertEqual(parts[-1], {"type": "image_url", "image_url": {"url": self.SEEN}})
+        for word in ("小明", "小红", "阿强", "看看这张图"):
+            self.assertNotIn(word, self.everything_in(request))
+
+    async def test_a_match_reaches_her_as_a_maybe(self):
+        self.looking(gallery_dir=self.gallery("遐蝶", "芙宁娜"))
+        self.ai_client.answers["characters"] = ['{"characters": ["遐蝶"]}']
+        await self.show("这是谁")
+        sent = self.everything_in(self.ai_client.requests("chat")[-1])
+        self.assertIn("这条消息的图里可能是：遐蝶", sent)
+        self.assertIn("别说得百分之百确定", sent)
+        self.assertEqual(self.ai_client.requests("chat")[-1]["messages"][-1]["content"][1]["image_url"]["url"], self.SEEN)
+
+    async def test_only_gallery_names_get_through(self):
+        for answer in ('{"characters": ["爱莉希雅"]}', '{"characters": [["遐蝶"], {"a": 1}, 3, null]}', '{"characters": "遐蝶"}',
+                       "我觉得是遐蝶", '{"characters": []}'):
+            self.looking(gallery_dir=self.gallery("遐蝶"))
+            self.ai_client.answers["characters"] = [answer]
+            await self.show()
+            self.assertNotIn("这条消息的图里可能是", self.everything_in(self.ai_client.requests("chat")[-1]), answer)
+
+    async def test_a_name_said_twice_counts_once(self):
+        self.looking(gallery_dir=self.gallery("遐蝶"))
+        self.ai_client.answers["characters"] = ['{"characters": ["遐蝶", "遐蝶"]}']
+        await self.show()
+        self.assertNotIn("遐蝶、遐蝶", self.everything_in(self.ai_client.requests("chat")[-1]))
+
+    async def test_real_people_are_never_compared_with_the_gallery(self):
+        self.looking(gallery_dir=self.gallery("遐蝶"))
+        self.ai_client.answers["people"] = ['{"people": 1}']
+        await self.show()
+        self.assertEqual(self.ai_client.requests("characters"), [])
+
+    async def test_without_a_gallery_there_is_no_check(self):
+        self.looking()
+        await self.show()
+        self.assertEqual(self.ai_client.requests("characters"), [])
+        self.assertNotIn("可能是", self.everything_in(self.ai_client.requests("chat")[-1]))
+
+    async def test_a_failed_check_only_costs_the_name(self):
+        self.looking(gallery_dir=self.gallery("遐蝶"))
+        self.ai_client.answers["characters"] = [RuntimeError("500")]
+        self.assertEqual(await self.show(), "回复1")
+        self.assertNotIn("这条消息的图里可能是", self.everything_in(self.ai_client.requests("chat")[-1]))
+
+    async def test_a_group_not_listed_loads_no_gallery(self):
+        self.make(gallery_dir=self.gallery("遐蝶"))
+        self.assertEqual(self.ai.references, [])
+
+    async def test_a_character_doesnt_reach_the_note_taker(self):
+        self.looking(gallery_dir=self.gallery("遐蝶"), memory=True)
+        self.ai_client.answers["characters"] = ['{"characters": ["遐蝶"]}']
+        self.ai_client.answers["chat"] = ["这是遐蝶吧"]
+        await self.show("我老婆")
+        self.assertNotIn("遐蝶", self.ai_client.requests("observer")[0]["messages"][0]["content"])
 
     def test_with_sender_keeps_their_lines_and_her_replies_to_them(self):
         def said(member, name, content):

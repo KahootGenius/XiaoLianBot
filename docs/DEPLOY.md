@@ -333,6 +333,28 @@ sudo systemctl restart xiaolian
 If a sticker doesn't arrive, or arrives as a message of its own, `journalctl -u xiaolian -n 50` says
 why: look for `表情包` or `[Stickers]`.
 
+## Character pictures
+
+The reference pictures for AI chat live in `local/characters/`
+([CUSTOMIZING](CUSTOMIZING.md#pictures)), so step 7 brings them along. To send a new or changed
+folder later, run this in the bot's folder on your computer, with the same user as in step 1:
+
+```bash
+scp -r local/characters root@SERVER_IP:
+```
+
+Then, on the server, swap it in for the old folder, check it and restart:
+
+```bash
+sudo mkdir -p /home/xiaolian/XiaoLianBot/local && sudo rm -rf /home/xiaolian/XiaoLianBot/local/characters && sudo mv ~/characters /home/xiaolian/XiaoLianBot/local/ && sudo chown -R xiaolian:xiaolian /home/xiaolian/XiaoLianBot/local
+```
+```bash
+sudo -u xiaolian -H bash -c 'cd /home/xiaolian/XiaoLianBot && .venv/bin/python -m modules.ai.gallery'
+```
+```bash
+sudo systemctl restart xiaolian
+```
+
 ## Backups
 
 Everything except `config.yaml`, `data/` and `local/` is on GitHub. Back up `data/` now and then. For a clean

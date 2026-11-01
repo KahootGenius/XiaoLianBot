@@ -41,7 +41,7 @@ from botpy import logging
 from openai import OpenAI
 from core.config import content_path, load_config, root_path
 from core.style import STYLES, current, join, placeholders, render, t
-from modules.ai import context, memory, search, stickers, vision, voice
+from modules.ai import context, gallery, memory, search, stickers, vision, voice
 from modules.ai.store import ChatStore
 
 
@@ -85,6 +85,7 @@ PROMPT_FIELDS = {
     "search_rules": set(),
     "vision_rules": set(),
     "vision_strangers": set(),
+    "vision_characters": set(),
     "vision_missing": set(),
     "evidence_policy": set(),
     "evidence_title": set(),
@@ -100,10 +101,13 @@ PROMPT_FIELDS = {
     "memory_title": set(),
     "impression_title": set(),
     "web_results": {"query", "results"},
+    "picture_characters": {"names"},
     "empty_mention": {"member"},
     "picture_mark": set(),
     "someone": set(),
     "person_check": set(),
+    "character_reference": {"character"},
+    "character_check": set(),
     "topic": {"hours"},
     "topic_cue": {"hours"},
     "summary": set(),
@@ -174,7 +178,8 @@ def read_special_people(value):
 class AIChatModule:
     def __init__(self, gateway, config=None, store=None, client=None, is_admin=None, clock=None,
                  prompts_path=CHAT_PROMPTS_FILE, nickname_of=None, stickers_dir=None,
-                 library_path=stickers.LIBRARY_FILE, speaker=None, searcher=None, fetch_picture=None):
+                 library_path=stickers.LIBRARY_FILE, speaker=None, searcher=None, fetch_picture=None,
+                 gallery_dir=None):
         self.gw = gateway
         self.config = load_config() if config is None else config
         deepseek = self.config.get("deepseek") or {}
@@ -266,6 +271,10 @@ class AIChatModule:
         self.vision_per_day = int(looking.get("per_day", vision.PER_DAY))
         self.vision_model = str(looking.get("model") or DEFAULT_MODEL)
         self.vision_off_until = 0
+        # Reference pictures of characters (local/characters/), the only source of their names.
+        self.references, problems = gallery.load(gallery_dir) if self.vision_groups else ([], [])
+        for problem in problems:
+            _log.warning(f"[AIChat] 角色参考图：{problem}")
         self.careful_until = {}     # group -> her replies stay careful until this, after real people in a picture
         # Today's team game and birthdays/poll, set by main.py: group -> what teams.today_for_ai and
         # social.today_for_ai return. Without them the bot only knows the time.
@@ -513,6 +522,7 @@ class AIChatModule:
                         found and render(self.prompts["search_rules"]),
                         sight.pictures and render(self.prompts["vision_rules"]),
                         alone and render(self.prompts["vision_strangers"]),
+                        sight.characters and render(self.prompts["vision_characters"]),
                         sight.missed and render(self.prompts["vision_missing"])]
         evidence = [self._today(group, window, alone)]
         summary = None if alone else self.store.summary(group)
@@ -535,6 +545,8 @@ class AIChatModule:
                 evidence += [facts, views]
         if found:
             evidence.append(render(self.prompts["web_results"], query=found[0], results=found[1]))
+        if sight.characters:
+            evidence.append(render(self.prompts["picture_characters"], names=join(sight.characters)))
         return context.compose(instructions, evidence, render(self.prompts["evidence_policy"]),
                                render(self.prompts["evidence_title"]))
 
@@ -594,8 +606,10 @@ class AIChatModule:
         for _ in pictures:
             self.store.add_post(group, "picture", self._now())
         strangers = not await self.no_people_in(pictures)
-        _log.info(f"[Vision] 看了 {len(pictures)} 张图，{'有真人' if strangers else '没有真人'}")
-        return vision.Sight(pictures, strangers=strangers)
+        characters = [] if strangers else await self.characters_in(pictures)
+        _log.info(f"[Vision] 看了 {len(pictures)} 张图，{'有真人' if strangers else '没有真人'}"
+                  f"{f'，对上了{join(characters)}' if characters else ''}")
+        return vision.Sight(pictures, characters=characters, strangers=strangers)
 
     async def no_people_in(self, pictures):
         """True only if a call that gets nothing but the pictures and a fixed question, so nothing
@@ -608,6 +622,22 @@ class AIChatModule:
             _log.warning(f"[Vision] 没判断出图里有没有真人: {str(e)[:200]}")
             return False
         return context.no_people(raw)
+
+    async def characters_in(self, pictures):
+        """Which gallery characters are in these pictures, from a call that gets only the reference
+        pictures and these. If it fails she goes without a name."""
+        if not self.references:
+            return []
+        references = [(render(self.prompts["character_reference"], character=name), url)
+                      for name, url in self.references]
+        message = context.compare_pictures(references, render(self.prompts["character_check"]), pictures)
+        try:
+            raw = await self._complete(self.client, self.vision_model, [{"role": "user", "content": message}],
+                                       temperature=0)
+        except Exception as e:
+            _log.warning(f"[Vision] 没比对出图里的角色: {str(e)[:200]}")
+            return []
+        return context.parse_characters(raw, {name for name, _ in self.references})
 
     async def _sight(self, group, images):
         """What she has of this message's pictures. Just after real people were in one nothing
@@ -1196,7 +1226,8 @@ class AIChatModule:
             # The start of each ID, to check against what /我的ID says.
             _log.info(f"[AIChat] 特别的群友 {len(self.special)} 位，ID 开头：{'、'.join(o[:8] for o in self.special)}")
         if self.vision_groups:
-            _log.info(f"[AIChat] {len(self.vision_groups)} 个群里她看得到 @ 她的图，模型 {self.vision_model}")
+            _log.info(f"[AIChat] {len(self.vision_groups)} 个群里她看得到 @ 她的图，模型 {self.vision_model}，"
+                      f"{len(self.references)} 个角色有参考图")
         if self.topic_groups:
             _log.info(f"[AIChat] {len(self.topic_groups)} 个群安静 {self.quiet_hours:g} 小时后她会开话题："
                       f"{self.topic_hours[0]}–{self.topic_hours[1]} 点之间，每天最多 {self.topics_per_day} 次")

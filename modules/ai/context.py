@@ -103,6 +103,14 @@ def no_people(raw):
     return first_json(raw).get("people") == 0
 
 
+def parse_characters(raw, known):
+    """The gallery characters the character check's answer names, each once. Any other name is
+    dropped, so she can't be handed a name that isn't in the gallery."""
+    found = first_json(raw).get("characters")
+    names = [name for name in found if isinstance(name, str) and name in known] if isinstance(found, list) else []
+    return list(dict.fromkeys(names))
+
+
 def with_sender(window, member, someone):
     """The chat when real people are in a picture: the sender's lines and her replies to them, so she
     can follow what they're talking about. Anyone else's stay out, even without a name: 「刚才说去
@@ -169,6 +177,16 @@ def compose(instructions, evidence, policy, title):
 def with_pictures(text, pictures):
     """A member's message with pictures in it, as data URLs."""
     return [{"type": "text", "text": text}, *({"type": "image_url", "image_url": {"url": url}} for url in pictures)]
+
+
+def compare_pictures(references, question, pictures):
+    """The character check's message: `references` as (line naming the character, data URL), each
+    picture after its line, then the question and the pictures to check. The references come first
+    and never change, so DeepSeek's cache can reuse them."""
+    parts = []
+    for line, url in references:
+        parts += with_pictures(line, [url])
+    return parts + with_pictures(question, pictures)
 
 
 def build_messages(instructions, evidence, window, pictures=()):

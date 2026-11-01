@@ -41,6 +41,7 @@ FORMATS = ((b"\xff\xd8\xff", "image/jpeg"), (b"\x89PNG\r\n\x1a\n", "image/png"),
 class Sight:
     """What she has of a message's pictures, for her reply."""
     pictures: list = field(default_factory=list)    # as data URLs, for the request
+    characters: list = field(default_factory=list)  # who the gallery says is in them, if anyone
     strangers: bool = False     # real people may be in them: her reply knows only the sender
     missed: bool = False        # the message has pictures she can't see, which she should say
 
