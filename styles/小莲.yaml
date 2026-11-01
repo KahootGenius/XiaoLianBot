@@ -249,6 +249,11 @@ manager:
     title: "🎖️ {member} 的成就（{earned}/{total}）"
     # {holders}：群里现在有几个人有这个成就
     row: "{icon} {badge} —— {desc}（{date} · 全群 {holders} 人）"
+    # 平时的 /成就 很短：title、earned、latest、remaining、next。{row} 是最新那个成就的 row
+    earned: "已解锁：{names}"
+    latest: "最新：{row}"
+    remaining: "还有 {count} 个没解锁（隐藏 {hidden} 个），/成就 全部 看完整列表"
+    # /成就 全部 才逐个列出：title、每个成就的 row、locked、hidden、next
     locked: "还没解锁：{names}"
     # 隐藏成就（achievements.yaml 里写了 hidden: true）解锁前不显示名字
     hidden: "还有 {count} 个隐藏成就，解锁了才知道是什么"

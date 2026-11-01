@@ -245,9 +245,10 @@ Three ready-made examples are commented out at the bottom of the file. Things to
   are safe to change.
 - **Announcements are capped at `manager.achievements.max_per_hour` per group.** Badges over the
   cap are still awarded, just silently.
-- **`/成就` lists badges in the file's order.** Earned ones show how many members still in the group
-  have them. Hidden ones are only counted until earned. The list ends with the counter or streak
-  badge the member is closest to.
+- **`/成就` is short; `/成就 全部` goes through everything.** The short reply has the names of
+  earned badges, the latest one in full, how many are left, and the counter or streak badge the
+  member is closest to. `/成就 全部` lists badges in the file's order, with how many members still
+  in the group have each. Hidden ones are only counted until earned.
 - **Lunar festivals need their dates added.** The shipped 新春 and 中秋 badges list 2027–2030; the
   Hong Kong Observatory's conversion tables give later years.
 - **Counters start from zero when they're added.** `weekend`, `long` and `days`, and later

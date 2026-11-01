@@ -104,8 +104,8 @@ class CounterTest(unittest.TestCase):
 
 
 class BadgesInTheGroupTest(ManagerTestCase):
-    async def badges(self, member):
-        await self.post(member, "/成就", command=True)
+    async def badges(self, member, command="/成就"):
+        await self.post(member, command, command=True)
         return self.gw.texts(GROUP)[-1]
 
     async def test_the_first_valid_message_after_five_opens_the_day(self):
@@ -121,16 +121,41 @@ class BadgesInTheGroupTest(ManagerTestCase):
         self.assertNotIn("opener", self.store.counters(GROUP, "A"))
         self.assertTrue(any("小B" in text and "开门红" in text for text in self.gw.texts(GROUP)))
 
-    async def test_the_list_shows_who_else_has_each_badge_hidden_ones_and_the_next_goal(self):
+    async def test_the_reply_is_short_with_everything_a_tap_away(self):
         self.make(FakeGateway())
         await self.post("A", "大家好，我是新来的，请多关照")
         await self.post("B", "欢迎欢迎，有什么不懂的可以问我们")
-        text = await self.badges("A")
-        self.assertIn("🎖️ 小A 的成就（1/30）", text)
-        self.assertIn("🌱 初次见面 —— 第一次有效发言（11月1日 · 全群 2 人）", text)
+        self.assertEqual((await self.badges("A")).split("\n"), [
+            "🎖️ 小A 的成就（1/30）",
+            "已解锁：🌱初次见面",
+            "最新：🌱 初次见面 —— 第一次有效发言（11月1日 · 全群 2 人）",
+            "还有 29 个没解锁（隐藏 4 个），/成就 全部 看完整列表",
+            "下一个目标：🔥七日之约 1/7"])
+        self.assertEqual(self.gw.buttons[-1][1][0][0], ("全部成就", "/成就 全部"))
+
+        text = await self.badges("A", "/成就 全部")
+        self.assertIn("🌱 初次见面 —— 第一次有效发言（11月1日 · 全群 2 人）\n还没解锁：话匣子、", text)
         self.assertIn("还有 4 个隐藏成就", text)
         self.assertNotIn("元旦快乐", text)
         self.assertIn("下一个目标：🔥七日之约 1/7", text)
+        self.assertNotIn("全部成就", [label for label, *_ in self.gw.buttons[-1][1][0]])
+
+        text = await self.badges("C")                                     # no badges yet
+        self.assertEqual(text.split("\n")[1], "还有 30 个没解锁（隐藏 4 个），/成就 全部 看完整列表")
+
+    async def test_it_stays_in_one_message_with_every_badge(self):
+        self.make(FakeGateway())
+        await self.post("A", "大家好，我是新来的，请多关照")
+        for badge in achievements.BADGES:
+            self.store.award(GROUP, "A", badge.code, int(self.now.timestamp()))
+        before = len(self.gw.sent)
+        text = await self.badges("A")
+        self.assertEqual(len(self.gw.sent), before + 1)
+        self.assertIn("🎖️ 小A 的成就（30/30）", text)
+        self.assertIn("全部解锁啦", text)
+        self.assertNotIn("个没解锁", text)
+        await self.badges("A", "/成就 全部")
+        self.assertGreater(len(self.gw.sent), before + 2)                 # the full list runs to two
 
     async def test_holiday_badges_come_on_their_day(self):
         self.make(FakeGateway())
@@ -142,8 +167,8 @@ class BadgesInTheGroupTest(ManagerTestCase):
         self.assertFalse(any("小A" in text and "元旦快乐" in text for text in texts))
         self.assertTrue(any("小B" in text and "🎆元旦快乐" in text for text in texts))
         text = await self.badges("B")
-        self.assertIn("🎆 元旦快乐 —— 元旦当天来群里聊天（1月1日 · 全群 1 人）", text)
-        self.assertIn("还有 3 个隐藏成就", text)
+        self.assertIn("最新：🎆 元旦快乐 —— 元旦当天来群里聊天（1月1日 · 全群 1 人）", text)
+        self.assertIn("隐藏 3 个", text)
 
     async def test_other_features_count_toward_badges(self):
         self.make(FakeGateway())

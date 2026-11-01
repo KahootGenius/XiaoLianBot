@@ -610,29 +610,44 @@ class ManagerModule:
         await self._reply(message, "\n".join(lines), buttons=[[other, ("我的状态", "/我的状态")]])
 
     async def cmd_achievements(self, message, group, args):
+        """/成就 stays short, as it's posted in the group; /成就 全部 goes through every badge."""
         member = message.member_openid
         earned = {r["code"]: r["earned_at"] for r in self.store.achievements(group, member)}
         holders = self.store.badge_holders(group)
+        mine = [b for b in achievements.BADGES if b.code in earned]
+        locked = [b for b in achievements.BADGES if b.code not in earned]
+        secret = sum(b.hidden for b in locked)
+        everything = "全部" in args
+
+        def row(badge):
+            return t("manager.badges.row", icon=badge.icon, badge=badge.name, desc=badge.desc,
+                     date=self._date(earned[badge.code]), holders=max(holders.get(badge.code, 0), 1))
+
         lines = [t("manager.badges.title", member=self._name(message.nickname), earned=len(earned),
                    total=len(achievements.BADGES))]
-        for badge in achievements.BADGES:
-            if badge.code in earned:
-                lines.append(t("manager.badges.row", icon=badge.icon, badge=badge.name, desc=badge.desc,
-                               date=self._date(earned[badge.code]), holders=max(holders.get(badge.code, 0), 1)))
-        locked = [b.name for b in achievements.BADGES if b.code not in earned and not b.hidden]
-        secret = sum(b.hidden and b.code not in earned for b in achievements.BADGES)
-        if locked:
-            lines.append(t("manager.badges.locked", names=join(locked)))
-        if secret:
-            lines.append(t("manager.badges.hidden", count=secret))
-        if not locked and not secret:
+        if everything:
+            lines += [row(b) for b in mine]
+            names = [b.name for b in locked if not b.hidden]
+            if names:
+                lines.append(t("manager.badges.locked", names=join(names)))
+            if secret:
+                lines.append(t("manager.badges.hidden", count=secret))
+        else:
+            if mine:
+                lines.append(t("manager.badges.earned", names=join([f"{b.icon}{b.name}" for b in mine])))
+                lines.append(t("manager.badges.latest", row=row(max(reversed(mine), key=lambda b: earned[b.code]))))
+            if locked:
+                lines.append(t("manager.badges.remaining", count=len(locked), hidden=secret))
+        if not locked:
             lines.append(t("manager.badges.all_done"))
         streak = self._current_streak(self.store.member(group, member), self.clock())
         goal = achievements.next_goal(earned, self.store.counters(group, member), streak)
         if goal:
             badge, (have, need) = goal
             lines.append(t("manager.badges.next", badge=f"{badge.icon}{badge.name}", have=have, need=need))
-        await self._reply(message, "\n".join(lines), buttons=[[("我的状态", "/我的状态"), ("排行", "/排行")]])
+        buttons = [("我的状态", "/我的状态"), ("排行", "/排行")]
+        await self._reply(message, "\n".join(lines),
+                          buttons=[buttons if everything else [("全部成就", "/成就 全部"), *buttons]])
 
     async def cmd_leave(self, message, group, args):
         requester = message.member_openid

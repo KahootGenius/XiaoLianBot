@@ -78,9 +78,10 @@ tunnels included.
   days left.
 - `/排行`: the week's (or `/排行 月` the month's) leaderboard.
 - `/成就`: 30 badges, such as 七日之约, 开门红 (first to speak after 5 a.m.), 积极投票 and 好久不见.
-  Four stay hidden until someone earns them: a birthday and three holidays. Each badge shows how
-  many members have it, and the list ends with the one you're closest to. They're announced in the
-  group, at most 3 per hour.
+  Four stay hidden until someone earns them: a birthday and three holidays. The reply is short:
+  what you've earned, your latest badge, how many are left, and the one you're closest to.
+  `/成就 全部` lists every badge, with how many members have each. They're announced in the group,
+  at most 3 per hour.
 - **Weekly digest (群聊小报):** posted every Sunday at 21:00, with message counts, the busiest hour,
   top talkers, newcomers and new badges.
 
