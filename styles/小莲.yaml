@@ -450,6 +450,8 @@ manager:
 
 # ---------------------------------------------------------------- 娱乐
 games:
+  # 游戏指令发得太快时说一次（config.yaml 的 games.per_minute），{seconds} 是还要等几秒
+  too_fast: 玩得太快啦，歇 {seconds} 秒再来～
   dice: "你投出了: {number} 点 "
   dice_again: 我也要摇
   blackjack:

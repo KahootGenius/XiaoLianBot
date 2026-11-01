@@ -11,6 +11,7 @@ from modules.ai.deepseek import DeepSeekModule
 from modules.fun.blackjack import BlackjackModule
 from modules.fun.crazy_talk import CrazyTalkModule
 from modules.fun.dice import DiceModule
+from modules.fun.speed_limit import SpeedLimit
 from modules.fun import social
 from modules.fun.social import SocialModule
 from modules.fun.sleep import SleepModule
@@ -48,6 +49,7 @@ class MyClient(botpy.Client):
         self.epic_module = EpicGamesModule(self.api)
         self.minecraft_module = MinecraftModule(self.api, gateway=self.gateway)
         self.steam_module = SteamModule(self.api)
+        self.speed_limit = SpeedLimit(self.gateway, config)
         self.blackjack_module = BlackjackModule(self.api, gateway=self.gateway)
         self.sleep_module = SleepModule(self.api)
         self.dice_module = DiceModule(self.api, gateway=self.gateway)
@@ -174,6 +176,8 @@ class MyClient(botpy.Client):
         if await self.minecraft_module.handle_minecraft(message):
             return
         if await self.steam_module.handle_steam(message):
+            return
+        if await self.speed_limit.handle_speed_limit(message):      # before any game answers it
             return
         if await self.blackjack_module.handle_blackjack(message):
             return

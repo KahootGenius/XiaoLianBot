@@ -184,6 +184,9 @@ For the group's games, where a few captains pick teams:
   posted; once a day each, while admins can flip as often as they like. @ a few people to draw
   among them instead. `social.flip.special` in `config.yaml` can give a member their own chances
   of drawing particular people.
+- **Speed limit for games:** one member can send 10 game commands a minute (`/21点`, `/摇骰子`,
+  `/发癫`…), so nobody floods the group by tapping 再来一局. A normal round of 21点 never reaches it.
+  `games.per_minute` in `config.yaml` changes the number.
 - **People who leave:** once the bot knows someone has gone, they drop out of `/翻牌子`, `/排行`,
   `/本月生日`, the digest, reminders, removal lists and today's teams. Only the admins' member table
   still shows them, and they come back if they speak again. QQ doesn't tell bots when someone
@@ -211,7 +214,7 @@ modules/
                         memory.py reads the memory notes and checks, store.py keeps data/chat.db,
                         memory_admin.py lists and edits memories, stickers.py reads the sticker
                         folder, rehearse.py tries a persona; /deepseek
-  fun/                  blackjack, dice, 发癫, sleep
+  fun/                  blackjack, dice, 发癫, sleep, the games speed limit
   info/                 Epic, Steam, Minecraft
   fun/teams/            the team game: rules.py reads prompts/teams.yaml, roster.py keeps
                         today's teams (data/teams.json), module.py runs the commands

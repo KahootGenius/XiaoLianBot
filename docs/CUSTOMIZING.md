@@ -160,7 +160,7 @@ The sections of `小莲.yaml`:
 | `common.buttons_hint` | The little message that carries the buttons when they can't go in the reply itself: with `buttons_inline: false`, or for an hour after QQ refused that |
 | Keys ending in `button`, `again` or `refresh`; `manager.batch.button_…` and `ask_…` | Button labels, such as `games.blackjack.again` (再来一局); the removal list's buttons and the questions QQ asks before 「确认移出」 and 「已移出」 |
 | `games.teams` | The team game: `/队伍`, the 【组队游戏】 part of `/帮助`, and every refusal ("不在你的队伍里"…) |
-| `games`, `info`, `ai` | Dice, blackjack, 发癫, sleep; Epic, Steam, Minecraft; AI chat errors |
+| `games`, `info`, `ai` | Dice, blackjack, 发癫, sleep, the reply when games go too fast (`games.too_fast`); Epic, Steam, Minecraft; AI chat errors |
 
 ## What stays in the code
 

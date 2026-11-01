@@ -91,6 +91,12 @@ secret: "YOUR_APP_SECRET"
 #   speed: 1.0
 #   per_day: 5                    # voice messages per group per day
 
+# --- Optional: a speed limit for games (/21点, /抽卡, /停止, /摇骰子, /发癫) ---
+# How many game commands one member can send in a minute; a round of 21点 takes 3 to 5.
+# Past it they're told once how long to wait, then get no replies until then. 0 turns it off.
+# games:
+#   per_minute: 10
+
 # --- Optional: social features ---
 # A member with their own /翻牌子 chances. Key: the flipper's member_openid (@机器人 /我的ID);
 # under it, the members they may draw and each one's chance in percent (60 or "60%").
