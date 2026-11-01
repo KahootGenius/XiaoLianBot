@@ -473,5 +473,107 @@ class MemberLeftTest(ManagerTestCase):
         await self.post("B", "我周末打算去爬山，有人一起吗")
         self.store.set_status(GROUP, ["B"], "removed", int(self.now.timestamp()))
         self.assertEqual(self.pool(), {"A"})
-        self.assertEqual({r["member_openid"] for r in self.store.valid_counts(GROUP, 0)}, {"A", "B"})    # /排行 keeps them
+        self.assertEqual({r["member_openid"] for r in self.store.valid_counts(GROUP, 0, everyone=True)}, {"A", "B"})
         self.assertIsNone(self.mgr.active_members("ELSEWHERE", 0))
+
+    async def test_every_public_list_lets_go_of_them(self):
+        self.make(FakeGateway())
+        gone = []
+        self.mgr.gone_hooks.append(lambda group, member: gone.append(member))
+        for day in range(7):
+            self.at(day, 12)
+            await self.post("A", f"第{day}天大家中午吃了什么呢")
+            await self.post("B", f"第{day}天我吃了牛肉面，味道还不错")
+            await self.post("B", f"第{day}天下午打算去图书馆看看书")
+        await self.post("ADMIN", "/请假 @小B 10 出差", command=True, mentioned_members=[("B", "小B")])
+        lists = ("/排行", "/排行 月", "/请假名单")
+        for command in lists:
+            await self.post("ADMIN", command, command=True)
+            self.assertIn("小B", self.gw.texts(GROUP)[-1], command)
+        self.assertIn("小B", self.mgr.build_digest(GROUP))
+
+        await self.post("ADMIN", "/已退群 小B", command=True)
+        self.assertEqual(gone, ["B"])                                   # today's teams let go of them too
+        for command in lists:
+            await self.post("ADMIN", command, command=True)
+            self.assertNotIn("小B", self.gw.texts(GROUP)[-1], command)
+        self.assertNotIn("小B", self.mgr.build_digest(GROUP))           # top talkers and new badges
+        rows = {r["nickname"]: r for r in self.mgr.member_table(GROUP)}
+        self.assertEqual((rows["小B"]["status_key"], rows["小B"]["valid_7d"] > 0), ("gone", True))   # admins still see it
+
+        self.now += timedelta(minutes=5)
+        await self.post("B", "我回来了，刚才退错群了，不好意思")
+        await self.post("ADMIN", "/排行 月", command=True)
+        self.assertIn("小B", self.gw.texts(GROUP)[-1])                  # back, with what they'd posted
+
+    async def test_they_come_off_open_removal_lists(self):
+        self.make(FakeGateway(), mode="confirm")
+        await self.post("A", "大家这周末打算做什么呢")
+        await self.post("B", "我周末打算去爬山，有人一起吗")
+        ts = int(self.now.timestamp())
+        shared, alone = self.store.create_batch(GROUP, ["A", "B"], "pending", ts), self.store.create_batch(GROUP, ["B"], "manual", ts)
+        await self.post("ADMIN", "/已退群 小B", command=True)
+        self.assertEqual(self.store.batch(shared)["members"], '["A"]')
+        self.assertEqual(self.store.batch(shared)["status"], "pending")
+        self.assertEqual(self.store.batch(alone)["status"], "cancelled")
+
+    async def test_180_days_after_leaving_the_rest_of_their_record_goes_too(self):
+        self.make(FakeGateway())
+        expired = []
+        self.mgr.expired_hooks += [lambda group, member: 1 / 0,         # one module failing doesn't stop the rest
+                                   lambda group, member: expired.append((group, member))]
+        await self.post("A", "大家这周末打算做什么呢")
+        await self.post("B", "我周末打算去爬山，有人一起吗")
+        await self.post("C", "我也想去爬山，记得叫上我")
+        await self.post("ADMIN", "/已退群 小B", command=True)
+
+        self.now += timedelta(days=179)
+        await self.mgr.tick()
+        self.assertEqual(expired, [])
+        self.assertEqual(self.status("B"), "left")                      # they could still come back
+        self.now += timedelta(days=2)
+        await self.mgr.tick()
+        self.assertEqual(expired, [(GROUP, "B")])
+        self.assertIsNone(self.store.member(GROUP, "B"))
+        self.assertEqual(self.status("C"), "active")                    # quiet, but never gone
+
+    async def test_deletion_reaches_someone_who_left(self):
+        self.make(FakeGateway())
+        forgotten = []
+        self.mgr.forget_hooks.append(lambda group, member: forgotten.append(member))
+        await self.post("A", "大家这周末打算做什么呢", nickname="小明")
+        await self.post("B", "我周末打算去爬山，有人一起吗", nickname="小红")
+        await self.post("C", "我也想去爬山，记得叫上我", nickname="小红豆")
+        await self.post("ADMIN", "/已退群 小红", command=True)
+        for command, reply in (("/删除数据", "用法"), ("/删除数据 没这个人", "没找到「没这个人」"), ("/删除数据 小", "找到 4 位"),
+                               ("/删除数据 红豆", "找到 1 位：小红豆")):     # a part of a name deletes nobody
+            await self.post("ADMIN", command, command=True)
+            self.assertIn(reply, self.gw.texts(GROUP)[-1], command)
+        await self.post("A", "/删除数据 小红", command=True)
+        self.assertIn("管理员", self.gw.texts(GROUP)[-1])
+        self.assertEqual(forgotten, [])
+
+        await self.post("ADMIN", "/删除数据 小红", group=ADMIN_GROUP, command=True)    # from the admin group
+        self.assertIn("已删除 小红 的全部记录", self.gw.texts(ADMIN_GROUP)[-1])
+        self.assertEqual(forgotten, ["B"])
+        self.assertIsNone(self.store.member(GROUP, "B"))
+        self.assertEqual(self.status("C"), "active")                    # the whole name, not 小红豆
+
+    async def test_deleting_someone_leaves_no_trace_of_their_id(self):
+        self.make(FakeGateway(), mode="confirm")
+        await self.post("A", "大家这周末打算做什么呢")
+        await self.post("B", "我周末打算去爬山，有人一起吗")
+        ts = int(self.now.timestamp())
+        shared, alone = self.store.create_batch(GROUP, ["A", "B"], "pending", ts), self.store.create_batch(GROUP, ["B"], "manual", ts)
+        closed = self.store.create_batch(GROUP, ["B"], "executed", ts)
+        self.store.update_batch(closed, status="executed", decided_by="B", ts=ts)
+        self.store.add_leave(GROUP, "A", ts, ts + 86400, "出差", "B")
+        self.store.log(ts, GROUP, "A", "exempt", None, "B")
+
+        await self.post("ADMIN", "/删除数据 小B", command=True)
+        for table in ("members", "counters", "achievements", "leaves", "messages", "actions", "batches"):
+            for row in self.store._all(f"SELECT * FROM {table}"):
+                self.assertNotIn("B", list(row), table)
+        self.assertEqual(self.store.batch(shared)["members"], '["A"]')
+        self.assertEqual(self.store.batch(alone)["status"], "cancelled")
+        self.assertEqual((self.store.batch(closed)["status"], self.store.batch(closed)["members"]), ("executed", "[]"))

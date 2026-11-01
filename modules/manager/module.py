@@ -31,7 +31,7 @@ MODE_ALIASES = {"演练": "dry_run", "确认": "confirm", "自动": "auto",
 DAY = 86400
 MESSAGE_RETENTION_DAYS = 35     # activity metadata; covers the 30-day rule plus the weekly digest
 ACTION_RETENTION_DAYS = 180     # audit log of reminders, leaves, removals
-DEPARTED_RETENTION_DAYS = 180   # stats of removed/departed members, kept in case they rejoin
+DEPARTED_RETENTION_DAYS = 180   # what's kept about removed/departed members, in case they rejoin
 SNIPPET_LENGTH = 30
 EXCLUDE_GRACE_DAYS = 7
 MAX_MESSAGE_LENGTH = 900
@@ -135,6 +135,8 @@ class ManagerModule:
         self.recent = {}           # group -> classifier.RecentMessages
         self.announced = {}        # group -> timestamps of recent achievement announcements
         self.forget_hooks = []     # f(group, member), called by /删除数据 so other modules forget too
+        self.gone_hooks = []       # f(group, member), called when someone leaves, such as team rosters
+        self.expired_hooks = []    # f(group, member), called when DEPARTED_RETENTION_DAYS after that is up
         self.digest_commenter = None   # async f(digest text) -> a closing comment or None (AI chat)
         self.task = None
         self.commands = self._build_commands()
@@ -171,6 +173,27 @@ class ManagerModule:
         if row is None or row["status"] != "active":
             return None
         return row["nickname"] or ""
+
+    def has_left(self, group, member):
+        """Whether this group's records say someone is gone. People it doesn't track haven't left."""
+        row = self.store.member(group, member)
+        return row is not None and row["status"] != "active"
+
+    def _mark_gone(self, group, members, status, ts):
+        """Removed or left: every list stops showing them, and other modules let go of them too."""
+        self.store.set_status(group, members, status, ts)
+        for member in members:
+            for hook in self.gone_hooks:
+                hook(group, member)
+
+    def _drop_from_open_lists(self, group, member, actor, ts):
+        """Someone who has already left can't be removed: take them off any open removal list."""
+        for batch in self.store.open_batches(group):
+            members = json.loads(batch["members"])
+            if member in members:
+                members.remove(member)
+                self.store.update_batch(batch["id"], members=members, status=None if members else "cancelled",
+                                        decided_by=actor, ts=ts)
 
     def mode(self, group):
         row = self.store.group(group)
@@ -445,7 +468,7 @@ class ManagerModule:
             (("/豁免名单",), self.cmd_exempt_list, True, "admin"),
             (("/豁免",), self.cmd_exempt, True, "member"),
             (("/取消豁免",), self.cmd_unexempt, True, "member"),
-            (("/删除数据",), self.cmd_forget_member, True, "member"),
+            (("/删除数据",), self.cmd_forget_member, True, "admin"),
             (("/不活跃",), self.cmd_inactive, True, "admin"),
             (("/成员表",), self.cmd_member_table, True, "admin"),
             (("/成员",), self.cmd_member_detail, True, "admin"),
@@ -758,11 +781,18 @@ class ManagerModule:
         await self._reply(message, t("manager.exempt.removed", members=join([self._name(n) for _, n in targets])))
 
     async def cmd_forget_member(self, message, group, args):
-        """Delete everything recorded about someone, on their request (privacy policy, section 七)."""
-        targets, _ = self._targets_and_reason(message, args)
-        if not targets:
+        """Delete everything recorded about someone, on their request (privacy policy, section 七).
+        Someone who has left can't be @-ed, so their whole nickname works too."""
+        targets = message.mentioned_members
+        name = args.strip().lstrip("@").strip()
+        if not targets and not name:
             await self._reply(message, t("manager.forget.usage"))
             return
+        if not targets:
+            row = await self._by_whole_name(message, self.member_table(group), name, "manager.forget")
+            if row is None:
+                return
+            targets = [(row["member_openid"], row["nickname"])]
         for openid, _ in targets:
             self.store.forget_member(group, openid)
             for hook in self.forget_hooks:
@@ -927,6 +957,20 @@ class ManagerModule:
         return ([r for r in rows if r["nickname"] == name]
                 or [r for r in rows if name.lower() in r["nickname"].lower()])
 
+    async def _by_whole_name(self, message, rows, name, lines):
+        """The one row with exactly this nickname, for commands that change someone's record: a part
+        of a name only gets the names it fits. Otherwise replies with `lines`.not_found or .ambiguous
+        and returns None."""
+        found = self._by_nickname(rows, name)
+        if not found:
+            await self._reply(message, t(f"{lines}.not_found", query=name))
+        elif len(found) > 1 or found[0]["nickname"] != name:
+            await self._reply(message, t(f"{lines}.ambiguous", count=len(found),
+                                         names=join([r["nickname"] for r in found[:8]])))
+        else:
+            return found[0]
+        return None
+
     async def cmd_member_detail(self, message, group, args):
         if await self._keep_private(message):
             return
@@ -1054,7 +1098,7 @@ class ManagerModule:
         ts = int(self.clock().timestamp())
         bg = batch["group_openid"]
         openids = json.loads(batch["members"])
-        self.store.set_status(bg, openids, "removed", ts)
+        self._mark_gone(bg, openids, "removed", ts)
         for openid in openids:
             self.store.log(ts, bg, openid, "removed_manually", str(batch["id"]), message.member_openid)
         self.store.update_batch(batch["id"], status="done", decided_by=message.member_openid, ts=ts)
@@ -1070,17 +1114,14 @@ class ManagerModule:
         if not name:
             await self._reply(message, t("manager.left.usage"))
             return
-        found = self._by_nickname([r for r in self.member_table(group) if r["status_key"] != "gone"], name)
-        if not found:
-            await self._reply(message, t("manager.left.not_found", query=name))
-        elif len(found) > 1 or found[0]["nickname"] != name:    # only the whole name changes someone's record
-            await self._reply(message, t("manager.left.ambiguous", count=len(found),
-                                         names=join([r["nickname"] for r in found[:8]])))
-        else:
+        rows = [r for r in self.member_table(group) if r["status_key"] != "gone"]
+        row = await self._by_whole_name(message, rows, name, "manager.left")
+        if row is not None:
             ts = int(self.clock().timestamp())
-            self.store.set_status(group, [found[0]["member_openid"]], "left", ts)
-            self.store.log(ts, group, found[0]["member_openid"], "left", None, message.member_openid)
-            await self._reply(message, t("manager.left.done", member=found[0]["nickname"]))
+            self._mark_gone(group, [row["member_openid"]], "left", ts)
+            self._drop_from_open_lists(group, row["member_openid"], message.member_openid, ts)
+            self.store.log(ts, group, row["member_openid"], "left", None, message.member_openid)
+            await self._reply(message, t("manager.left.done", member=row["nickname"]))
 
     async def cmd_check_now(self, message, group, args):
         # Its reminders are for the group, so they read as the scheduled check's do, not the admin's versions.
@@ -1137,7 +1178,8 @@ class ManagerModule:
             self.store.sync_member(group, openid, m.get("username"), m.get("member_role"), m.get("bot"), joined, ts)
         for row in self.store.members(group):
             if row["member_openid"] not in seen:
-                self.store.set_status(group, [row["member_openid"]], "left", ts)
+                self._mark_gone(group, [row["member_openid"]], "left", ts)
+                self._drop_from_open_lists(group, row["member_openid"], "auto", ts)
                 self.store.log(ts, group, row["member_openid"], "left")
 
     async def daily_check(self, group, manual=False):
@@ -1271,7 +1313,7 @@ class ManagerModule:
             return text
 
         rows = self.store.find_members(group, openids)
-        self.store.set_status(group, openids, "removed", ts)
+        self._mark_gone(group, openids, "removed", ts)
         for openid in openids:
             self.store.log(ts, group, openid, "remove", str(batch["id"]), actor)
         self.store.update_batch(batch["id"], status="executed", decided_by=actor, ts=ts)
@@ -1295,11 +1337,8 @@ class ManagerModule:
         return text
 
     def active_members(self, group, since_ts):
-        """[(member_openid, nickname, n valid messages)] since `since_ts` for people not known to have
-        left, or None for a group it doesn't manage."""
-        if not self.manages(group):
-            return None
-        return [r for r in self.store.valid_counts(group, since_ts) if r["status"] == "active"]
+        """[(member_openid, nickname, n valid messages)] since `since_ts`, or None for a group it doesn't manage."""
+        return self.store.valid_counts(group, since_ts) if self.manages(group) else None
 
     def build_digest(self, group):
         now = self.clock()
@@ -1364,7 +1403,7 @@ class ManagerModule:
         ts = int(now.timestamp())
         tracking_start = self._tracking_start(group, now)
         leaves = self.store.latest_leaves(group)
-        week = {r["member_openid"]: r["n"] for r in self.store.valid_counts(group, ts - 7 * DAY)}
+        week = {r["member_openid"]: r["n"] for r in self.store.valid_counts(group, ts - 7 * DAY, everyone=True)}
         rows = []
         for row in self.store.member_activity(group):
             snap = self._snapshot(row, leaves.get(row["member_openid"]))
@@ -1408,8 +1447,19 @@ class ManagerModule:
                 await self._tick_group(group, local, today)
         if self.store.get_kv("pruned") != today:
             self.store.set_kv("pruned", today)
-            self.store.prune(ts - MESSAGE_RETENTION_DAYS * DAY, ts - ACTION_RETENTION_DAYS * DAY,
-                             ts - DEPARTED_RETENTION_DAYS * DAY)
+            expired = self.store.prune(ts - MESSAGE_RETENTION_DAYS * DAY, ts - ACTION_RETENTION_DAYS * DAY,
+                                       ts - DEPARTED_RETENTION_DAYS * DAY)
+            self._expire(expired)
+
+    def _expire(self, members):
+        """Other modules drop what they keep about these people. Their record here is gone already,
+        so nothing would retry this: one module's failure mustn't stop the rest."""
+        for group, member in members:
+            for hook in self.expired_hooks:
+                try:
+                    hook(group, member)
+                except Exception as e:
+                    _log.error(f"[Manager] 清理离开成员的数据出错: {e}")
 
     async def _tick_group(self, group, local, today):
         self.store.ensure_group(group)

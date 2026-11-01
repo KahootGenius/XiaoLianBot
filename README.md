@@ -143,7 +143,7 @@ seekchat (`Desktop/ai`):
     `ai_chat.hear_all`).
   - Groups never share a thread or memories.
   - Admins can wipe a group's conversation with `/重置对话`. `/删除数据 @某人` also deletes that
-    person's chat and memories.
+    person's chat and memories; for someone who has left, use their whole nickname.
 - **Model:** `deepseek-flash`, with thinking off by default (`deepseek.model`, `deepseek.thinking`).
 - **Prompts:** the persona is the style's `system_prompt`. The rules for group chat, summaries and
   memory notes are in [`prompts/chat.yaml`](prompts/chat.yaml).
@@ -183,9 +183,11 @@ For the group's games, where a few captains pick teams:
 - **`/翻牌子`:** a joke lucky draw among the week's active members, weighted by how much they
   posted; once a day each, while admins can flip as often as they like. @ a few people to draw
   among them instead. `social.flip.special` in `config.yaml` can give a member their own chances
-  of drawing particular people. People who have left aren't drawn, but QQ doesn't tell bots when
-  someone quits: unless Tencent has granted the member-list API, an admin says so with
-  `/已退群 昵称`.
+  of drawing particular people.
+- **People who leave:** once the bot knows someone has gone, they drop out of `/翻牌子`, `/排行`,
+  `/本月生日`, the digest, reminders, removal lists and today's teams. Only the admins' member table
+  still shows them, and they come back if they speak again. QQ doesn't tell bots when someone
+  quits, so unless Tencent has granted the member-list API, an admin says so with `/已退群 昵称`.
 - **The weekly digest** ends with a short in-character comment written by DeepSeek from the
   digest's numbers.
 - **Buttons:** replies with an obvious next step offer tap-to-send buttons: `/帮助`, `/今日运势`,

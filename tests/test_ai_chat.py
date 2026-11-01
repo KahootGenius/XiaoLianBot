@@ -345,6 +345,20 @@ class DynamicTemperatureTest(AIChatTestCase):
                 self.assertNotIn(line, self.last_chat()[0]["content"])
 
 
+class DepartedMemberTest(AIChatTestCase):
+    def test_gone_long_enough_she_forgets_them_but_keeps_the_groups_summary(self):
+        self.make()
+        self.store.add_memory(G, "A", "在准备考研", 0)
+        self.store.set_impression(G, "A", "嘴硬心软的考研人", 0)
+        self.store.add_memory(G, "B", "喜欢爬山", 0)
+        self.store.set_summary(G, "大家在聊周末去哪", 0, 0)
+        self.ai.forget_memories(G, "A")
+        self.assertEqual(list(self.store.memories(G, "A")), [])
+        self.assertIsNone(self.store.impression(G, "A"))
+        self.assertEqual([m["text"] for m in self.store.memories(G, "B")], ["喜欢爬山"])
+        self.assertEqual(self.store.summary(G)["summary"], "大家在聊周末去哪")   # /删除数据 wipes this; time shouldn't
+
+
 class StyleExtrasTest(AIChatTestCase):
     """A style's sample exchanges, the voice to avoid, and its lorebook."""
 

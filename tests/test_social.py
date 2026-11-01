@@ -38,7 +38,7 @@ class Roll(random.Random):
 
 
 class SocialTestCase(unittest.IsolatedAsyncioTestCase):
-    def make(self, activity=None, config=None, nickname_of=None, rng=None, count=None):
+    def make(self, activity=None, config=None, nickname_of=None, rng=None, count=None, has_left=None):
         self.now = START
         self.gw = FakeGateway()
         self.store = FunStore(":memory:")
@@ -46,7 +46,7 @@ class SocialTestCase(unittest.IsolatedAsyncioTestCase):
         self.social = SocialModule(self.gw, store=self.store, clock=lambda: self.now,
                                    is_admin=lambda group, member, role=None: member == "ADMIN",
                                    activity=activity, rng=rng or random.Random(7), config=config,
-                                   nickname_of=nickname_of, count=count)
+                                   nickname_of=nickname_of, count=count, has_left=has_left)
         return self.social
 
     async def say(self, member, text, mentions=(), group=GROUP):
@@ -77,6 +77,19 @@ class FortuneTest(SocialTestCase):
 
 
 class BirthdayTest(SocialTestCase):
+    async def test_people_who_left_arent_listed_or_mentioned(self):
+        gone = set()
+        self.make(has_left=lambda group, member: member in gone)
+        await self.say("A", "/生日 11-1")
+        await self.say("B", "/生日 11-20")
+        self.assertIn("（2 位）", await self.say("C", "/本月生日"))
+        self.assertEqual(self.social.today_for_ai(GROUP)["birthdays"], ["小明"])
+        gone.add("A")
+        self.assertNotIn("小明", await self.say("C", "/本月生日"))
+        self.assertEqual(self.social.today_for_ai(GROUP)["birthdays"], [])
+        gone.clear()                                                    # they came back: still registered
+        self.assertIn("小明", await self.say("C", "/本月生日"))
+
     def test_dates_people_type(self):
         for text in ("10-25", "10月25日", "10/25", "1025", "10.25号"):
             self.assertEqual(parse_birthday(text), (10, 25), text)

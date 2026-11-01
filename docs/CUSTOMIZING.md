@@ -394,7 +394,9 @@ social:
 - **People who quit:** QQ doesn't tell bots when someone leaves. Without the invite-only member-list
   API, the bot only knows if they were removed through it, or if an admin sends `/已退群 昵称`.
   Until then they can still come up: from the weekly draw for up to 7 days after their last valid
-  message, and from a table for as long as they're listed. Speaking again undoes `/已退群`.
+  message, and from a table for as long as they're listed. Once it knows, they're also gone from
+  `/排行`, `/本月生日`, the digest, `/请假名单`, open removal lists and today's teams; only the
+  admins' member table still shows them. Speaking again undoes `/已退群`.
 - **What stays the same:** it's still once a day (admins can flip as often as they like), and the
   reply looks like any other flip.
 

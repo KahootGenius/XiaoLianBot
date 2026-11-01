@@ -92,16 +92,16 @@
 - 群管理数据保存在本机器人服务器的本地数据库中。
 - **消息元数据**：保存 **35 天**后自动删除。
 - **提醒、请假、移出等操作记录**：保存 **180 天**后自动删除。
-- **已离开或被移出群聊的成员**：其统计数据再保留 **180 天**（方便重新入群），之后自动删除。
+- **已离开或被移出群聊的成员**（从本机器人得知其离开时算起）：其统计数据、生日、长期记忆和印象再保留 **180 天**（方便重新入群），之后自动删除。
 - **组队游戏的队伍名单**：保存在服务器本地文件中，**每天清空一次**（默认北京时间 5:00）。
 - **AI 对话记录**（@ 机器人的消息和它的回复）：保存 **7 天**后自动删除。删除前，尚未整理的内容会先并入群聊总结。
 - **群聊总结**：保留到管理员发送 `/重置对话`，或本机器人被移出该群为止。
-- **长期记忆**：每人最多 8 条，最弱的一条先被删除；很久没再提起的会自动忘掉（一般几周到几个月，越重要、被提起越多的保留越久）；也可由成员用 `/忘记` 删除、管理员按要求删除，本机器人被移出该群时一并删除。
+- **长期记忆**：每人最多 8 条，最弱的一条先被删除；很久没再提起的会自动忘掉（一般几周到几个月，越重要、被提起越多的保留越久）；也可由成员用 `/忘记` 删除、管理员按要求删除；成员离开群聊满 180 天，或本机器人被移出该群时，一并删除。
 - **最近的片段**：每天凌晨整理成长期记忆后即删除，一般不超过 2 天。
-- **印象**：每人一句，新的替换旧的；保留到成员用 `/忘记 印象` 或 `/忘记 全部` 删除、管理员按要求删除，或本机器人被移出该群为止。
+- **印象**：每人一句，新的替换旧的；保留到成员用 `/忘记 印象` 或 `/忘记 全部` 删除、管理员按要求删除、成员离开群聊满 180 天，或本机器人被移出该群为止。
 - **AI 看全部聊天**（仅在运营者开启时）：群里的聊天和上面的 AI 对话记录一样，保存 **7 天**后自动删除。
 - **主动开话题**（仅在运营者开启的群）：每个群只保留最后一条消息的时间，新的替换旧的；本机器人被移出该群时删除。
-- **生日**：保留到成员自己用 `/生日 删除` 删除、管理员按要求删除，或本机器人被移出该群为止。
+- **生日**：保留到成员自己用 `/生日 删除` 删除、管理员按要求删除、成员离开群聊满 180 天，或本机器人被移出该群为止。
 - **投票**：结束 **30 天**后连同投票记录一起删除；进行中的投票 7 天后自动结束。
 - **意见征集**：结束 **30 天**后连同全部意见和参加记录一起删除；没人结束的征集 30 天后自动关闭。
 - **`/翻牌子` 的记录**：2 天后删除。
@@ -210,22 +210,22 @@ manager leaves the server except QQ API calls.
 |---|---|---|
 | Message metadata | 35 days | `MESSAGE_RETENTION_DAYS` in `modules/manager/module.py` |
 | Action log | 180 days | `ACTION_RETENTION_DAYS` |
-| Departed members' stats | 180 days | `DEPARTED_RETENTION_DAYS` |
+| Departed members' stats, birthdays, AI memories and impressions | 180 days from when the bot knows they've gone | `DEPARTED_RETENTION_DAYS`, `expired_hooks` |
 | Team rosters (`data/teams.json`) | until the daily reset (05:00 by default) | `reset_time` in `prompts/teams.yaml`, cleared by `TeamsModule.run_scheduler` |
 | AI chat turns (`data/chat.db`) | 7 days, after being folded into the summary | `ai_chat.keep_days`, `AIChatModule.housekeeping` (hourly) |
 | AI chat summary | until `/重置对话` or the bot leaves | `ChatStore.reset_chat` / `forget_group` |
-| AI chat memories | until they fade (weeks to months, longer when important or mentioned again), `/忘记`, `/删除数据` or the bot leaves; 8 per member, weakest dropped | `ai_chat.memories_per_member`, `AIChatModule.fade`, `modules/ai/memory.py` |
+| AI chat memories | until they fade (weeks to months, longer when important or mentioned again), `/忘记`, `/删除数据`, 180 days after they leave, or the bot leaves; 8 per member, weakest dropped | `ai_chat.memories_per_member`, `AIChatModule.fade`, `modules/ai/memory.py` |
 | Recent notes, before consolidation | until the night's consolidation, usually under 2 days | `AIChatModule.consolidate`, `NOTES_LEFT_DAYS` |
-| AI chat impressions | one per member, replaced when it changes; until `/忘记 印象`, `/忘记 全部`, `/删除数据` or the bot leaves | `ChatStore.set_impression` |
+| AI chat impressions | one per member, replaced when it changes; until `/忘记 印象`, `/忘记 全部`, `/删除数据`, 180 days after they leave, or the bot leaves | `ChatStore.set_impression` |
 | Group chat that didn't @ the bot (`ai_chat.hear_all`) | 7 days, like AI chat turns, after being folded into the summary | `ai_chat.keep_days`, `AIChatModule.housekeeping` |
 | Last message time in a topic group (`ai_chat.topics`) | one per group, replaced by the next; until the bot leaves | `ChatStore.set_heard`, `forget_group` |
 | Her day, and when she spoke up or sent a voice message | 7 days, like AI chat turns | `ChatStore.prune` |
-| Birthdays (`data/fun.db`) | until `/生日 删除`, `/删除数据` or the bot leaves | `FunStore` |
+| Birthdays (`data/fun.db`) | until `/生日 删除`, `/删除数据`, 180 days after they leave, or the bot leaves | `FunStore` |
 | Polls and votes | 30 days after closing; open polls close after 7 days | `POLL_KEEP_DAYS`, `POLL_DAYS` in `modules/fun/social/module.py` |
 | 征集意见, their opinions and who joined them | 30 days after ending; one nobody ends closes after 30 days | `OPINION_KEEP_DAYS`, `OPINION_DAYS` |
 | `/翻牌子` marks | 2 days | `SocialModule._prune` |
 | A group's data after the bot is removed | deleted immediately (manager data, rosters, AI chat) | `on_group_del_robot` in `main.py` |
-| Deletion on request | when an admin runs it (also takes them off every team; deletes their AI chat turns and memories, the group's summary, and their birthday, votes, opinions and the 征集 they joined) | `/删除数据 @某人` |
+| Deletion on request | when an admin runs it (also takes them off every team; deletes their AI chat turns and memories, the group's summary, their birthday, votes, opinions and the 征集 they joined, and their ID on removal lists and in what they did as an admin) | `/删除数据` with an @, or the whole nickname for someone who has left |
 | botpy logs | 7 rotated files (< 30 days) | botpy's own `TimedRotatingFileHandler` |
 
 ### Before you submit, check these

@@ -108,7 +108,7 @@ def _short(text, limit=30):
 
 class SocialModule:
     def __init__(self, gateway, store=None, clock=None, is_admin=None, activity=None, rng=None, config=None,
-                 nickname_of=None, count=None):
+                 nickname_of=None, count=None, has_left=None):
         self.gw = gateway
         self.store = store or FunStore(root_path("data", "fun.db"))
         self.tz = pytz.timezone('Asia/Shanghai')
@@ -123,6 +123,9 @@ class SocialModule:
         # (group, member_openid, nickname, counter) -> congratulations for any badge that earned, from
         # the group manager's achievements. Birthdays, polls voted in and 征集 joined each count once.
         self.count = count or (lambda group, member, nickname, key: [])
+        # (group, member_openid) -> whether the group manager knows they've left: their birthdays stay
+        # stored, but aren't listed or mentioned unless they come back.
+        self.has_left = has_left or (lambda group, member: False)
         self.rng = rng or random.Random()
         # Members with their own chances of drawing particular people (config.yaml social.flip.special).
         social = (config or {}).get("social")
@@ -265,7 +268,7 @@ class SocialModule:
     async def cmd_month(self, message, args):
         """/本月生日: everyone in this group who shared a birthday in this month."""
         month = self._now().month
-        rows = self.store.birthdays_in(message.group_openid, month)
+        rows = self._birthdays_in(message.group_openid, month)
         register = [[(t("social.birthday.register_button"), "/生日 ")]]      # typed in, for the date
         if not rows:
             await self._reply(message, t("social.birthday.month_none", month=month), buttons=register)
@@ -275,13 +278,16 @@ class SocialModule:
                     member=r["nickname"] or t("common.someone")) for r in rows]
         await self._reply(message, "\n".join(lines), buttons=register)
 
+    def _birthdays_in(self, group, month):
+        return [r for r in self.store.birthdays_in(group, month) if not self.has_left(group, r["member_openid"])]
+
     def today_for_ai(self, group):
         """For AI chat: today's birthdays, the open poll as (question, [(label, option, votes)]), and
         the open 征集意见 as (topic, opinions so far). Reads only; anything past its time counts as
         closed."""
         today = self._now().date()
         birthdays = []
-        for row in self.store.birthdays_in(group, today.month):
+        for row in self._birthdays_in(group, today.month):
             day = 28 if (row["month"], row["day"]) == (2, 29) and not _leap(today.year) else row["day"]
             if day == today.day:
                 birthdays.append(row["nickname"] or t("common.someone"))

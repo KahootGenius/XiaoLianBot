@@ -172,17 +172,28 @@ class Store:
             group, since_ts, row["rowid"]) is None
 
     def prune(self, messages_before, actions_before, departed_before):
-        """Apply the retention periods promised in docs/PRIVACY_POLICY.md."""
+        """Apply the retention periods promised in docs/PRIVACY_POLICY.md. Returns (group, member) for
+        each departed member whose record just went, so other modules can drop theirs too."""
         self._write("DELETE FROM messages WHERE ts < ?", messages_before)
         self._write("DELETE FROM actions WHERE ts < ?", actions_before)
         gone = self._all("SELECT group_openid, member_openid FROM members "
                          "WHERE status != 'active' AND removed_at < ?", departed_before)
         for row in gone:
             self.forget_member(row["group_openid"], row["member_openid"])
+        return [(row["group_openid"], row["member_openid"]) for row in gone]
 
     def forget_member(self, group, member):
         for table in ("members", "counters", "achievements", "leaves", "messages", "actions"):
             self._write(f"DELETE FROM {table} WHERE group_openid = ? AND member_openid = ?", group, member)
+        # Their ID is also on what they did as an admin, and on removal lists.
+        for table, column in (("leaves", "granted_by"), ("actions", "actor"), ("batches", "decided_by")):
+            self._write(f"UPDATE {table} SET {column} = NULL WHERE group_openid = ? AND {column} = ?", group, member)
+        for batch in self._all("SELECT * FROM batches WHERE group_openid = ?", group):
+            members = json.loads(batch["members"])
+            if member in members:
+                members.remove(member)
+                emptied = not members and batch["status"] in ("pending", "manual")
+                self.update_batch(batch["id"], members=members, status="cancelled" if emptied else None)
 
     def forget_group(self, group):
         for table in ("groups", "members", "counters", "achievements", "leaves", "messages", "actions", "batches"):
@@ -326,10 +337,12 @@ class Store:
         return {r["member_openid"]: r for r in rows}
 
     def active_leaves(self, group, now_ts):
+        """Leaves running now, for people still in the group."""
         return self._all(
             "SELECT * FROM leaves WHERE group_openid = ? AND start_at <= ? AND end_at > ? AND ended_at IS NULL "
+            "AND member_openid NOT IN (SELECT member_openid FROM members WHERE group_openid = ? AND status != 'active') "
             "ORDER BY end_at",
-            group, now_ts, now_ts)
+            group, now_ts, now_ts, group)
 
     # ---- achievements ----
 
@@ -356,7 +369,8 @@ class Store:
         return self._all(
             "SELECT a.*, m.nickname FROM achievements a LEFT JOIN members m "
             "ON m.group_openid = a.group_openid AND m.member_openid = a.member_openid "
-            "WHERE a.group_openid = ? AND a.earned_at >= ? ORDER BY a.earned_at",
+            "WHERE a.group_openid = ? AND a.earned_at >= ? AND COALESCE(m.status, 'active') = 'active' "
+            "ORDER BY a.earned_at",
             group, since_ts)
 
     # ---- removal batches ----
@@ -383,15 +397,16 @@ class Store:
 
     # ---- statistics ----
 
-    def valid_counts(self, group, since_ts, until_ts=None):
-        """[(member_openid, nickname, status, valid_count)] sorted by count, for leaderboards."""
+    def valid_counts(self, group, since_ts, until_ts=None, everyone=False):
+        """[(member_openid, nickname, valid_count)] sorted by count, for leaderboards. People who
+        have left only count with `everyone`, for the admins' own records."""
         until_ts = until_ts if until_ts is not None else 2 ** 62
+        present = "" if everyone else "AND COALESCE(m.status, 'active') = 'active' "
         return self._all(
-            "SELECT msg.member_openid, m.nickname, COALESCE(m.status, 'active') AS status, COUNT(*) AS n "
-            "FROM messages msg "
+            "SELECT msg.member_openid, m.nickname, COUNT(*) AS n FROM messages msg "
             "LEFT JOIN members m ON m.group_openid = msg.group_openid AND m.member_openid = msg.member_openid "
             "WHERE msg.group_openid = ? AND msg.valid = 1 AND msg.ts >= ? AND msg.ts < ? "
-            "AND COALESCE(m.is_bot, 0) = 0 "
+            f"AND COALESCE(m.is_bot, 0) = 0 {present}"
             "GROUP BY msg.member_openid ORDER BY n DESC, MIN(msg.ts)",
             group, since_ts, until_ts)
 

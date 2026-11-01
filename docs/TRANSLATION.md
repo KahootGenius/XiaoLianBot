@@ -47,11 +47,11 @@ only answer in that admin group, so the main group never sees who has been quiet
 | `/排除 <序号…>` | Take entries off the latest list; they get 7 days' grace |
 | `/取消移出 [编号]` | Drop a removal list |
 | `/已移出 [编号]` | Admins removed a manual list by hand; record it |
-| `/已退群 <昵称>` | Someone left on their own, which QQ doesn't tell bots; takes them out of `/翻牌子` and reminders until they speak again |
+| `/已退群 <昵称>` | Someone left on their own, which QQ doesn't tell bots; takes them out of rankings, birthdays, `/翻牌子`, the digest and reminders until they speak again. The admins' member table still shows them |
 | `/立即检查` | Run the daily check now |
 | `/小报` | Preview this week's digest |
 | `/艾特测试` | Test whether the `tag` mention format renders as a real @ |
-| `/删除数据 @某人` | Delete everything recorded about someone, at their request |
+| `/删除数据 @某人或完整昵称` | Delete everything recorded about someone, at their request. Someone who has left can't be @-ed, so their whole nickname works too |
 
 Styles have no chat command: they are chosen in `config.yaml` (`style`, `group_styles`).
 

@@ -62,7 +62,7 @@ class MyClient(botpy.Client):
         self.social_module = SocialModule(self.gateway, is_admin=self.manager_module.is_admin,
                                           activity=self.manager_module.active_members, config=config,
                                           nickname_of=self.manager_module.current_nickname,
-                                          count=self.manager_module.count)
+                                          count=self.manager_module.count, has_left=self.manager_module.has_left)
         self.sleep_module.count = self.manager_module.count
         if self.ai_chat_module.enabled:
             self.social_module.opinion_summarizer = self.ai_chat_module.summarize_opinions
@@ -76,6 +76,10 @@ class MyClient(botpy.Client):
         # /删除数据 @某人 also clears their team place and what AI chat kept about them.
         self.manager_module.forget_hooks += [self.teams_module.forget_member, self.ai_chat_module.forget_member,
                                              self.social_module.forget_member]
+        # Someone who has left comes off today's teams; the rest of their record stays, in case they return.
+        self.manager_module.gone_hooks.append(self.teams_module.forget_member)
+        # When that time is up, their birthday and what AI chat remembers go with their stats.
+        self.manager_module.expired_hooks += [self.ai_chat_module.forget_memories, self.social_module.forget_member]
         dashboard_config = (config.get("manager") or {}).get("dashboard") or {}
         self.dashboard = None
         if self.manager_module.enabled and dashboard_config.get("enabled", True):

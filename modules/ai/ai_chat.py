@@ -988,6 +988,12 @@ class AIChatModule:
             self.store.forget_member(group, member)
             self._deleted(group)
 
+    def forget_memories(self, group, member):
+        """Someone's memories and impression, when they've been gone long enough. Unlike a deletion on
+        request this keeps the group's summary, which the group still needs and has long moved on."""
+        if self.enabled:
+            self.store.clear_memories(group, member)
+
     def forget_group(self, group):
         if self.enabled:
             self.store.forget_group(group)
