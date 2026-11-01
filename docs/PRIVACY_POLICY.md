@@ -79,6 +79,8 @@
 
 > 若部署时未配置 DeepSeek 密钥，AI 对话与 `/服务器QA` 功能将自动停用，届时不存在任何第三方数据传输。
 
+**联网搜索：** 消息需要最新信息时（例如天气、汇率、新闻、最新版本），本机器人会根据这条消息写一个搜索词，发送至 **DeepSeek** 的搜索服务（api.deepseek.com）。搜索词不包含昵称或成员标识；查到的网页内容只用于这一条回复。运营者可以关闭这项功能。
+
 **语音功能：** 若运营者配置了 MiniMax 密钥，本机器人偶尔会用语音回复：它要说的那句话会被发送至 **MiniMax**（api.minimax.io 或 api.minimax.cn）合成语音。发送的只有本机器人自己的话，**不包含**任何成员的消息、昵称或标识。MiniMax 的数据处理方式适用其自身隐私政策。未配置 MiniMax 密钥时，不存在这项传输。
 
 **群管理功能：** 有效发言的判断完全在本机器人服务器上完成，**不会**把群消息发送给任何第三方。提醒消息和移出操作通过 QQ 开放平台接口完成。
@@ -105,6 +107,7 @@
 - **投票**：结束 **30 天**后连同投票记录一起删除；进行中的投票 7 天后自动结束。
 - **意见征集**：结束 **30 天**后连同全部意见和参加记录一起删除；没人结束的征集 30 天后自动关闭。
 - **`/翻牌子` 的记录**：2 天后删除。
+- **联网搜索**：不保存搜索词和查到的内容，只记下每次搜索的时间，用于每个群每天的次数限制，**7 天**后删除。
 - **本机器人被移出某个群时**：立即删除该群的全部群管理数据、队伍名单、AI 对话记录、群聊总结、长期记忆、生日、投票和意见征集。
 - 群组绑定、订阅状态、游戏状态、睡眠记录**仅保存在服务器内存中**，机器人重启后即全部清除；睡眠记录在记录后 **24 小时**自动删除。
 - 运行日志保留期不超过 **30 天**，到期自动删除。
@@ -180,7 +183,9 @@ splits managed and unmanaged groups.
 contacts, payment info.
 
 **Third parties:** only AI chat talks to DeepSeek, and, with a `voice` key, MiniMax. MiniMax gets
-only the line she's about to say: her own words, nothing from members. Each reply to DeepSeek sends:
+only the line she's about to say: her own words, nothing from members. With `ai_chat.web_search`
+on, a message that needs live information also sends DeepSeek's Search API a query written from
+it, without nicknames or openids; neither the query nor the pages are stored. Each reply to DeepSeek sends:
 - the message
 - the group's recent conversation with the bot, with nicknames, and its summary
 - the memories of the members in that conversation, and the bot's impressions of them
@@ -219,7 +224,7 @@ manager leaves the server except QQ API calls.
 | AI chat impressions | one per member, replaced when it changes; until `/忘记 印象`, `/忘记 全部`, `/删除数据`, 180 days after they leave, or the bot leaves | `ChatStore.set_impression` |
 | Group chat that didn't @ the bot (`ai_chat.hear_all`) | 7 days, like AI chat turns, after being folded into the summary | `ai_chat.keep_days`, `AIChatModule.housekeeping` |
 | Last message time in a topic group (`ai_chat.topics`) | one per group, replaced by the next; until the bot leaves | `ChatStore.set_heard`, `forget_group` |
-| Her day, and when she spoke up or sent a voice message | 7 days, like AI chat turns | `ChatStore.prune` |
+| Her day, and when she spoke up, sent a voice message or searched | 7 days, like AI chat turns | `ChatStore.prune` |
 | Birthdays (`data/fun.db`) | until `/生日 删除`, `/删除数据`, 180 days after they leave, or the bot leaves | `FunStore` |
 | Polls and votes | 30 days after closing; open polls close after 7 days | `POLL_KEEP_DAYS`, `POLL_DAYS` in `modules/fun/social/module.py` |
 | 征集意见, their opinions and who joined them | 30 days after ending; one nobody ends closes after 30 days | `OPINION_KEEP_DAYS`, `OPINION_DAYS` |

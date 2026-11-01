@@ -11,7 +11,7 @@ from datetime import timedelta
 from types import SimpleNamespace
 from core.config import root_path
 from core.style import DEFAULT_STYLE, StyleBook
-from modules.ai import context, memory, memory_admin, rehearse, voice
+from modules.ai import context, memory, memory_admin, rehearse, search, voice
 from modules.ai.ai_chat import AIChatModule, load_chat_prompts, read_special_people
 from modules.ai.store import ChatStore
 from tests.test_manager import START, FakeGateway, FakeMessage
@@ -84,7 +84,7 @@ class FakeSpeaker:
 
 class AIChatTestCase(unittest.IsolatedAsyncioTestCase):
     def make(self, nickname_of=None, deepseek=None, stickers_dir=None, speaker=None, voice_config=None,
-             **chat_config):
+             searcher=None, **chat_config):
         self.now = START
         self.gw = FakeGateway()
         self.ai_client = FakeDeepSeek()
@@ -94,7 +94,7 @@ class AIChatTestCase(unittest.IsolatedAsyncioTestCase):
         self.ai = AIChatModule(self.gw, config, store=self.store, client=self.ai_client,
                                is_admin=lambda group, member, role=None: member == "ADMIN",
                                clock=lambda: self.now, nickname_of=nickname_of, stickers_dir=stickers_dir,
-                               library_path=None, speaker=speaker)
+                               library_path=None, speaker=speaker, searcher=searcher)
         return self.ai
 
     async def say(self, member, text, group=G, name=None):
@@ -343,6 +343,123 @@ class DynamicTemperatureTest(AIChatTestCase):
             self.assertEqual(self.ai_client.requests("chat")[-1]["temperature"], 1.2)
             for line in ("一两句话就好", "两三句话。", "五六句"):
                 self.assertNotIn(line, self.last_chat()[0]["content"])
+
+
+class FakeSearch:
+    """Stands in for DeepSeekSearch. `results` is what it finds, or an exception to raise."""
+
+    PAGE = {"title": "上海天气预报", "site_name": "天气网", "date": "2026-11-01T02:00:00+00:00", "rerank_score": 1.3,
+            "url": "https://example.com/weather", "summary": "2日（明天） 晴转多云\n24℃/17℃", "snippet": "明天晴"}
+
+    def __init__(self, results=(PAGE,)):
+        self.results, self.queries = results, []
+
+    async def search(self, text):
+        self.queries.append(text)
+        if isinstance(self.results, Exception):
+            raise self.results
+        return list(self.results)
+
+
+class WebSearchTest(AIChatTestCase):
+    WEATHER = '{"register": "严谨", "length": "短", "search": "上海天气", "fresh": "今天"}'
+
+    def sent(self):
+        return "\n".join(m["content"] for m in self.last_chat() if m["role"] == "system")
+
+    async def test_a_message_that_needs_it_searches_and_she_gets_the_pages(self):
+        searcher = FakeSearch()
+        self.make(searcher=searcher)
+        self.ai_client.answers["register"].append(self.WEATHER)
+        await self.say("A", "明天上海天气怎么样？")
+        self.assertEqual(searcher.queries, ["上海天气 lang:zh,en after:2026-10-31"])     # START is 11-01
+        sent = self.sent()
+        self.assertIn("刚查到的网页（搜索词：上海天气。", sent)
+        self.assertIn("- 上海天气预报（天气网 2026-11-01）2日（明天） 晴转多云 24℃/17℃", sent)
+        self.assertIn("【刚查到的】", sent)
+        self.assertNotIn("example.com", sent)                           # QQ refuses links: she has none to repeat
+        self.assertEqual(self.store.posts_since(G, "search", 0), 1)
+        register = self.ai_client.requests("register")[-1]["messages"][0]["content"]
+        self.assertIn("- search：", register)
+        self.assertIn("不要自己加日期或年份", register)
+
+    async def test_most_messages_need_none(self):
+        searcher = FakeSearch()
+        self.make(searcher=searcher)
+        self.ai_client.answers["register"] += [BALANCED, '{"register": "平衡", "length": "中", "search": null}',
+                                               '{"register": "平衡", "length": "中", "search": "null"}']
+        for text in ("哈哈哈", "在吗", "早上好"):
+            await self.say("A", text)
+        self.assertEqual(searcher.queries, [])
+        self.assertNotIn("【刚查到的】", self.sent())
+
+    async def test_each_group_has_a_daily_limit(self):
+        searcher = FakeSearch()
+        self.make(searcher=searcher, web_search_per_day=2)
+        self.ai_client.answers["register"] += [self.WEATHER] * 5
+        for _ in range(3):
+            await self.say("A", "天气怎么样？")
+        self.assertEqual(len(searcher.queries), 2)
+        self.assertNotIn("【刚查到的】", self.sent())                     # she then just doesn't know
+        await self.say("A", "天气怎么样？", group=G2)
+        self.assertEqual(len(searcher.queries), 3)                      # another group has its own
+        self.now += timedelta(days=1)
+        await self.say("A", "天气怎么样？")
+        self.assertEqual(len(searcher.queries), 4)
+
+    async def test_a_failed_search_only_means_she_goes_without(self):
+        searcher = FakeSearch(search.SearchError("HTTP 402: 余额不足"))
+        self.make(searcher=searcher)
+        self.ai_client.answers["register"] += [self.WEATHER] * 3
+        self.assertEqual(await self.say("A", "天气怎么样？"), "回复1")
+        self.assertNotIn("【刚查到的】", self.sent())
+        await self.say("A", "天气怎么样？")
+        self.assertEqual(len(searcher.queries), 1)                      # not tried again straight away
+        self.now += timedelta(seconds=search.RETRY_SECONDS)
+        await self.say("A", "天气怎么样？")
+        self.assertEqual(len(searcher.queries), 2)
+
+    async def test_nothing_useful_is_the_same_as_nothing_found(self):
+        self.make(searcher=FakeSearch([dict(FakeSearch.PAGE, rerank_score=0.4), dict(FakeSearch.PAGE, summary="", snippet="")]))
+        self.ai_client.answers["register"].append(self.WEATHER)
+        await self.say("A", "天气怎么样？")
+        self.assertNotIn("刚查到", self.sent())
+
+    async def test_switched_off_it_never_comes_up(self):
+        searcher = FakeSearch()
+        self.make(searcher=searcher, web_search=False)
+        self.ai_client.answers["register"].append(self.WEATHER)
+        await self.say("A", "天气怎么样？")
+        self.assertEqual(searcher.queries, [])
+        self.assertNotIn("- search：", self.ai_client.requests("register")[-1]["messages"][0]["content"])
+
+    async def test_it_works_with_the_judged_temperature_off(self):
+        searcher = FakeSearch()
+        self.make(searcher=searcher, dynamic_temperature=False, deepseek={"temperature": 0.9})
+        self.ai_client.answers["register"].append(self.WEATHER)
+        await self.say("A", "天气怎么样？")
+        self.assertEqual(len(searcher.queries), 1)
+        request = self.ai_client.requests("chat")[-1]
+        self.assertEqual(request["temperature"], 0.9)                   # the judgement only asked for the search
+        self.assertNotIn("【这条回复的篇幅】一两句话就好", request["messages"][0]["content"])
+
+    async def test_she_is_told_not_to_make_things_up(self):
+        self.make()
+        await self.say("A", "你好")
+        self.assertIn("【不知道就说不知道】", self.last_chat()[0]["content"])
+        self.assertIn("常识和知识，有把握就正常回答", self.last_chat()[0]["content"])
+
+    def test_reading_the_judgement_and_the_results(self):
+        self.assertEqual(context.parse_search('好的 {"search": "上海  天气", "fresh": "今天"}'), ("上海 天气", 1))
+        self.assertEqual(context.parse_search('{"search": "新番", "fresh": "这周"}'), ("新番", 7))
+        self.assertEqual(context.parse_search('{"search": "版本"}'), ("版本", 90))    # no fresh: the widest
+        self.assertEqual(context.parse_search('{"search": "版本", "fresh": "很快"}'), ("版本", 90))
+        for answer in ('{"search": null}', '{"search": ""}', '{"search": "null"}', '{"register": "严谨"}', "看不懂"):
+            self.assertIsNone(context.parse_search(answer), answer)
+        self.assertEqual(len(context.parse_search(f'{{"search": "{"字" * 200}"}}')[0]), context.SEARCH_WORDS)
+        page = dict(FakeSearch.PAGE, summary="长" * 500, site_name=None, date=None)
+        self.assertEqual(search.lines([page]), [f"- 上海天气预报（）{'长' * search.RESULT_CHARS}"])
+        self.assertEqual(search.lines([{"title": "只有简介", "snippet": "短", "rerank_score": 2}]), ["- 只有简介（）短"])
 
 
 class DepartedMemberTest(AIChatTestCase):

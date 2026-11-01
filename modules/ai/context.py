@@ -18,6 +18,9 @@ from modules.ai.memory import first_json
 # ai_chat.temperatures overrides any of them.
 REGISTERS = {"严谨": 0.6, "平衡": 1.0, "奔放": 1.15}
 LENGTHS = {"短": "length_short", "中": "length_medium", "长": "length_long"}
+# When the pre-reply call asks for a web search (modules/ai/search.py): how many days old pages may be.
+FRESHNESS = {"今天": 1, "这周": 7, "最近": 90}
+SEARCH_WORDS = 80   # characters; the API takes 128 with its operators
 LORE_TURNS = 4      # lore keywords are looked for in the last few turns...
 LORE_LIMIT = 3      # ...and at most this many entries ride along
 DAY_EVENTS = 4      # her day: at most this many things happen in it (the prompt asks for three)...
@@ -83,6 +86,15 @@ def parse_register(raw):
     data = first_json(raw)
     register, length = str(data.get("register") or "").strip(), str(data.get("length") or "").strip()
     return (register if register in REGISTERS else None), (length if length in LENGTHS else None)
+
+
+def parse_search(raw):
+    """(words, days) when the pre-reply call's answer asks for a web search, else None."""
+    data = first_json(raw)
+    words = re.sub(r"\s+", " ", str(data.get("search") or "")).strip()
+    if not words or words.lower() == "null":
+        return None
+    return words[:SEARCH_WORDS], FRESHNESS.get(str(data.get("fresh") or "").strip(), FRESHNESS["最近"])
 
 
 def parse_day(raw):

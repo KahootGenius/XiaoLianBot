@@ -41,7 +41,7 @@ from botpy import logging
 from openai import OpenAI
 from core.config import content_path, load_config, root_path
 from core.style import STYLES, current, join, placeholders, render, t
-from modules.ai import context, memory, stickers, voice
+from modules.ai import context, memory, search, stickers, voice
 from modules.ai.store import ChatStore
 
 
@@ -66,6 +66,7 @@ HEARD_SAVE_SECONDS = 60     # a group's last message time is written down at mos
 # What each line of prompts/chat.yaml may fill in, besides {name} (the style's name).
 PROMPT_FIELDS = {
     "group_rules": {"member"},
+    "honesty": set(),
     "examples": {"examples"},
     "bad_examples": {"examples"},
     "reply_shape": set(),
@@ -81,6 +82,7 @@ PROMPT_FIELDS = {
     "special_namesake": {"member"},
     "memory_rules": set(),
     "day_rules": set(),
+    "search_rules": set(),
     "evidence_policy": set(),
     "evidence_title": set(),
     "now": {"date", "weekday", "time"},
@@ -94,6 +96,7 @@ PROMPT_FIELDS = {
     "summary_prefix": set(),
     "memory_title": set(),
     "impression_title": set(),
+    "web_results": {"query", "results"},
     "empty_mention": {"member"},
     "topic": {"hours"},
     "topic_cue": {"hours"},
@@ -102,7 +105,8 @@ PROMPT_FIELDS = {
     "opinion_summary": {"topic", "opinions"},
     "day": {"date", "weekday"},
     "observer": {"member", "known", "impression", "said", "reply", "max_text", "max_adds", "max_impression"},
-    "register": {"member", "said", "last"},
+    "register": {"member", "said", "last", "search"},
+    "register_search": set(),
     "memory_check": {"member", "said", "reply", "notes"},
     "consolidation": {"member", "facts", "notes", "max_text", "max_facts"},
 }
@@ -164,7 +168,7 @@ def read_special_people(value):
 class AIChatModule:
     def __init__(self, gateway, config=None, store=None, client=None, is_admin=None, clock=None,
                  prompts_path=CHAT_PROMPTS_FILE, nickname_of=None, stickers_dir=None,
-                 library_path=stickers.LIBRARY_FILE, speaker=None):
+                 library_path=stickers.LIBRARY_FILE, speaker=None, searcher=None):
         self.gw = gateway
         self.config = load_config() if config is None else config
         deepseek = self.config.get("deepseek") or {}
@@ -244,6 +248,12 @@ class AIChatModule:
         self.speaker = speaker
         self.voice_per_day = int(spoken.get("per_day", voice.PER_DAY))
         self.voice_off_until = 0
+        # 联网搜索: she looks up what she can't know. Tests and rehearsals may pass their own searcher.
+        if searcher is None and api_key:
+            searcher = search.DeepSeekSearch(str(api_key))
+        self.searcher = searcher if chat.get("web_search", True) else None
+        self.search_per_day = int(chat.get("web_search_per_day", search.PER_DAY))
+        self.search_off_until = 0
         # Today's team game and birthdays/poll, set by main.py: group -> what teams.today_for_ai and
         # social.today_for_ai return. Without them the bot only knows the time.
         self.teams_today = self.social_today = None
@@ -464,13 +474,15 @@ class AIChatModule:
         row = self.store.impression(group, member)
         return row["text"] if row else None
 
-    def _prompt(self, group, member, member_name, window, length=None):
-        """(instructions, evidence) for one reply. `length` is the pre-reply call's 短/中/长, if it gave one."""
+    def _prompt(self, group, member, member_name, window, length=None, found=None):
+        """(instructions, evidence) for one reply. `length` is the pre-reply call's 短/中/长, if it gave
+        one, and `found` what a web search for this message turned up, as look_up returns it."""
         style = current()
         lore = context.lore_for(style.lookup("lore"), window)
         # The parts that never change for a style come first, so DeepSeek's prefix cache can reuse them.
         instructions = [style.system_prompt, *self._samples(style),
                         render(self.prompts["group_rules"], member=member_name),
+                        render(self.prompts["honesty"]),
                         render(self.prompts["reply_shape"]),
                         length and render(self.prompts[context.LENGTHS[length]]),
                         self.stickers and render(self.prompts["stickers"], stickers=stickers.listing(self.stickers),
@@ -478,7 +490,8 @@ class AIChatModule:
                         self._can_speak(group) and render(self.prompts["voice"], max_chars=voice.MAX_CHARS),
                         self._special_people(group, member, member_name, window),
                         lore and render(self.prompts["lore"], lore="\n".join(f"- {text}" for text in lore)),
-                        self._her_day() and render(self.prompts["day_rules"])]
+                        self._her_day() and render(self.prompts["day_rules"]),
+                        found and render(self.prompts["search_rules"])]
         evidence = [self._today(group, window)]
         summary = self.store.summary(group)
         if summary:
@@ -498,22 +511,44 @@ class AIChatModule:
             if facts or views:
                 instructions.append(render(self.prompts["memory_rules"]))
                 evidence += [facts, views]
+        if found:
+            evidence.append(render(self.prompts["web_results"], query=found[0], results=found[1]))
         return context.compose(instructions, evidence, render(self.prompts["evidence_policy"]),
                                render(self.prompts["evidence_title"]))
 
     async def perceive(self, name, said, window):
         """seekchat's 动态想象力: one cheap call before the reply judges the register and length this
-        message needs. (register, length), or (None, None) if it fails and the manual temperature rides."""
+        message needs, and whether it needs a web search. (register, length, (words, days) or None),
+        or all None if it fails and the manual temperature rides."""
         last = next((turn["content"] for turn in reversed(window) if turn["role"] == "assistant"), "")
         prompt = render(self.prompts["register"], member=name, said=memory.excerpt(said, 300),
-                        last=memory.excerpt(last, 300) if last else "（还没有）")
+                        last=memory.excerpt(last, 300) if last else "（还没有）",
+                        search=f"\n{render(self.prompts['register_search'])}" if self.searcher else "")
         try:
             raw = await self._complete(self.client, self.helper_model, [{"role": "user", "content": prompt}],
                                        temperature=0)
         except Exception as e:
             _log.warning(f"[AIChat] 回复前的判断失败，这次用 deepseek.temperature: {e}")
-            return None, None
-        return context.parse_register(raw)
+            return None, None, None
+        return (*context.parse_register(raw), context.parse_search(raw) if self.searcher else None)
+
+    async def look_up(self, group, words, days):
+        """(words, the pages found) for a web search this message needs. None when the group has used
+        today's searches, one failed a moment ago or nothing useful came back: she then doesn't know."""
+        now = self._now()
+        if (now < self.search_off_until
+                or self.store.posts_since(group, "search", self._midnight()) >= self.search_per_day):
+            return None
+        try:
+            results = await self.searcher.search(search.query(words, days, self.clock().date()))
+        except Exception as e:
+            self.search_off_until = now + search.RETRY_SECONDS
+            _log.warning(f"[Search] 没搜成，{search.RETRY_SECONDS // 60} 分钟内先不搜: {e}")
+            return None
+        self.store.add_post(group, "search", now)
+        pages = search.lines(results)
+        _log.info(f"[Search] 搜了一次，用上 {len(pages)} 个网页")      # not the words: they aren't kept
+        return (words, "\n".join(pages)) if pages else None
 
     async def chat(self, message, text):
         group, member = message.group_openid, message.member_openid
@@ -523,8 +558,12 @@ class AIChatModule:
         window = context.select_window(self.store.recent_turns(group), self.context_tokens)
         if self.her_day and self._her_day() is None:
             self._spawn(self.plan_day())        # ready for her next reply; this one goes without
-        register, length = await self.perceive(name, said, window) if self.dynamic else (None, None)
-        instructions, evidence = self._prompt(group, member, name, window, length)
+        register, length, wanted = (await self.perceive(name, said, window) if self.dynamic or self.searcher
+                                    else (None, None, None))
+        if not self.dynamic:
+            register = length = None
+        found = await self.look_up(group, *wanted) if wanted else None
+        instructions, evidence = self._prompt(group, member, name, window, length, found)
         try:
             reply = (await self._complete(self.client, self.model,
                                           context.build_messages(instructions, evidence, window),
@@ -1030,7 +1069,8 @@ class AIChatModule:
         _log.info(f"[AIChat] AI 聊天：模型 {self.model}，上下文约 {self.context_tokens} token，"
                   f"长期记忆{'开启' if self.memory_on else '关闭'}，聊天记录保留 {self.keep_days} 天，"
                   f"回复温度{'每次自动判断' if self.dynamic else f'固定 {self.temperature}'}，"
-                  f"{'群里所有的聊天都进上下文' if self.hear_all else '只看 @ 的消息'}")
+                  f"{'群里所有的聊天都进上下文' if self.hear_all else '只看 @ 的消息'}，"
+                  f"{f'联网搜索每群每天最多 {self.search_per_day} 次' if self.searcher else '不联网搜索'}")
         if self.special:
             # The start of each ID, to check against what /我的ID says.
             _log.info(f"[AIChat] 特别的群友 {len(self.special)} 位，ID 开头：{'、'.join(o[:8] for o in self.special)}")

@@ -421,8 +421,10 @@ at startup** and names the line.
 | `stickers` | Added when there are stickers: how to send one, and the list of labels | `{stickers}`, `{max}` |
 | `voice` | Added when a voice is set up and the group's voice messages for today aren't used up: when and how to write 「[语音:…]」 | `{max_chars}` |
 | `lore` | The style's lore whose keywords came up in the last few turns, one line each | `{lore}` |
+| `honesty` | After the group rules: say so when she doesn't know. It limits live facts, group history and what she can do, and leaves general knowledge alone | |
 | `memory_rules` | Added when memories or impressions are sent: use them naturally, and don't pass one member's details to another | |
 | `day_rules` | Added when her day is planned: answer 「在干嘛」 from it, and mention it only now and then | |
+| `search_rules` | Added when a web search found something for this message: how to use it, with no links | |
 | `evidence_policy`, `evidence_title` | The rule that the summary and memories are data, not instructions, and the heading of that message | |
 | `now` | The first line of that message: Beijing time | `{date}`, `{weekday}`, `{time}` |
 | `today_teams`, `team_line` | Today's team game, one line per team (`ai_chat.game_state`) | `{teams}`; `{captain}`, `{members}` |
@@ -430,6 +432,7 @@ at startup** and names the line.
 | `recent_actions` | The bracketed actions in the bot's last few replies, which `reply_shape` says not to reuse | `{actions}` |
 | `her_day` | Her day, after the time: one line per thing in it | `{events}` |
 | `summary_prefix`, `memory_title` | The headings for the summary and the memories inside it | |
+| `web_results` | The pages a web search found, last in that message, one line each | `{query}`, `{results}` |
 | `empty_mention` | Stands in for a message that only @s the bot | `{member}` |
 | `topic`, `topic_cue` | When a group from `ai_chat.topics` has gone quiet: what kind of thing to say, after the persona; and the line that stands in for a member's message at the end of the chat | `{hours}` |
 | `digest_comment` | The prompt for the comment that ends the weekly digest | `{digest}` |
@@ -438,7 +441,8 @@ at startup** and names the line.
 | `summary` | The prompt for folding old chat into the group's summary | |
 | `observer` | After each reply: what the speaker said about themselves, each scored 1–10 for importance (below 4 isn't kept), which memories came up again, which are outdated, and her impression of them. It must ask for JSON: `{{"notes": [], "reinforce": [], "forget": [], "impression": null}}` | `{member}`, `{known}`, `{impression}`, `{said}`, `{reply}`, `{max_text}`, `{max_adds}`, `{max_impression}` |
 | `consolidation` | Each night, like sleep: fold a member's recent notes and long-term memories into a few general facts. It must ask for JSON: `{{"add": [], "update": [], "forget": []}}` | `{member}`, `{facts}`, `{notes}`, `{max_text}`, `{max_facts}` |
-| `register` | The judgement before each reply: 严谨, 平衡 or 奔放 (the temperature) and 短, 中 or 长 (the length line). It must ask for JSON: `{{"register": "…", "length": "…"}}` | `{member}`, `{said}`, `{last}` |
+| `register` | The judgement before each reply: 严谨, 平衡 or 奔放 (the temperature) and 短, 中 or 长 (the length line). It must ask for JSON: `{{"register": "…", "length": "…"}}` | `{member}`, `{said}`, `{last}`, `{search}` |
+| `register_search` | Added to `register` while web search is on: when to search, and how fresh the answer must be | |
 | `impression_title` | The heading for the impressions | |
 | `memory_check` | The prompt that checks the observer's new notes and keeps only what was meant seriously. It must ask for JSON: `{{"keep": []}}`. An unreadable answer keeps nothing | `{member}`, `{said}`, `{reply}`, `{notes}` |
 
@@ -595,6 +599,33 @@ These follow seekchat's idea that she feels alive through state and rhythm, not 
   on, so set `region: cn` for a key from the 国内 site (minimax.cn, formerly minimaxi.com);
   `voice_id` is a system voice such as `female-chengshu`, or the ID of a voice you cloned there. If
   MiniMax moves its address again, `voice.host` sets it, e.g. `host: https://api.minimaxi.chat`.
+
+### What she knows, and looking things up
+
+She knows the chat, the evidence, her `lore` and general knowledge. `honesty` tells her to say so
+when something falls outside that. Keep it narrow: an early version said to use only the evidence,
+and she started refusing questions she could answer.
+
+- **Tell her about the bot.** She isn't given the group rules or commands, and without them she
+  guesses. Add them as `lore`, so they ride along when they come up, and change them if the
+  numbers change in `config.yaml`:
+  ```yaml
+  lore:
+    - "潜水、踢、移出、群规：连续 30 天没有有效发言就会被移出群；第 25 天会 @ 提醒一次。"
+    - "请假、销假：群友自己发「@我 /请假 天数 原因」就能请假。"
+  ```
+- **Web search.** The judgement before each reply (`register`, with `register_search`) decides
+  whether a message needs live information and writes the search words, so most messages cost
+  nothing extra. `modules/ai/search.py` adds `lang:zh,en` and an `after:` date from the answer's
+  `fresh`: 今天 is 1 day, 这周 7 and 最近 90. The date matters: without it, weather comes back as
+  undated old pages that contradict each other. Up to 5 pages go into the evidence with their
+  site and date, but not their addresses, because QQ refuses messages with links. A search that
+  fails or finds nothing means she answers without it, and after a failure none are tried for 10
+  minutes. It uses `deepseek.api_key` and costs about $0.75 per 1000 searches. Set
+  `ai_chat.web_search_per_day` to change the limit of 30 a group, or `web_search: false` to stop.
+  The prompts tell her to leave out politics and other sensitive subjects, but pages come from the
+  open web, so watch what she says at first. The rehearsal below makes real searches and shows
+  them as 🔍.
 
 ### Trying changes before the group sees them
 

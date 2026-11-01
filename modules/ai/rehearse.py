@@ -9,7 +9,8 @@ config.yaml and style, and print her replies. For tuning a persona with evidence
     python -m modules.ai.rehearse --topic                   # then the group goes quiet: what she says
 
 Each line costs two small DeepSeek calls (the pre-reply judgement and the reply), and planning her
-day one more per run. Her voice lines show as [语音:…]; MiniMax isn't called.
+day one more per run; a line that needs a web search also makes one real search, shown as 🔍. Her
+voice lines show as [语音:…]; MiniMax isn't called.
 Nothing is saved: the chat and any memories vanish when it ends.
 """
 import argparse
@@ -132,9 +133,11 @@ async def play(script, config, run, model=None, remember=False, out=sys.stdout, 
             await ai.handle_ai_chat(message)
             await ai.settle()
         reply = " + ".join(gateway.sent[before:]) or "（没有回复）"
-        register, length = judged[-1] if len(judged) > i else (None, None)
+        register, length, wanted = judged[-1] if len(judged) > i else (None, None, None)
         temperature = ai.register_temperatures.get(register, ai.temperature)
         tag = f"{register or '默认'}·{length or '-'} {temperature}" if ai.dynamic else f"{temperature}"
+        if wanted:
+            tag += f" 🔍{wanted[0]} ({wanted[1]}天内)"
         print(f"{nickname}：{text}\n  → [{tag}] {reply}", file=out)
     replies = gateway.sent
     actions = [a for reply in replies for a in ACTION.findall(reply)]

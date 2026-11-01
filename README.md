@@ -104,6 +104,13 @@ seekchat (`Desktop/ai`):
 - **She knows what's going on.** Each request carries the Beijing time, today's teams in the team
   game, whose birthday it is and the open poll, so she can tease the night owls and play along.
   Statuses listed under `hide_from_ai` in `teams.yaml` are left out.
+- **She says when she doesn't know.** `prompts/chat.yaml` tells her not to make up live facts,
+  group history or things she can't do, and to answer general knowledge normally. Group rules and
+  commands reach her as `lore`, so she answers those correctly instead of guessing.
+- **She can look things up.** When a message needs live information (news, weather, exchange rates,
+  the latest version of something), the judgement before the reply writes a search, and DeepSeek's
+  Search API finds recent pages for her to answer from. Most messages need none. A group gets 30
+  searches a day (`ai_chat.web_search_per_day`), and `ai_chat.web_search: false` turns it off.
 - **She varies.** Before each reply a cheap flash call judges what the message needs, as in
   seekchat: 严谨 (0.6), 平衡 (1.0) or 奔放 (1.15) sets the temperature, and 短/中/长 the length. The
   actions in her last few replies are listed so she picks new ones.
@@ -211,7 +218,7 @@ sleep tracking. See [docs/TRANSLATION.md](docs/TRANSLATION.md) for every command
 main.py                 entry point: client, event routing, command chain
 core/                   config loading; style.py loads the style files
 modules/
-  ai/                   AI chat: ai_chat.py runs it, context.py builds each request,
+  ai/                   AI chat: ai_chat.py runs it, context.py builds each request, search.py looks things up,
                         memory.py reads the memory notes and checks, store.py keeps data/chat.db,
                         memory_admin.py lists and edits memories, stickers.py reads the sticker
                         folder, rehearse.py tries a persona; /deepseek
