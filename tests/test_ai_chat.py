@@ -6,9 +6,11 @@ import os
 import shutil
 import sqlite3
 import tempfile
+import time
 import unittest
 from datetime import timedelta
 from types import SimpleNamespace
+from unittest import mock
 from core.config import root_path
 from core.style import DEFAULT_STYLE, StyleBook
 from modules.ai import context, memory, memory_admin, rehearse, search, vision, voice
@@ -842,6 +844,14 @@ class SeeingPicturesTest(AIChatTestCase):
         self.looking(gallery_dir=self.gallery("遐蝶"))
         self.ai_client.answers["characters"] = [RuntimeError("500")]
         self.assertEqual(await self.show(), "回复1")
+        self.assertNotIn("这条消息的图里可能是", self.everything_in(self.ai_client.requests("chat")[-1]))
+
+    async def test_a_slow_check_only_costs_the_name(self):
+        self.looking(gallery_dir=self.gallery("遐蝶"))
+        self.ai_client.hooks["characters"] = lambda: time.sleep(0.2)
+        self.ai_client.answers["characters"] = ['{"characters": ["遐蝶"]}']
+        with mock.patch("modules.ai.gallery.CHECK_SECONDS", 0.01):
+            self.assertEqual(await self.show(), "回复1")
         self.assertNotIn("这条消息的图里可能是", self.everything_in(self.ai_client.requests("chat")[-1]))
 
     async def test_a_group_not_listed_loads_no_gallery(self):

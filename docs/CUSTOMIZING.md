@@ -676,23 +676,34 @@ ai_chat:
   so a picture answering something the group was saying without her reaches her with no context.
 - **Naming characters.** Don't count on DeepSeek for this. On fan art it named 1 newer character in
   34, and when pressed it guessed wrong with confidence. Told not to guess, it refused even ones it
-  knew. So put one clear picture of each character your group posts in `local/characters/`, named
-  after them, such as `遐蝶.jpg`, and check the folder:
+  knew. So put one clear, full-body picture of each character your group posts in
+  `local/characters/`, named after them, such as `遐蝶.jpg`, and check the folder:
   ```bash
   .venv/bin/python -m modules.ai.gallery
   ```
-  When no real people are in a picture, a separate call compares it with these. With 20 characters,
-  over two runs, it named 31 of 40 new pictures, gave no name for 8 and a wrong one for 1, and named
-  nobody in 18 pictures that weren't in the gallery. She only gets a name from this folder, as
-  something that might be right, so she says 「看着像遐蝶」. Any other name in the answer is dropped,
-  and if the check fails she goes without a name. Older favourites need a picture too: told not to
-  guess, she won't name them on her own.
+  When no real people are in a picture, a separate call compares it with these. She only gets a name
+  from this folder, as something that might be right, so she says 「看着像遐蝶」. Any other name in
+  the answer is dropped. If the check fails, or takes more than 15 seconds, she goes without a name.
+  Older favourites need a picture too: told not to guess, she won't name them on her own.
 
-  One picture each, at full size, up to 500 KB. A second picture made it worse (3 wrong names and no
-  more right), and so did shrinking them: at 512 px it got 12 of 20 with 4 wrong. Keep the list to
-  characters your group really posts. Each adds about 500 tokens and its bytes to every check, which
-  took about 2 seconds with 20. DeepSeek's cache keeps it cheap: from about 0.3 US cents a check at
-  peak price down to a tiny fraction of that once the same gallery has been used.
+  With 20 characters and 71 clear pictures of one character each, chosen so a person could recognise
+  them, it named 66, gave no name for 3 and a wrong one for 2. It named someone in 1 of 8 pictures of
+  characters outside the gallery. Every wrong name was a pink or purple-haired character called 昔涟.
+  Harder pictures, such as seasonal costumes, did worse: 34 of 44. What the reference pictures look
+  like matters too, on harder pictures:
+
+  | Reference pictures | Right | Wrong names |
+  |---|---|---|
+  | Clean full-body art, such as the wikis' in-game pictures | 34 of 44 | 2 |
+  | Splash art, where effects surround a small figure | 27 of 44 | 3 |
+  | Two pictures per character | 15 of 20 | 3 |
+  | Shrunk to 512 px | 12 of 20 | 4 |
+
+  One picture each, at full size, up to 500 KB. Keep it to about 20 characters your group really
+  posts. Each adds about 500 tokens and its bytes to every check, which took 2 to 6 seconds with 20.
+  With 60 it got 11 of 18 and took about 47 seconds, so the folder stops at 30. DeepSeek's cache keeps
+  it cheap: from about 0.3 US cents a check at peak price down to a tiny fraction of that once the
+  same gallery has been used.
 - **Memories.** What's in a picture never becomes a memory: the note-taker gets the member's words,
   not the picture or her reply.
 - **What she can't do.** An animated GIF shows her only its first frame. She reads text and charts

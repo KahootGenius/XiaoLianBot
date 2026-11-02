@@ -5,8 +5,9 @@ not to guess, it refused even ones it knew. With a labelled picture of each char
 it got 31 of 40, with 1 wrong name. So a character's name only ever comes from here, and anything
 else is dropped.
 
-The pictures are private, in local/characters/, never on GitHub. One clear picture of each character,
-named after them:
+The pictures are private, in local/characters/, never on GitHub. One clear, full-body picture of each
+character, named after them. Art full of effects, where the character is small, does worse: 27 of 44
+against 34, and it mixed up 遐蝶 and 昔涟 by their colours:
 
     local/characters/遐蝶.jpg
     local/characters/芙宁娜.png
@@ -15,8 +16,9 @@ named after them:
 
 One each, because a second did no good: 15 right of 20 with 3 wrong names. Keep their size, too: at
 512 px it got 12 of 20 with 4 wrong. They all go to DeepSeek with every picture being checked, each
-adding about 500 tokens, so have only the characters the group really posts. DeepSeek's cache keeps
-that cheap: a request that starts the same costs a fiftieth as much.
+adding about 500 tokens, so have only the characters the group really posts: about 20 worked, and 60
+was slow and worse. DeepSeek's cache keeps it cheap: a request that starts the same costs a fiftieth
+as much.
 """
 import base64
 import os
@@ -31,7 +33,8 @@ _log = logging.get_logger()
 GALLERY_DIR = os.path.join(LOCAL_DIR, "characters")
 FORMATS = (".png", ".jpg", ".jpeg", ".gif", ".webp")
 MAX_BYTES = 500 * 1024          # each one travels with every picture checked
-MAX_PICTURES = 60               # about 33,000 tokens, or 1 US cent a picture at peak price uncached
+MAX_PICTURES = 30               # at 60 it got 11 of 18, and each check took about 47 seconds
+CHECK_SECONDS = 15              # how long a check may hold up her reply: it can be slow, a name isn't vital
 MAX_NAME = 30
 
 
