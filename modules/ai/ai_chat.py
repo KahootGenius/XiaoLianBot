@@ -107,6 +107,7 @@ PROMPT_FIELDS = {
     "someone": set(),
     "person_check": set(),
     "character_reference": {"character"},
+    "character_reference_note": {"character", "note"},
     "character_check": set(),
     "topic": {"hours"},
     "topic_cue": {"hours"},
@@ -628,8 +629,9 @@ class AIChatModule:
         pictures and these. If it fails or takes too long she goes without a name."""
         if not self.references:
             return []
-        references = [(render(self.prompts["character_reference"], character=name), url)
-                      for name, url in self.references]
+        references = [(render(self.prompts["character_reference_note" if note else "character_reference"],
+                              character=name, note=note), url)
+                      for name, url, note in self.references]
         message = context.compare_pictures(references, render(self.prompts["character_check"]), pictures)
         try:
             raw = await asyncio.wait_for(self._complete(self.client, self.vision_model,
@@ -638,7 +640,7 @@ class AIChatModule:
         except Exception as e:
             _log.warning(f"[Vision] 没比对出图里的角色: {type(e).__name__} {str(e)[:200]}")
             return []
-        return context.parse_characters(raw, {name for name, _ in self.references})
+        return context.parse_characters(raw, {name for name, _, _ in self.references})
 
     async def _sight(self, group, images):
         """What she has of this message's pictures. Just after real people were in one nothing

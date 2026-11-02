@@ -119,8 +119,9 @@ seekchat (`Desktop/ai`):
   the sender, so she can't pin a stranger on someone else she remembers. A group gets 50 pictures a
   day, and neither pictures nor links are kept.
 - **She knows the characters you show her.** DeepSeek can't name most anime fan art, so put a picture
-  of each character your group posts in `local/characters/`, named after them. Pictures without real
-  people are compared with those, and she only ever gets a name from that folder.
+  of each character your group posts in `local/characters/`, named after them, with an optional note
+  on their looks. Pictures without real people are compared with those, and she only ever gets a
+  name from that folder.
 - **She varies.** Before each reply a cheap flash call judges what the message needs, as in
   seekchat: 严谨 (0.6), 平衡 (1.0) or 奔放 (1.15) sets the temperature, and 短/中/长 the length. The
   actions in her last few replies are listed so she picks new ones.
@@ -230,7 +231,7 @@ core/                   config loading; style.py loads the style files
 modules/
   ai/                   AI chat: ai_chat.py runs it, context.py builds each request, search.py looks things up,
                         vision.py fetches pictures from QQ and says what she has of them,
-                        gallery.py reads the character reference pictures,
+                        gallery.py reads the character reference pictures and notes,
                         memory.py reads the memory notes and checks, store.py keeps data/chat.db,
                         memory_admin.py lists and edits memories, stickers.py reads the sticker
                         folder, rehearse.py tries a persona; /deepseek

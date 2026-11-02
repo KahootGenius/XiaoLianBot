@@ -442,7 +442,7 @@ at startup** and names the line.
 | `picture_mark` | Goes in front of a message with a picture in the transcript, which keeps only this | |
 | `someone` | Stands in for other members' nicknames in her replies, when real people are in a picture | |
 | `person_check` | Sent with only the pictures before she looks: are real people in them? It must ask for JSON: `{{"people": 数量}}`. Only 0 counts as none | |
-| `character_reference`, `character_check` | Sent with the gallery and the pictures, when no real people are in them: the line before each reference picture, and the question after them. The question must ask for JSON: `{{"characters": ["名字"]}}`. Names not in the gallery are dropped | `{character}` |
+| `character_reference`, `character_reference_note`, `character_check` | Sent with the gallery and the pictures, when no real people are in them: the line before each reference picture, the same line for a character with a note, and the question after them. The question must ask for JSON: `{{"characters": ["名字"]}}`. Names not in the gallery are dropped | `{character}`, and `{note}` in the second |
 | `topic`, `topic_cue` | When a group from `ai_chat.topics` has gone quiet: what kind of thing to say, after the persona; and the line that stands in for a member's message at the end of the chat | `{hours}` |
 | `digest_comment` | The prompt for the comment that ends the weekly digest | `{digest}` |
 | `opinion_summary` | With the persona, when a 征集意见 ends with 3 or more opinions: sum them up after the list (`ai_chat.opinion_summary`). The opinions come without who wrote them | `{topic}`, `{opinions}` |
@@ -686,11 +686,22 @@ ai_chat:
   the answer is dropped. If the check fails, or takes more than 15 seconds, she goes without a name.
   Older favourites need a picture too: told not to guess, she won't name them on her own.
 
+  Characters with similar colours can get mixed up, so you can add a short note on each one's looks
+  to `local/characters/notes.yaml`, one line each, with the name as in the picture's file name. Give
+  the hair colour, then a feature or two:
+  ```yaml
+  花火: 黑色双马尾，红衣，狐狸面具
+  火花: 银白双马尾，红白衣服，兔耳发饰
+  ```
+  Notes are optional, up to 40 characters each, and the folder check names any that don't match a
+  picture. They only go to the character check, so she never sees them herself.
+
   With 20 characters and 71 clear pictures of one character each, chosen so a person could recognise
-  them, it named 66, gave no name for 3 and a wrong one for 2. It named someone in 1 of 8 pictures of
-  characters outside the gallery. Every wrong name was a pink or purple-haired character called 昔涟.
-  Harder pictures, such as seasonal costumes, did worse: 34 of 44. What the reference pictures look
-  like matters too, on harder pictures:
+  them, it named 66 without notes, with 2 wrong names, and 68 or 69 with notes, with none. It named
+  someone in 1 of 8 pictures of characters outside the gallery either way. Without notes, every wrong
+  name was a pink or purple-haired character called 昔涟. Harder pictures, such as seasonal costumes,
+  did worse without notes: 34 of 44. What the reference pictures look like matters too, on harder
+  pictures:
 
   | Reference pictures | Right | Wrong names |
   |---|---|---|

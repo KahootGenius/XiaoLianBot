@@ -174,6 +174,8 @@ person_check: |-
 # 图里没有真人、local/characters/ 里有参考图时，比对图里是不是这些角色。这次只带参考图、这张图和这几句话。
 # 每张参考图前面一行，{character}：文件名里的角色名字
 character_reference: "这是「{character}」："
+# local/characters/notes.yaml 里写了备注的角色换用这一行，{note}：那条备注
+character_reference_note: "这是「{character}」（{note}）："
 # 接在所有参考图后面，再后面是要认的图。必须要求回 JSON：{{"characters": ["名字"]}}；不在参考图里的名字会被丢掉
 character_check: |-
   最后的图里有上面的角色吗？同一个角色在不同画师笔下画风会变，看发色、发型、瞳色、服装和饰品。

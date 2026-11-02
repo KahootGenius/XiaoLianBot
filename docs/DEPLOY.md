@@ -335,7 +335,7 @@ why: look for `表情包` or `[Stickers]`.
 
 ## Character pictures
 
-The reference pictures for AI chat live in `local/characters/`
+The reference pictures for AI chat and their notes live in `local/characters/`
 ([CUSTOMIZING](CUSTOMIZING.md#pictures)), so step 7 brings them along. To send a new or changed
 folder later, run this in the bot's folder on your computer, with the same user as in step 1:
 

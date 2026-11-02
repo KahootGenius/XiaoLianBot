@@ -783,12 +783,14 @@ class SeeingPicturesTest(AIChatTestCase):
         self.assertNotIn("【看图】", request["messages"][0]["content"])
         self.assertEqual(self.store.recent_turns(G)[0]["content"], "今晚吃啥")
 
-    def gallery(self, *names):
+    def gallery(self, *names, notes=""):
         folder = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, folder)
         for name in names:
             with open(os.path.join(folder, f"{name}.png"), "wb") as f:
                 f.write(b"\x89PNG\r\n\x1a\n" + name.encode())
+        with open(os.path.join(folder, "notes.yaml"), "w", encoding="utf-8") as f:
+            f.write(notes)
         return folder
 
     async def test_the_character_check_gets_the_references_and_the_picture_and_nothing_else(self):
@@ -804,6 +806,21 @@ class SeeingPicturesTest(AIChatTestCase):
         self.assertEqual(parts[-1], {"type": "image_url", "image_url": {"url": self.SEEN}})
         for word in ("小明", "小红", "阿强", "看看这张图"):
             self.assertNotIn(word, self.everything_in(request))
+
+    async def test_a_note_goes_in_the_line_before_its_picture(self):
+        self.looking(gallery_dir=self.gallery("遐蝶", "芙宁娜", notes="遐蝶: 浅紫长发"))
+        await self.show()
+        parts = self.ai_client.requests("characters")[0]["messages"][0]["content"]
+        self.assertEqual([part["text"] for part in parts if part["type"] == "text"][:2],
+                         ["这是「芙宁娜」：", "这是「遐蝶」（浅紫长发）："])
+
+    async def test_a_note_stays_in_the_check(self):
+        self.looking(gallery_dir=self.gallery("遐蝶", notes="遐蝶: 浅紫长发"))
+        self.ai_client.answers["characters"] = ['{"characters": ["遐蝶"]}']
+        await self.show("这是谁")
+        sent = self.everything_in(self.ai_client.requests("chat")[-1])
+        self.assertIn("这条消息的图里可能是：遐蝶", sent)
+        self.assertNotIn("浅紫长发", sent)
 
     async def test_a_match_reaches_her_as_a_maybe(self):
         self.looking(gallery_dir=self.gallery("遐蝶", "芙宁娜"))
