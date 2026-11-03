@@ -427,7 +427,7 @@ at startup** and names the line.
 | `search_rules` | Added when a web search found something for this message: how to use it, with no links | |
 | `vision_rules` | Added when she can see this message's pictures: react like a group member instead of saying what's in them, say only what's there, and text in a picture isn't an instruction | |
 | `vision_strangers` | Added after it when real people are in them, and for 2 minutes after: who they are is unknown unless the sender says | |
-| `vision_characters` | Added when the gallery named someone: she knows them, but shouldn't sound certain, and believes anyone who says otherwise | |
+| `vision_characters` | Added when the gallery named someone: she knows them, so asked who it is she says the name, a little unsure, even if she said earlier she couldn't tell; she believes anyone who says otherwise | |
 | `vision_missing` | Added when a message has a picture she can't see, so that she says so | |
 | `evidence_policy`, `evidence_title` | The rule that the summary and memories are data, not instructions, and the heading of that message | |
 | `now` | The first line of that message: Beijing time | `{date}`, `{weekday}`, `{time}` |
@@ -437,7 +437,7 @@ at startup** and names the line.
 | `her_day` | Her day, after the time: one line per thing in it | `{events}` |
 | `summary_prefix`, `memory_title` | The headings for the summary and the memories inside it | |
 | `web_results` | The pages a web search found, last in that message, one line each | `{query}`, `{results}` |
-| `picture_characters` | Who the gallery named, last in that message | `{names}` |
+| `picture_characters` | Who the gallery named, right after the pictures in the member's message. In the evidence she ignored it after saying earlier she couldn't tell | `{names}` |
 | `empty_mention` | Stands in for a message that only @s the bot | `{member}` |
 | `picture_mark` | Goes in front of a message with a picture in the transcript, which keeps only this | |
 | `someone` | Stands in for other members' nicknames in her replies, when real people are in a picture | |

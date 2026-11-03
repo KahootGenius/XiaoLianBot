@@ -546,8 +546,6 @@ class AIChatModule:
                 evidence += [facts, views]
         if found:
             evidence.append(render(self.prompts["web_results"], query=found[0], results=found[1]))
-        if sight.characters:
-            evidence.append(render(self.prompts["picture_characters"], names=join(sight.characters)))
         return context.compose(instructions, evidence, render(self.prompts["evidence_policy"]),
                                render(self.prompts["evidence_title"]))
 
@@ -654,9 +652,12 @@ class AIChatModule:
         return sight
 
     async def _answer(self, group, member, name, window, length, found, sight, register):
-        """Her reply. If DeepSeek can't take the pictures she answers without them, and says so."""
+        """Her reply. If DeepSeek can't take the pictures she answers without them, and says so.
+        Who the character check found goes right after the pictures: among the reference notes
+        she kept to an earlier 「认不出来」 in the chat, and named the character 3 times in 10."""
         instructions, evidence = self._prompt(group, member, name, window, length, found, sight)
-        messages = context.build_messages(instructions, evidence, window, sight.pictures)
+        hint = render(self.prompts["picture_characters"], names=join(sight.characters)) if sight.characters else ""
+        messages = context.build_messages(instructions, evidence, window, sight.pictures, hint)
         temperature = self.register_temperatures.get(register, self.temperature)
         if not sight.pictures:
             return await self._complete(self.client, self.model, messages, thinking=self.thinking,

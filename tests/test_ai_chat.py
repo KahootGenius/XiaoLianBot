@@ -819,17 +819,19 @@ class SeeingPicturesTest(AIChatTestCase):
         self.ai_client.answers["characters"] = ['{"characters": ["遐蝶"]}']
         await self.show("这是谁")
         sent = self.everything_in(self.ai_client.requests("chat")[-1])
-        self.assertIn("这条消息的图里可能是：遐蝶", sent)
+        self.assertIn("（看图结果：图里可能是遐蝶）", sent)
         self.assertNotIn("浅紫长发", sent)
 
-    async def test_a_match_reaches_her_as_a_maybe(self):
+    async def test_a_match_follows_the_picture_as_a_maybe(self):
         self.looking(gallery_dir=self.gallery("遐蝶", "芙宁娜"))
         self.ai_client.answers["characters"] = ['{"characters": ["遐蝶"]}']
         await self.show("这是谁")
-        sent = self.everything_in(self.ai_client.requests("chat")[-1])
-        self.assertIn("这条消息的图里可能是：遐蝶", sent)
-        self.assertIn("别说得百分之百确定", sent)
-        self.assertEqual(self.ai_client.requests("chat")[-1]["messages"][-1]["content"][1]["image_url"]["url"], self.SEEN)
+        messages = self.ai_client.requests("chat")[-1]["messages"]
+        self.assertEqual(messages[-1]["content"][1:], [{"type": "image_url", "image_url": {"url": self.SEEN}},
+                                                       {"type": "text", "text": "（看图结果：图里可能是遐蝶）"}])
+        self.assertIn("多半没错", messages[0]["content"])
+        self.assertNotIn("遐蝶", json.dumps(messages[:-1], ensure_ascii=False))
+        self.assertEqual(self.store.recent_turns(G)[-2]["content"], "[图片] 这是谁")
 
     async def test_only_gallery_names_get_through(self):
         for answer in ('{"characters": ["爱莉希雅"]}', '{"characters": [["遐蝶"], {"a": 1}, 3, null]}', '{"characters": "遐蝶"}',
@@ -837,7 +839,7 @@ class SeeingPicturesTest(AIChatTestCase):
             self.looking(gallery_dir=self.gallery("遐蝶"))
             self.ai_client.answers["characters"] = [answer]
             await self.show()
-            self.assertNotIn("这条消息的图里可能是", self.everything_in(self.ai_client.requests("chat")[-1]), answer)
+            self.assertNotIn("看图结果：", self.everything_in(self.ai_client.requests("chat")[-1]), answer)
 
     async def test_a_name_said_twice_counts_once(self):
         self.looking(gallery_dir=self.gallery("遐蝶"))
@@ -861,7 +863,7 @@ class SeeingPicturesTest(AIChatTestCase):
         self.looking(gallery_dir=self.gallery("遐蝶"))
         self.ai_client.answers["characters"] = [RuntimeError("500")]
         self.assertEqual(await self.show(), "回复1")
-        self.assertNotIn("这条消息的图里可能是", self.everything_in(self.ai_client.requests("chat")[-1]))
+        self.assertNotIn("看图结果：", self.everything_in(self.ai_client.requests("chat")[-1]))
 
     async def test_a_slow_check_only_costs_the_name(self):
         self.looking(gallery_dir=self.gallery("遐蝶"))
@@ -869,7 +871,7 @@ class SeeingPicturesTest(AIChatTestCase):
         self.ai_client.answers["characters"] = ['{"characters": ["遐蝶"]}']
         with mock.patch("modules.ai.gallery.CHECK_SECONDS", 0.01):
             self.assertEqual(await self.show(), "回复1")
-        self.assertNotIn("这条消息的图里可能是", self.everything_in(self.ai_client.requests("chat")[-1]))
+        self.assertNotIn("看图结果：", self.everything_in(self.ai_client.requests("chat")[-1]))
 
     async def test_a_group_not_listed_loads_no_gallery(self):
         self.make(gallery_dir=self.gallery("遐蝶"))

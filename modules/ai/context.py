@@ -189,11 +189,11 @@ def compare_pictures(references, question, pictures):
     return parts + with_pictures(question, pictures)
 
 
-def build_messages(instructions, evidence, window, pictures=()):
+def build_messages(instructions, evidence, window, pictures=(), hint=""):
     """The chat-completion messages. Consecutive turns from the same side are joined, since
     several members may speak before the bot answers; the transcript starts at a member's turn.
     `pictures` go with the last message, the one that brought them: DeepSeek only takes them
-    in a member's message."""
+    in a member's message. `hint`, who the character check found, follows them there."""
     messages = [{"role": "system", "content": instructions}]
     if evidence:
         messages.append({"role": "system", "content": evidence})
@@ -208,4 +208,6 @@ def build_messages(instructions, evidence, window, pictures=()):
             messages.append({"role": role, "content": turn_text(turn)})
     if pictures:
         messages[-1]["content"] = with_pictures(messages[-1]["content"], pictures)
+        if hint:
+            messages[-1]["content"].append({"type": "text", "text": hint})
     return messages
