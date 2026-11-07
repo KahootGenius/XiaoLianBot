@@ -349,7 +349,8 @@ The tests cover:
 - **choosing styles per group** in `config.yaml`, and checking a file with
   `python -m core.style check 名字`
 - **lines for particular people:** a `key@admin` version of any line, such as the admin commands
-  that only admins see at the end of `/帮助`, or versions for groups of people you name
+  that only admins see at the end of `/帮助`, or versions for groups of people you name; badges and
+  what AI chat is told about who's talking can have them too
 - **renaming commands**
 - **adding achievements:** most new badges are a few lines in `prompts/achievements.yaml`
 - **changing the team game:** new statuses and captain actions in `prompts/teams.yaml`

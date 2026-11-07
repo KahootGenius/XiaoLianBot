@@ -16,7 +16,7 @@ from datetime import datetime, time as dtime, timedelta
 import pytz
 from botpy import logging
 from core.config import root_path
-from core.style import STYLES, join, t
+from core.style import ADMIN, STYLES, join, t
 from modules.manager import achievements, classifier, digest, rules
 from modules.manager.openapi import OpenAPIError
 from modules.manager.store import Store
@@ -138,6 +138,9 @@ class ManagerModule:
         self.gone_hooks = []       # f(group, member), called when someone leaves, such as team rosters
         self.expired_hooks = []    # f(group, member), called when DEPARTED_RETENTION_DAYS after that is up
         self.digest_commenter = None   # async f(digest text) -> a closing comment or None (AI chat)
+        if self.styles.configured:
+            for problem in achievements.audience_problems({ADMIN, *self.styles.audiences}):
+                _log.warning(f"[Manager] {problem}")
         self.task = None
         self.commands = self._build_commands()
 
@@ -161,6 +164,14 @@ class ManagerModule:
             return True
         row = self.store.member(group, member)
         return bool(row and row["role"] in ("owner", "admin"))
+
+    def audiences_of(self, group, member, role=None):
+        """Who a member is, for lines and badges with versions for particular people (key@admin):
+        config.yaml's audiences that list them, then admin."""
+        found = self.styles.audiences_of(member)
+        if self.is_admin(group, member, role):
+            found.append(ADMIN)
+        return found
 
     def known_nickname(self, group, member):
         """The nickname a member last posted under in a managed group, or None."""
@@ -430,7 +441,7 @@ class ManagerModule:
         for code in achievements.qualified(counters, streak, comeback, today):
             if not self.store.award(group, member, code, ts):
                 continue
-            badge = achievements.BY_CODE[code]
+            badge = achievements.BY_CODE[code].as_for(self.audiences_of(group, member))
             self.store.log(ts, group, member, "achievement", code)
             if badge.announce and self.settings.announce_achievements and self._may_announce(group, ts):
                 texts.append(t("manager.achievement", member=self._name(nickname),
@@ -614,8 +625,10 @@ class ManagerModule:
         member = message.member_openid
         earned = {r["code"]: r["earned_at"] for r in self.store.achievements(group, member)}
         holders = self.store.badge_holders(group)
-        mine = [b for b in achievements.BADGES if b.code in earned]
-        locked = [b for b in achievements.BADGES if b.code not in earned]
+        seen = self.audiences_of(group, member, message.role)
+        badges = [b.as_for(seen) for b in achievements.BADGES]
+        mine = [b for b in badges if b.code in earned]
+        locked = [b for b in badges if b.code not in earned]
         secret = sum(b.hidden for b in locked)
         everything = "全部" in args
 
@@ -644,6 +657,7 @@ class ManagerModule:
         goal = achievements.next_goal(earned, self.store.counters(group, member), streak)
         if goal:
             badge, (have, need) = goal
+            badge = badge.as_for(seen)
             lines.append(t("manager.badges.next", badge=f"{badge.icon}{badge.name}", have=have, need=need))
         buttons = [("我的状态", "/我的状态"), ("排行", "/排行")]
         await self._reply(message, "\n".join(lines),
@@ -1374,7 +1388,8 @@ class ManagerModule:
             busiest_hour=self.store.busiest_hour(group, since, ts),
             top=top,
             newcomers=self.store.newcomers(group, since, ts, tracking_start),
-            badges=self.store.achievements_since(group, since),
+            badges=[(r["nickname"], achievements.BY_CODE[r["code"]].as_for(self.audiences_of(group, r["member_openid"])))
+                    for r in self.store.achievements_since(group, since) if r["code"] in achievements.BY_CODE],
             on_leave=len(self.store.active_leaves(group, ts)),
         )
 

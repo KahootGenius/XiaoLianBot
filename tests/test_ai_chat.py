@@ -929,6 +929,7 @@ lore:
   - "图书馆、借书：图书馆每天九点开门。"
   - "期末：期末考试在下个月。"
   - "这一行没有冒号"
+talking_to@vip: 现在和你说话的是贵宾。
 """
 
     def setUp(self):
@@ -938,7 +939,7 @@ lore:
         with open(os.path.join(folder, "桃子.yaml"), "w", encoding="utf-8") as f:
             f.write(self.PEACH)
         self.book = StyleBook(directory=folder)
-        self.book.configure({"style": "桃子"})
+        self.book.configure({"style": "桃子", "audiences": {"vip": ["A"]}})
 
     async def test_examples_and_only_the_lore_that_comes_up(self):
         self.make()
@@ -963,6 +964,15 @@ lore:
         with self.book.scope(G):
             await self.ai.handle_ai_chat(message)
         self.assertNotIn("图书馆每天九点开门", self.last_chat()[0]["content"])
+
+    async def test_she_can_be_told_who_is_talking(self):
+        self.make()
+        with self.book.scope(G, audiences=["vip"]):
+            await self.say("A", "你好")
+        self.assertIn("现在和你说话的是贵宾。", self.last_chat()[0]["content"])
+        with self.book.scope(G):
+            await self.say("B", "你好")
+        self.assertNotIn("贵宾", self.last_chat()[0]["content"])
 
     async def test_the_default_style_adds_nothing(self):
         self.make()

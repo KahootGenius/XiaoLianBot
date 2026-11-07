@@ -131,6 +131,12 @@ help:
 - **A version your style leaves out comes from 小莲,** like any other line. So the shipped
   `help.admin@admin` still gives admins the list in a style that only rewrites `help.admin`.
 - **`system_prompt@admin` works too:** AI chat then uses that persona when it replies to an admin.
+- **`talking_to@captains` tells AI chat who's talking,** without a second persona. It goes after the
+  persona when someone in that group @s her, such as 「现在和你说话的是组队游戏的队长。」 Everyone else
+  gets nothing.
+- **Badges can have versions too:** `name@captains` and `desc@captains` next to `name` and `desc` in
+  `prompts/achievements.yaml`. They go by who holds the badge, not who's reading, so the weekly
+  digest names each person's badge in their own version.
 - **The checker covers versions:** it reports versions of lines 小莲 doesn't have, versions for
   groups `config.yaml` doesn't name, and placeholders the code won't fill.
 
@@ -172,7 +178,8 @@ These are deliberately not part of a style:
 - **Console log messages** and the notes in the database's audit log.
 - **The web member table's labels**: column names, filter buttons and buttons, in
   `modules/manager/dashboard.py`. The status words and reasons inside the table do follow the style.
-- **Badge names and descriptions**, which are in `prompts/achievements.yaml`.
+- **Badge names and descriptions**, which are in `prompts/achievements.yaml`, with their own versions
+  for particular people.
 - **Team-game actions and what the bot says after each one** (`say:`), which are in
   `prompts/teams.yaml`. A `say` line can use `{name}`, so it still speaks with the current
   style's name. The team game's fixed commands, `/队伍`, `/解散队伍` and `/清空队伍`, are in
@@ -210,6 +217,7 @@ These are deliberately not part of a style:
   at_least: 200
   # announce: false        # optional: unlock silently
   # hidden: true           # optional: /成就 doesn't name it until it's earned
+  # name@captains: 周末队长  # optional: a version for particular people (see "Lines for particular people")
 ```
 
 Each badge needs exactly one condition:

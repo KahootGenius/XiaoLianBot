@@ -11,6 +11,9 @@
 #   announce  解锁时是否在群里祝贺，可省略，默认 true
 #   hidden    隐藏成就，可省略，默认 false。写 true 的话，解锁前 /成就 不显示它的名字，
 #             只说「还有几个隐藏成就」
+#   name@类别、desc@类别   给特定的群友另写一版名称或说明，可省略，像风格文件里的 key@类别。
+#             类别是 admin 或 config.yaml 的 audiences 里的名字，例如 name@captains。
+#             按成就的主人选：谁获得的，祝贺、/成就 和每周小报里就显示谁的那一版
 # 再加上下面四种条件中的一种（只能写一种）：
 #   counter + at_least   某项计数达到多少，例如 counter: valid 和 at_least: 100
 #   streak               连续多少天都有有效发言，例如 streak: 7

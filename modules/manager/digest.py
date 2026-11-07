@@ -1,6 +1,5 @@
 """The weekly 群聊小报 post."""
 from core.style import join, t
-from modules.manager.achievements import BY_CODE
 
 
 def _names(rows, limit):
@@ -11,8 +10,8 @@ def _names(rows, limit):
 def build(start, end, totals, previous_valid, busiest_hour, top, newcomers, badges, on_leave):
     """Compose the digest text from pre-computed numbers, in the current style.
 
-    start/end are dates; top is [(nickname, count)]; newcomers and badges are
-    store rows; on_leave is a count.
+    start/end are dates; top is [(nickname, count)]; newcomers are store rows;
+    badges are [(nickname, Badge)], each as its holder's version; on_leave is a count.
     """
     lines = [t("manager.digest.intro", start=f"{start.month}/{start.day}", end=f"{end.month}/{end.day}")]
 
@@ -29,10 +28,10 @@ def build(start, end, totals, previous_valid, busiest_hour, top, newcomers, badg
         lines.append(t("manager.digest.top", list=join(items)))
     if newcomers:
         lines.append(t("manager.digest.newcomers", names=_names(newcomers, 5)))
-    announced = [b for b in badges if BY_CODE.get(b["code"]) and BY_CODE[b["code"]].announce]
+    announced = [(nickname, badge) for nickname, badge in badges if badge.announce]
     if announced:
-        items = [t("manager.digest.badge_item", member=b["nickname"] or t("common.someone"),
-                   badge=BY_CODE[b["code"]].name) for b in announced[:4]]
+        items = [t("manager.digest.badge_item", member=nickname or t("common.someone"), badge=badge.name)
+                 for nickname, badge in announced[:4]]
         extra = t("manager.digest.more_badges", count=len(announced)) if len(announced) > 4 else ""
         lines.append(t("manager.digest.badges", list=join(items) + extra))
     if on_leave:

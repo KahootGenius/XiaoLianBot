@@ -518,6 +518,7 @@ class AIChatModule:
                                                  max=stickers.MAX_PER_REPLY),
                         self._can_speak(group) and render(self.prompts["voice"], max_chars=voice.MAX_CHARS),
                         not alone and self._special_people(group, member, member_name, window),
+                        t("talking_to"),
                         lore and render(self.prompts["lore"], lore="\n".join(f"- {text}" for text in lore)),
                         self._her_day() and render(self.prompts["day_rules"]),
                         found and render(self.prompts["search_rules"]),

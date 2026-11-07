@@ -3,7 +3,7 @@ from collections import OrderedDict
 import botpy
 from botpy import logging
 from core.config import load_config
-from core.style import ADMIN, STYLES
+from core.style import STYLES
 from modules.help import HelpModule
 from modules.ai import ai_chat, vision
 from modules.ai.ai_chat import AIChatModule
@@ -137,12 +137,8 @@ class MyClient(botpy.Client):
             await self._handle_command(message)
 
     def _audiences(self, message):
-        """Who the sender is, for lines with versions for particular people (key@admin in a style):
-        config.yaml's audiences that list them, then admin."""
-        found = STYLES.audiences_of(message.member_openid)
-        if self.manager_module.is_admin(message.group_openid, message.member_openid, message.role):
-            found.append(ADMIN)
-        return found
+        """Who the sender is, for lines with versions for particular people (key@admin in a style)."""
+        return self.manager_module.audiences_of(message.group_openid, message.member_openid, message.role)
 
     async def on_group_del_robot(self, event):
         # The privacy policy promises a group's data is deleted when the bot leaves it.

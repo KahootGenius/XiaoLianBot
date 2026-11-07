@@ -6,9 +6,13 @@ comeback, or chatting on given days of the year. Only a brand-new kind of
 thing to count needs code -- add it to COUNTERS, then count it in
 counter_increments (each valid message) or through ManagerModule.count
 (anything else, like a vote).
+
+A badge's name and description can have versions for particular people, as a
+style's lines can: name@captains. They go by who holds the badge, not who's
+reading, so the weekly digest names each person's badge their way.
 """
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Optional
 import yaml
@@ -26,6 +30,8 @@ OPENER_HOUR = 5
 COUNTERS = ("valid", "question", "reply", "share", "night", "morning", "weekend", "long", "days", "opener",
             "birthday", "vote", "opinion", "sleep")
 LONG_MESSAGE_UNITS = 50
+# What a badge can have versions of for particular people, written name@captains as in a style.
+VERSIONED = ("name", "desc")
 
 _EVERY_YEAR = re.compile(r"\d{2}-\d{2}")
 _ONE_DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
@@ -44,6 +50,17 @@ class Badge:
     streak: int = 0
     comeback: bool = False
     dates: tuple = ()        # "01-01" every year, "2027-02-06" only then
+    versions: dict = field(default_factory=dict, compare=False)     # {"name@captains": text}
+
+    def as_for(self, audiences):
+        """The badge as it reads for someone in `audiences` (most particular first): their versions
+        of its name and description, as with a style's key@audience lines."""
+        chosen = {}
+        for key in VERSIONED:
+            text = next((self.versions[f"{key}@{who}"] for who in audiences if f"{key}@{who}" in self.versions), None)
+            if text is not None:
+                chosen[key] = text
+        return replace(self, **chosen) if chosen else self
 
     def met(self, counters, streak, comeback, today=None):
         """`today` is the local date of a valid message; without one, dates never match."""
@@ -111,6 +128,16 @@ def load_badges(path=BADGES_FILE):
                 raise ValueError(f"{where}：没有叫「{counter}」的计数，可用的有：{'、'.join(COUNTERS)}")
             if int(entry.get("at_least") or 0) < 1:
                 raise ValueError(f"{where}：at_least 要写一个正整数")
+        versions = {}
+        for key, value in entry.items():
+            line, at, audience = str(key).partition("@")
+            if not at:
+                continue
+            if line not in VERSIONED or not audience or any(c in audience for c in ".@ "):
+                raise ValueError(f"{where}：{key} 用不了，只有 {'、'.join(k + '@类别' for k in VERSIONED)} 能给特定的人另写一版")
+            if not value:
+                raise ValueError(f"{where}：{key} 是空的")
+            versions[str(key)] = str(value)
         badges.append(Badge(
             code=code,
             icon=str(entry["icon"]),
@@ -123,8 +150,15 @@ def load_badges(path=BADGES_FILE):
             streak=int(entry.get("streak") or 0),
             comeback=bool(entry.get("comeback", False)),
             dates=_read_dates(entry.get("dates"), where),
+            versions=versions,
         ))
     return tuple(badges)
+
+
+def audience_problems(known):
+    """Versions written for a group of people not in `known`, which nobody would ever see."""
+    return [f"achievements.yaml 的 {b.code}：没有叫「{key.partition('@')[2]}」的群友类别，{key} 不会用到"
+            for b in BADGES for key in b.versions if key.partition("@")[2] not in known]
 
 
 BADGES = load_badges()

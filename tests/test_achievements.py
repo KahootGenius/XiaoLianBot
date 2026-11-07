@@ -3,10 +3,14 @@ import tempfile
 import unittest
 from datetime import date, datetime, timedelta
 from types import SimpleNamespace
+from unittest import mock
+from core.style import ADMIN, StyleBook
 from modules.fun.sleep import SleepModule
 from modules.manager import achievements
 from modules.manager.achievements import Badge, counter_increments, load_badges, next_goal
 from modules.manager.classifier import judge
+from modules.manager.module import ManagerModule
+from modules.manager.store import Store
 from tests.test_manager import GROUP, TZ, FakeGateway, ManagerTestCase
 
 HIDDEN = {"birthday", "new_year", "spring_festival", "mid_autumn"}
@@ -67,11 +71,38 @@ class BadgeFileTest(unittest.TestCase):
             "「02-30」不是日期": "- {code: a, icon: x, name: n, desc: d, dates: [01-01, 02-30]}",
             "「1-1」不是日期": "- {code: a, icon: x, name: n, desc: d, dates: [1-1]}",
             "其中一种": "- {code: a, icon: x, name: n, desc: d, dates: [01-01], comeback: true}",
+            "icon@captains 用不了": "- {code: a, icon: x, icon@captains: y, name: n, desc: d, streak: 3}",
+            "name@ 用不了": "- {code: a, icon: x, name: n, 'name@': m, desc: d, streak: 3}",
+            "name@captains 是空的": "- {code: a, icon: x, name: n, name@captains: '', desc: d, streak: 3}",
+            "name@a.b 用不了": "- {code: a, icon: x, name: n, name@a.b: m, desc: d, streak: 3}",
+            "name@a b 用不了": "- {code: a, icon: x, name: n, name@a b: m, desc: d, streak: 3}",
         }
         for expected, text in mistakes.items():
             with self.assertRaises(ValueError) as caught:
                 self.load(text)
             self.assertIn(expected, str(caught.exception))
+
+    def test_a_badge_can_read_differently_for_particular_people(self):
+        badge, = self.load("- {code: a, icon: x, name: 新人, name@captains: 新队长, desc: 说明, desc@vip: 贵宾的说明,"
+                           " counter: valid, at_least: 1}")
+        twice, = self.load("- {code: b, icon: x, name: 新人, name@captains: 新队长, name@vip: 新贵宾, desc: d, streak: 3}")
+        self.assertEqual(twice.as_for(["vip", "captains"]).name, "新贵宾")      # most particular first
+        self.assertEqual(twice.as_for(["captains", "vip"]).name, "新队长")
+        self.assertEqual((badge.name, badge.desc), ("新人", "说明"))
+        self.assertIs(badge.as_for([]), badge)
+        self.assertIs(badge.as_for([ADMIN]), badge)
+        captain = badge.as_for(["captains"])
+        self.assertEqual((captain.name, captain.desc), ("新队长", "说明"))
+        both = badge.as_for(["vip", "captains"])
+        self.assertEqual((both.name, both.desc), ("新队长", "贵宾的说明"))
+        self.assertTrue(both.met({"valid": 1}, streak=0, comeback=False))
+
+    def test_versions_for_nobody_are_named(self):
+        badges = self.load("- {code: a, icon: x, name: n, name@captains: m, desc@typo: t, desc: d, streak: 3}")
+        with mock.patch.object(achievements, "BADGES", badges):
+            problems = achievements.audience_problems({ADMIN, "captains"})
+        self.assertEqual(len(problems), 1)
+        self.assertIn("desc@typo", problems[0])
 
 
 class CounterTest(unittest.TestCase):
@@ -180,6 +211,65 @@ class BadgesInTheGroupTest(ManagerTestCase):
         self.assertIn("🗳️积极投票", congratulations[0])
         self.assertEqual(self.mgr.count("ELSEWHERE", "A", "小A", "vote"), [])    # a group it doesn't manage
         self.assertNotIn("vote", self.store.counters("ELSEWHERE", "A"))
+
+
+class BadgesForParticularPeopleTest(ManagerTestCase):
+    """A badge reads the way its holder's versions say, whoever is reading."""
+
+    def setUp(self):
+        self.make(FakeGateway())
+        book = StyleBook()
+        book.configure({"audiences": {"captains": ["A"]}})
+        self.mgr.styles = book
+        badges = (Badge("first", "🌱", "新人", "第一次有效发言", counter="valid", at_least=1,
+                        versions={"name@captains": "新队长", "desc@captains": "队长的第一句"}),
+                  Badge("more", "💬", "话匣子", "5 条有效发言", counter="valid", at_least=5,
+                        versions={"name@captains": "话多队长"}),
+                  Badge("quiet", "🤫", "悄悄话", "不祝贺的成就", counter="valid", at_least=1, announce=False,
+                        versions={"name@captains": "悄悄队长"}))
+        for name, value in (("BADGES", badges), ("BY_CODE", {b.code: b for b in badges})):
+            patcher = mock.patch.object(achievements, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    async def badges(self, member):
+        await self.post(member, "/成就", command=True)
+        return self.gw.texts(GROUP)[-1]
+
+    async def test_the_holder_decides(self):
+        self.assertEqual(self.mgr.audiences_of(GROUP, "A"), ["captains"])
+        self.assertEqual(self.mgr.audiences_of(GROUP, "ADMIN"), [ADMIN])
+        await self.post("A", "大家好，我是新来的队长，请多关照")
+        await self.post("B", "欢迎欢迎，有什么不懂的可以问我们")
+        texts = self.gw.texts(GROUP)
+        self.assertTrue(any("🌱新队长" in text and "队长的第一句" in text for text in texts))
+        self.assertTrue(any("🌱新人" in text and "第一次有效发言" in text for text in texts))
+        self.assertFalse(any("小B" in text and "新队长" in text for text in texts))
+
+        mine = await self.badges("A")
+        self.assertIn("新队长", mine)
+        self.assertIn("下一个目标：💬话多队长 1/5", mine)
+        self.assertNotIn("新人", mine)
+        theirs = await self.badges("B")
+        self.assertIn("新人", theirs)
+        self.assertIn("下一个目标：💬话匣子 1/5", theirs)
+
+        digest = self.mgr.build_digest(GROUP)       # one post for everyone: each badge as its holder has it
+        self.assertIn("新队长", digest)
+        self.assertIn("新人", digest)
+        self.assertNotIn("悄悄", digest)             # not congratulated, so not in the digest either
+
+    def test_a_version_for_nobody_is_named_at_startup(self):
+        store = Store(":memory:")
+        self.addCleanup(store.db.close)
+        book = StyleBook()
+        book.configure({})
+        with mock.patch("modules.manager.module._log") as log:
+            ManagerModule(FakeGateway(), {}, store=store, styles=book)
+        self.assertIn("name@captains", str(log.warning.call_args_list))
+        with mock.patch("modules.manager.module._log") as log:
+            ManagerModule(FakeGateway(), {}, store=store, styles=StyleBook())     # not configured: no false alarm
+        log.warning.assert_not_called()
 
 
 class SleepBadgeTest(unittest.IsolatedAsyncioTestCase):
