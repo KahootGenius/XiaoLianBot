@@ -4,7 +4,8 @@ Served by the bot itself (aiohttp is already a botpy dependency) on
 127.0.0.1 by default, so only the machine running the bot can open it.
 Nicknames and snippets are text members typed themselves: the page inserts
 them with textContent, never as HTML, and the CSV export defuses anything a
-spreadsheet would run as a formula.
+spreadsheet would run as a formula. Tapping a nickname copies the member's
+ID, the one config.yaml's lists such as teams.captains take.
 """
 import csv
 import io
@@ -59,6 +60,12 @@ td.snippet { white-space:normal; min-width:220px; max-width:360px; color:var(--m
 td.num { text-align:right; font-variant-numeric:tabular-nums; }
 .yes { color:var(--ok); } .no { color:var(--bad); } .warn { color:var(--warn); } .muted { color:var(--muted); }
 .empty { padding:32px; text-align:center; color:var(--muted); }
+button.name { all:unset; cursor:pointer; border-bottom:1px dashed var(--line); }
+button.name:hover { color:var(--accent); border-bottom-color:var(--accent); }
+button.name:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); background:var(--fg); color:var(--bg);
+  padding:8px 14px; border-radius:8px; font-size:13px; opacity:0; transition:opacity .2s; pointer-events:none; }
+.toast.show { opacity:1; }
 </style>
 </head>
 <body>
@@ -71,11 +78,13 @@ td.num { text-align:right; font-variant-numeric:tabular-nums; }
   <input type="search" id="search" placeholder="搜索昵称或内容">
   <select id="group" hidden></select>
   <a class="chip" id="csv" href="#">下载 CSV</a>
+  <span class="meta">点昵称复制 ID</span>
 </div>
 <div class="wrap">
   <table><thead><tr id="head"></tr></thead><tbody id="body"></tbody></table>
   <div class="empty" id="empty" hidden>没有符合条件的成员</div>
 </div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script>
 const params = new URLSearchParams(location.search);
 const state = { rows: [], sort: "days", asc: false, filter: "all", search: "", group: params.get("group") || "" };
@@ -104,6 +113,37 @@ function url(path) {
   return path + "?" + p.toString();
 }
 
+let toastTimer;
+function toast(text) {
+  const t = document.getElementById("toast");
+  t.textContent = text;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 1600);
+}
+
+// For config.yaml's lists, such as teams.captains: the ID is the one /我的ID gives in this group.
+async function copyId(r) {
+  let copied = false;
+  try {
+    await navigator.clipboard.writeText(r.member_openid);
+    copied = true;
+  } catch (e) {
+    // Some browsers, such as ones inside apps, have no clipboard here: copy through a hidden box.
+    const box = document.createElement("textarea");
+    box.value = r.member_openid;
+    box.setAttribute("readonly", "");
+    box.style.position = "fixed";
+    box.style.opacity = "0";
+    document.body.appendChild(box);
+    box.select();
+    try { copied = document.execCommand("copy"); } catch (e2) {}
+    box.remove();
+  }
+  if (copied) toast(`已复制 ${r.nickname} 的 ID`);
+  else window.prompt(`${r.nickname} 的 ID，长按或全选复制：`, r.member_openid);
+}
+
 function cell(text, className) {
   const td = document.createElement("td");
   td.textContent = text;
@@ -112,7 +152,16 @@ function cell(text, className) {
 }
 
 const RENDER = {
-  nickname: r => { const td = cell(r.nickname); td.title = r.member_openid; return td; },
+  nickname: r => {
+    const td = document.createElement("td");
+    const b = document.createElement("button");
+    b.className = "name";
+    b.textContent = r.nickname;
+    b.title = "点一下复制 ID：" + r.member_openid;
+    b.onclick = () => copyId(r);
+    td.appendChild(b);
+    return td;
+  },
   status: r => cell(r.status, { reminded: "warn", due: "no", gone: "muted" }[r.status_key] || ""),
   days: r => {
     // Members on leave or exempt aren't at risk, however long they've been quiet.

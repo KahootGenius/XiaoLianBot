@@ -51,6 +51,7 @@ class MemberTableTest(ManagerTestCase):
             html = await page.text()
             self.assertIn("成员活跃表", html)
             self.assertNotIn("innerHTML", html)          # member text is only ever set as textContent
+            self.assertIn("navigator.clipboard.writeText(r.member_openid)", html)    # tapping a name copies the ID
 
             data = await (await client.get("/api/members?token=secret")).json()
             self.assertEqual(data["group"], GROUP)
