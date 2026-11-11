@@ -122,7 +122,7 @@ function toast(text) {
   toastTimer = setTimeout(() => t.classList.remove("show"), 1600);
 }
 
-// For config.yaml's lists, such as teams.captains: the ID is the one /我的ID gives in this group.
+// For config.yaml's lists, such as teams.captains: the same ID /我的ID gives, in every group.
 async function copyId(r) {
   let copied = false;
   try {

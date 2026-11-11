@@ -112,6 +112,7 @@ secret: "YOUR_APP_SECRET"
 # What the chances leave over goes to the usual draw among the week's active members,
 # without the people listed; at 100 or more in total it's only among them. Someone listed
 # who the bot knows has left isn't drawn (/已退群 昵称 tells it). See docs/CUSTOMIZING.md.
+# After a restart the log lists each ID with its nickname, so a mistyped one shows as ？.
 # social:
 #   flip:
 #     special:

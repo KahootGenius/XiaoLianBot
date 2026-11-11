@@ -108,7 +108,7 @@ def _short(text, limit=30):
 
 class SocialModule:
     def __init__(self, gateway, store=None, clock=None, is_admin=None, activity=None, rng=None, config=None,
-                 nickname_of=None, count=None, has_left=None):
+                 nickname_of=None, count=None, has_left=None, find_nickname=None):
         self.gw = gateway
         self.store = store or FunStore(root_path("data", "fun.db"))
         self.tz = pytz.timezone('Asia/Shanghai')
@@ -134,6 +134,9 @@ class SocialModule:
         if self.flip_special:
             totals = "、".join(f"{sum(table.values()):g}%" for table in self.flip_special.values())
             _log.info(f"[Social] 翻牌子特别名单：{len(self.flip_special)} 位群友（名单里的人合计 {totals}，其余照常抽）")
+            # (member_openid) -> their nickname in a group the manager tracks, or None if none knows them.
+            if find_nickname is not None:
+                self._report_flip_special(find_nickname)
         # Set by main.py when AI chat is on: (topic, [opinions]) -> her summary of them, or None.
         self.opinion_summarizer = None
         self.commands = {"/今日运势": self.cmd_fortune, "/生日": self.cmd_birthday, "/本月生日": self.cmd_month,
@@ -170,6 +173,24 @@ class SocialModule:
                                    buttons=buttons if i == len(chunks) - 1 else None)
         except Exception as e:
             _log.error(f"[Social] 回复失败: {e}")
+
+    def _report_flip_special(self, find_nickname):
+        """Log each special table with the nickname behind every ID, so a mistyped one shows."""
+        unknown = set()
+
+        def who(member):
+            name = find_nickname(member)
+            if name is None:
+                unknown.add(member)
+                return f"？（{member[:8]}…）"
+            return f"{name or '没有昵称'}（{member[:8]}…）"
+
+        for flipper, table in self.flip_special.items():
+            drawn = "、".join(f"{who(member)} {chance:g}%" for member, chance in table.items())
+            _log.info(f"[Social]   {who(flipper)} 翻到 {drawn}")
+        if unknown:
+            _log.warning(f"[Social] 翻牌子特别名单里有 {len(unknown)} 个 ID 在管理的群里找不到（上面的「？」）："
+                         "多半是抄错了，或者 TA 还没在群里说过话。成员活跃表里点昵称就能复制 ID")
 
     def _prune(self, now):
         today = now.date().isoformat()

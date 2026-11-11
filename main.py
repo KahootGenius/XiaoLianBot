@@ -64,7 +64,8 @@ class MyClient(botpy.Client):
         self.social_module = SocialModule(self.gateway, is_admin=self.manager_module.is_admin,
                                           activity=self.manager_module.active_members, config=config,
                                           nickname_of=self.manager_module.current_nickname,
-                                          count=self.manager_module.count, has_left=self.manager_module.has_left)
+                                          count=self.manager_module.count, has_left=self.manager_module.has_left,
+                                          find_nickname=self.manager_module.nickname_anywhere)
         self.sleep_module.count = self.manager_module.count
         if self.ai_chat_module.enabled:
             self.social_module.opinion_summarizer = self.ai_chat_module.summarize_opinions

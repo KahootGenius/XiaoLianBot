@@ -410,7 +410,10 @@ social:
   reply looks like any other flip.
 
 Restart the bot after a change. Its log says how many members have a table and what each table
-adds up to; a line it can't read is named there and left out.
+adds up to, then lists each table with the nickname behind every ID, such as
+`小明（3F9A0C1D…） 翻到 小红（8B7C6D5E…） 60%`. An ID no managed group knows shows as `？` with a
+warning: it's mistyped, or that person hasn't posted yet. Tap a nickname in the member table to
+copy someone's ID. A line it can't read is named there and left out.
 
 ## Changing how AI chat remembers
 

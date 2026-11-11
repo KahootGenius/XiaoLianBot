@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from datetime import timedelta
 from types import SimpleNamespace
+from unittest import mock
 from core.config import root_path
 from core.style import DEFAULT_STYLE, STYLES
 from modules.ai.ai_chat import AIChatModule
@@ -14,7 +15,7 @@ from modules.ai.store import ChatStore
 from modules.fun.blackjack import BlackjackModule
 from modules.fun.crazy_talk import CrazyTalkModule
 from modules.fun.dice import DiceModule
-from modules.fun.social import SocialModule
+from modules.fun.social import SocialModule, module as social_module
 from modules.fun.social.module import parse_birthday, read_flip_special
 from modules.fun.social.store import FunStore
 from modules.fun.teams.rules import load_rules
@@ -38,7 +39,8 @@ class Roll(random.Random):
 
 
 class SocialTestCase(unittest.IsolatedAsyncioTestCase):
-    def make(self, activity=None, config=None, nickname_of=None, rng=None, count=None, has_left=None):
+    def make(self, activity=None, config=None, nickname_of=None, rng=None, count=None, has_left=None,
+             find_nickname=None):
         self.now = START
         self.gw = FakeGateway()
         self.store = FunStore(":memory:")
@@ -46,7 +48,8 @@ class SocialTestCase(unittest.IsolatedAsyncioTestCase):
         self.social = SocialModule(self.gw, store=self.store, clock=lambda: self.now,
                                    is_admin=lambda group, member, role=None: member == "ADMIN",
                                    activity=activity, rng=rng or random.Random(7), config=config,
-                                   nickname_of=nickname_of, count=count, has_left=has_left)
+                                   nickname_of=nickname_of, count=count, has_left=has_left,
+                                   find_nickname=find_nickname)
         return self.social
 
     async def say(self, member, text, mentions=(), group=GROUP):
@@ -369,6 +372,17 @@ class SpecialFlipTest(SocialTestCase):
         self.assertIn("小红", await self.say("A", "/翻牌子", mentions=["B"]))
         self.now += timedelta(days=1)
         self.assertIn("小刚", await self.say("A", "/翻牌子", mentions=["B", "C"]))
+
+    def test_the_log_puts_a_nickname_to_every_id(self):
+        names = {"A": "小明", "B": "小红"}
+        with mock.patch.object(social_module, "_log") as log:
+            self.make(config=self.special({"A": {"B": 60, "ZZZZZZZZZZ": 20}}), find_nickname=names.get)
+        logged = "\n".join(str(call.args[0]) for call in log.info.call_args_list)
+        self.assertIn("小明（A…） 翻到 小红（B…） 60%、？（ZZZZZZZZ…） 20%", logged)
+        self.assertIn("1 个 ID 在管理的群里找不到", str(log.warning.call_args_list))
+        with mock.patch.object(social_module, "_log") as log:
+            self.make(config=self.special({"A": {"B": 60}}), find_nickname=names.get)
+        log.warning.assert_not_called()
 
     def test_reading_the_tables(self):
         tables = read_flip_special({"A": {"B": 60, "C": "25%", "D": 0, "E": "很多", "A": 50, "F": -3, "G": ".nan"},

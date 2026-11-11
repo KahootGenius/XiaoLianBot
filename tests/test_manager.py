@@ -144,6 +144,18 @@ class ManagerTestCase(unittest.IsolatedAsyncioTestCase):
         return self.store.member(GROUP, member)["status"]
 
 
+class NicknameAnywhereTest(ManagerTestCase):
+    async def test_an_id_from_config_gets_its_nickname(self):
+        self.make(FakeGateway())
+        await self.post("A", "大家好，我是新来的，请多关照")
+        await self.post("B", "欢迎欢迎", nickname="")
+        self.assertEqual(self.mgr.nickname_anywhere("A"), "小A")
+        self.assertEqual(self.mgr.nickname_anywhere("B"), "")
+        self.assertIsNone(self.mgr.nickname_anywhere("TYPO"))
+        await self.post("C", "在别的群说话", group="ELSEWHERE")             # a group it doesn't manage
+        self.assertIsNone(self.mgr.nickname_anywhere("C"))
+
+
 class AutoModeWithFullAccessTest(ManagerTestCase):
     """Whitelisted bot: sees lurkers through the member list and removes by itself."""
 

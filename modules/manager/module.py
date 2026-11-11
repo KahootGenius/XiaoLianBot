@@ -178,6 +178,15 @@ class ManagerModule:
         row = self.store.member(group, member)
         return row["nickname"] if row else None
 
+    def nickname_anywhere(self, member):
+        """The nickname someone last posted under in any group this manages ("" when they had none),
+        or None when none of them knows the ID: for checking IDs written in config.yaml."""
+        for group in self.settings.groups:
+            row = self.store.member(group, member)
+            if row:
+                return row["nickname"] or ""
+        return None
+
     def current_nickname(self, group, member):
         """The nickname of someone still in a managed group ("" when they have none), or None."""
         row = self.store.member(group, member)
