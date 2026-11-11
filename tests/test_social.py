@@ -1,5 +1,6 @@
 """今日运势, birthdays, polls, 征集意见 and 翻牌子; buttons, under these and the games; the digest's AI
 comment; rolls in the team game."""
+import asyncio
 import os
 import random
 import shutil
@@ -9,13 +10,13 @@ from datetime import timedelta
 from types import SimpleNamespace
 from unittest import mock
 from core.config import root_path
-from core.style import DEFAULT_STYLE, STYLES
+from core.style import DEFAULT_STYLE, STYLES, StyleBook
 from modules.ai.ai_chat import AIChatModule
 from modules.ai.store import ChatStore
 from modules.fun.blackjack import BlackjackModule
 from modules.fun.crazy_talk import CrazyTalkModule
 from modules.fun.dice import DiceModule
-from modules.fun.social import SocialModule, module as social_module
+from modules.fun.social import SocialModule, fortune, module as social_module
 from modules.fun.social.module import parse_birthday, read_flip_special
 from modules.fun.social.store import FunStore
 from modules.fun.teams.rules import load_rules
@@ -77,6 +78,107 @@ class FortuneTest(SocialTestCase):
             self.now = START + timedelta(days=day)
             week.add(await self.say("A", "/今日运势"))
         self.assertGreater(len(week), 1)                                    # and a new one tomorrow
+
+
+class FortuneReadingTest(SocialTestCase):
+    """Her comment on the fortune takes in the member's own latest messages, chosen by fortune.pick_recent."""
+
+    def setUp(self):
+        patcher = mock.patch.object(fortune, "pick_recent", lambda texts: [text for text in texts if not text.startswith("/")])
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.calls = []
+
+    def reading(self, *answers):
+        replies = list(answers)
+
+        async def reader(member, level, good, bad, said):
+            self.calls.append((member, level, good, bad, said))
+            answer = replies.pop(0) if replies else "运气的事，不是你的错"
+            if isinstance(answer, Exception):
+                raise answer
+            if answer == "slow":
+                await asyncio.sleep(0.2)
+            return answer
+
+        self.social.fortune_reader = reader
+
+    async def test_her_comment_takes_in_their_own_latest_messages(self):
+        self.make()
+        self.reading()
+        await self.say("A", "今天考试考砸了")
+        await self.say("B", "我中奖了")
+        await self.say("A", "感觉自己好笨")
+        first = await self.say("A", "/今日运势")
+        self.assertTrue(first.endswith("\n运气的事，不是你的错"))
+        [(member, level, good, bad, said)] = self.calls
+        self.assertEqual((member, said), ("小明", ["今天考试考砸了", "感觉自己好笨"]))       # not 小红's
+        self.assertIn(f"运势：{level}", first)
+        self.assertIn("宜：" + "、".join(good), first)
+        self.assertEqual(await self.say("A", "/今日运势"), first)       # the same all day, without asking again
+        self.assertEqual(len(self.calls), 1)
+
+    async def test_the_style_comment_when_there_is_no_reading(self):
+        self.make()
+        plain = await self.say("A", "/今日运势")
+        self.assertEqual(self.social.recent, {})                        # nothing kept while it's off
+        for answer in (None, RuntimeError("余额不足"), "slow"):
+            self.make()
+            self.reading(answer)
+            await self.say("A", "今天好累")
+            with mock.patch.object(social_module, "READING_SECONDS", 0.01):
+                self.assertEqual(await self.say("A", "/今日运势"), plain, answer)
+        self.make()
+        self.reading()
+        asked = len(self.calls)
+        self.assertEqual(await self.say("A", "/今日运势"), plain)       # nothing worth reading: not asked
+        self.assertEqual(len(self.calls), asked)
+
+    async def test_what_is_kept_goes_with_the_day_and_with_the_member(self):
+        self.make()
+        self.reading()
+        await self.say("A", "今天考试考砸了")
+        await self.say("A", "/今日运势")
+        self.assertIn((GROUP, "A"), self.social.recent)
+        self.social.forget_member(GROUP, "A")                           # /删除数据
+        self.assertEqual((self.social.recent, self.social.readings), ({}, {}))
+        await self.say("B", "我中奖了")
+        await self.say("B", "/今日运势")
+        self.now = START + timedelta(days=3)
+        await self.say("C", "/今日运势")                                 # a new day's housekeeping
+        self.assertNotIn((GROUP, "B"), self.social.recent)
+        self.assertEqual(self.social.readings, {})
+
+    async def test_only_the_last_day_is_kept_or_read(self):
+        self.make()
+        self.reading()
+        await self.say("A", "昨天的事")
+        self.now = START + timedelta(days=1, minutes=-20)
+        await self.say("B", "/今日运势")                                  # the day's housekeeping: still fresh
+        self.now = START + timedelta(days=1, minutes=1)
+        await self.say("A", "今天的事")                                   # not yet swept, but not read either
+        await self.say("A", "/今日运势")
+        self.assertEqual(self.calls[-1][4], ["今天的事"])
+        self.now += timedelta(days=1, hours=1)
+        await self.say("B", "随便聊聊")                                   # not a command: the hourly sweep
+        self.assertNotIn((GROUP, "A"), self.social.recent)
+
+    async def test_a_group_the_bot_leaves_is_forgotten(self):
+        self.make()
+        self.reading()
+        await self.say("A", "今天考砸了")
+        await self.say("A", "/今日运势")
+        await self.say("B", "好累", group="ELSEWHERE")
+        self.social.forget_group(GROUP)
+        self.assertEqual(list(self.social.recent), [("ELSEWHERE", "B")])
+        self.assertEqual(self.social.readings, {})
+
+    async def test_tags_never_reach_her(self):
+        self.make()
+        self.reading()
+        await self.say("A", '<faceType=1,faceId="5",ext="eyJ0ZXh0Ijoi">今天考砸了 <qqbot-at-user id="B" /> 唉')
+        await self.say("A", "/今日运势")
+        self.assertEqual(self.calls[-1][4], ["今天考砸了 唉"])
 
 
 class BirthdayTest(SocialTestCase):
@@ -307,6 +409,51 @@ class OpinionSummaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await ai.summarize_opinions("玩什么", ["一", "二", "三"]))   # the list goes out without it
         off = AIChatModule(FakeGateway(), {"ai_chat": {"opinion_summary": False}}, store=store, client=client)
         self.assertIsNone(await off.summarize_opinions("玩什么", ["一", "二", "三"]))
+
+
+class PickRecentTest(unittest.TestCase):
+    def test_what_goes_with_the_fortune(self):
+        said = ["/今日运势", "／翻牌子", "哈哈哈", "嗯嗯", "1", "？？", "😂😂", "好累", "考砸了", "ok", "打卡", "打卡"]
+        self.assertEqual(fortune.pick_recent(said), ["好累", "考砸了", "ok", "打卡"])
+        self.assertEqual(fortune.pick_recent(["打卡", "好累", "打卡"]), ["好累", "打卡"])     # where it was said last
+        many = [f"第{n}件事" for n in range(15)]
+        self.assertEqual(fortune.pick_recent(many), many[-fortune.RECENT_SHOWN:])
+        self.assertEqual(fortune.pick_recent([]), [])
+
+
+class FortuneCommentTest(unittest.IsolatedAsyncioTestCase):
+    async def test_ai_reads_the_fortune_in_character(self):
+        client, store = FakeDeepSeek(), ChatStore(":memory:")
+        self.addCleanup(store.db.close)
+        off = AIChatModule(FakeGateway(), {}, store=store, client=client)
+        self.assertIsNone(await off.read_fortune("小明", "凶", ["早睡早起"], ["熬夜"], ["考砸了"]))     # off by default
+        ai = AIChatModule(FakeGateway(), {"ai_chat": {"fortune": True}}, store=store, client=client)
+        self.assertIsNone(await ai.read_fortune("小明", "凶", ["早睡早起"], ["熬夜"], []))
+        self.assertEqual(client.requests("chat"), [])
+        client.answers["chat"].append("只是运气差了点，不是你的问题[表情:摸头]")
+        self.assertEqual(await ai.read_fortune("小明", "凶", ["早睡早起", "喝一杯奶茶"], ["熬夜"], ["考砸了", "好笨"]),
+                         "只是运气差了点，不是你的问题")
+        request = client.requests("chat")[-1]["messages"]
+        self.assertIn("你是「小莲」", request[0]["content"])
+        self.assertIn("小明 刚抽了今日运势：凶。宜：早睡早起、喝一杯奶茶；忌：熬夜。", request[1]["content"])
+        self.assertIn("- 考砸了\n- 好笨", request[1]["content"])
+        client.answers["chat"].append(RuntimeError("余额不足"))
+        self.assertIsNone(await ai.read_fortune("小明", "凶", ["早睡早起"], ["熬夜"], ["考砸了"]))
+
+    async def test_she_knows_who_is_asking(self):
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder)
+        shutil.copy(root_path("styles", f"{DEFAULT_STYLE}.yaml"), folder)
+        with open(os.path.join(folder, "桃子.yaml"), "w", encoding="utf-8") as f:
+            f.write("name: 桃子\nsystem_prompt: 你是桃子。\ntalking_to@vip: 现在和你说话的是贵宾。\n")
+        book = StyleBook(directory=folder)
+        book.configure({"style": "桃子", "audiences": {"vip": ["A"]}})
+        client, store = FakeDeepSeek(), ChatStore(":memory:")
+        self.addCleanup(store.db.close)
+        ai = AIChatModule(FakeGateway(), {"ai_chat": {"fortune": True}}, store=store, client=client)
+        with book.scope(GROUP, audiences=["vip"]):
+            await ai.read_fortune("小明", "凶", ["早睡早起"], ["熬夜"], ["考砸了"])
+        self.assertEqual(client.requests("chat")[-1]["messages"][0]["content"], "你是桃子。\n\n现在和你说话的是贵宾。")
 
 
 class FlipTest(SocialTestCase):

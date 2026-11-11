@@ -1,6 +1,7 @@
 """Social commands: 今日运势, birthdays, polls, 征集意见 and 翻牌子.
 
-- /今日运势: a fortune per member per day, worded entirely by the style file.
+- /今日运势: a fortune per member per day, worded entirely by the style file. With AI chat's
+  fortune reading on, her comment on it takes in what the member has said lately.
 - /生日 10-25: members opt in; on the day, the bot's reply to their first
   message wishes them happy birthday (QQ rations messages a bot starts on its
   own, so it waits for them to speak, as the newcomer greeting does).
@@ -16,9 +17,11 @@
 
 Every line comes from the style files (social.*) via t().
 """
+import asyncio
 import math
 import random
 import re
+from collections import deque
 from datetime import datetime, timedelta
 import pytz
 from botpy import logging
@@ -26,6 +29,7 @@ from core.config import root_path
 from core.style import current, join, render, t
 from modules.fun.social import fortune
 from modules.fun.social.store import FunStore
+from modules.manager.classifier import clean_text
 
 
 _log = logging.get_logger()
@@ -42,6 +46,11 @@ OPINIONS_PER_MEMBER = 3
 OPINION_CHARS = 200
 OPINIONS_MAX = 60           # per 征集意见, so the list at the end stays readable
 MAX_MESSAGE_LENGTH = 900    # longer replies go out as several messages
+RECENT_KEPT = 20            # each member's latest messages held in memory, only while fortune reading is on,
+RECENT_SECONDS = DAY        # for a day, which is all that's read; what's older goes within the hour
+SWEEP_SECONDS = 3600
+RECENT_CHARS = 200          # characters kept of each
+READING_SECONDS = 12        # how long /今日运势 waits for her reading before using the style's comment
 # What members type. Listed so team-game actions can't take them.
 COMMANDS = ("/今日运势", "/生日", "/本月生日", "/投票", "/结束投票", "/投", "/征集意见", "/意见征集", "/意见",
             "/结束征集", "/结束征集意见", "/翻牌子")
@@ -139,6 +148,12 @@ class SocialModule:
                 self._report_flip_special(find_nickname)
         # Set by main.py when AI chat is on: (topic, [opinions]) -> her summary of them, or None.
         self.opinion_summarizer = None
+        # Set by main.py when AI chat's fortune reading is on: (nickname, level, [宜], [忌], [their recent
+        # messages]) -> her comment on the fortune, or None. Only while it's set are messages kept below.
+        self.fortune_reader = None
+        self.recent = {}        # (group, member) -> deque of (timestamp, text), in memory only
+        self.swept = 0          # when messages past RECENT_SECONDS were last let go
+        self.readings = {}      # (group, member, date) -> her comment, so asking again gives the same one
         self.commands = {"/今日运势": self.cmd_fortune, "/生日": self.cmd_birthday, "/本月生日": self.cmd_month,
                          "/投票": self.cmd_poll, "/投": self.cmd_vote, "/结束投票": self.cmd_close,
                          "/征集意见": self.cmd_call, "/意见征集": self.cmd_call, "/意见": self.cmd_opinion,
@@ -199,14 +214,34 @@ class SocialModule:
             ts = int(now.timestamp())
             self.store.prune((now.date() - timedelta(days=2)).isoformat(), ts - POLL_KEEP_DAYS * DAY,
                              ts - OPINION_KEEP_DAYS * DAY)
+            self.readings = {key: text for key, text in self.readings.items() if key[2] == today}
+            self._sweep(ts)
+
+    def _sweep(self, ts):
+        """Let go of kept messages older than RECENT_SECONDS, and of anyone with none left."""
+        self.swept = ts
+        for key in list(self.recent):
+            kept = self.recent[key]
+            while kept and kept[0][0] <= ts - RECENT_SECONDS:
+                kept.popleft()
+            if not kept:
+                del self.recent[key]
 
     # ------------------------------------------------------------------ intake
 
     async def observe(self, message):
-        """Every message the bot sees: a birthday wish on the member's first one of their day."""
+        """Every message the bot sees: a birthday wish on the member's first one of their day, and,
+        while fortune reading is on, their latest messages, in memory only."""
         group, member = message.group_openid, message.member_openid
         if not member or message.is_bot:
             return
+        if self.fortune_reader is not None:
+            ts = int(self._now().timestamp())
+            text = " ".join(clean_text(message.content).split())      # no emoji or mention tags, so no IDs
+            if text:
+                self.recent.setdefault((group, member), deque(maxlen=RECENT_KEPT)).append((ts, text[:RECENT_CHARS]))
+            if ts - self.swept >= SWEEP_SECONDS:
+                self._sweep(ts)
         row = self.store.birthday(group, member)
         if row is None:
             return
@@ -254,12 +289,34 @@ class SocialModule:
         seed = f"{message.group_openid}:{message.member_openid}:{now.date().isoformat()}"
         level, good, bad, comment = fortune.draw(seed, **pools)
         name = self._name(message)
+        reading = await self._reading(message, name, level, good, bad, now)
         lines = [t("social.fortune.title", member=name, date=t("common.date", month=now.month, day=now.day)),
                  t("social.fortune.level", level=level),
                  t("social.fortune.good_line", items=join(good)),
                  t("social.fortune.bad_line", items=join(bad)),
-                 render(comment, member=name, level=level)]
+                 reading or render(comment, member=name, level=level)]
         await self._reply(message, "\n".join(lines), buttons=[[(t("social.fortune.button"), "/今日运势")]])
+
+    async def _reading(self, message, name, level, good, bad, now):
+        """Her comment on today's fortune in light of what the member has said lately, or None for
+        the style's own: without fortune reading, with nothing worth reading, or if it fails."""
+        if self.fortune_reader is None:
+            return None
+        key = (message.group_openid, message.member_openid, now.date().isoformat())
+        if key in self.readings:
+            return self.readings[key]
+        now_ts = int(now.timestamp())
+        said = fortune.pick_recent([text for ts, text in self.recent.get(key[:2], ()) if ts > now_ts - RECENT_SECONDS])
+        if not said:
+            return None
+        try:
+            reading = await asyncio.wait_for(self.fortune_reader(name, level, good, bad, said), READING_SECONDS)
+        except Exception as e:
+            _log.warning(f"[Social] 今日运势的解读没写成: {type(e).__name__} {str(e)[:120]}")
+            return None
+        if reading:
+            self.readings[key] = reading
+        return reading
 
     # ------------------------------------------------------------------ birthdays
 
@@ -566,9 +623,13 @@ class SocialModule:
 
     def forget_member(self, group, member):
         self.store.forget_member(group, member)
+        self.recent.pop((group, member), None)
+        self.readings = {key: text for key, text in self.readings.items() if key[:2] != (group, member)}
 
     def forget_group(self, group):
         self.store.forget_group(group)
+        self.recent = {key: kept for key, kept in self.recent.items() if key[0] != group}
+        self.readings = {key: text for key, text in self.readings.items() if key[0] != group}
 
 
 def _leap(year):

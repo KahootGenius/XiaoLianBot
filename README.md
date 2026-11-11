@@ -190,7 +190,8 @@ For the group's games, where a few captains pick teams:
 
 ### 🎲 Social
 - **`/今日运势`:** one fortune per member per day. Every word, including the lists it draws
-  from, is in the style file, so each style themes it its own way.
+  from, is in the style file, so each style themes it its own way. With `ai_chat.fortune` on, her
+  comment takes in what the member has said lately, so a rough patch reads as luck, not their fault.
 - **Birthdays:** members opt in with `/生日 10-25`. On the day, her reply to their first message
   wishes them a happy birthday. `/本月生日` lists the month's birthdays.
 - **Polls:** `/投票 问题 选项1 选项2 …`, then `/投 A`; `/结束投票` closes it. There's one open poll

@@ -457,6 +457,7 @@ at startup** and names the line.
 | `topic`, `topic_cue` | When a group from `ai_chat.topics` has gone quiet: what kind of thing to say, after the persona; and the line that stands in for a member's message at the end of the chat | `{hours}` |
 | `digest_comment` | The prompt for the comment that ends the weekly digest | `{digest}` |
 | `opinion_summary` | With the persona, when a 征集意见 ends with 3 or more opinions: sum them up after the list (`ai_chat.opinion_summary`). The opinions come without who wrote them | `{topic}`, `{opinions}` |
+| `fortune_comment` | With the persona, for `/今日运势` when `ai_chat.fortune` is on: her comment on the fortune drawn, in light of the member's own latest messages. It replaces the style's comment; the level, 宜 and 忌 stay as drawn | `{member}`, `{level}`, `{good}`, `{bad}`, `{said}` |
 | `day` | Once a day, with the persona: plan three small things in her day. It must ask for JSON: `{{"events": ["上午：…", "下午：…", "晚上：…"]}}` | `{date}`, `{weekday}` |
 | `summary` | The prompt for folding old chat into the group's summary | |
 | `observer` | After each reply: what the speaker said about themselves, each scored 1–10 for importance (below 4 isn't kept), which memories came up again, which are outdated, and her impression of them. It must ask for JSON: `{{"notes": [], "reinforce": [], "forget": [], "impression": null}}` | `{member}`, `{known}`, `{impression}`, `{said}`, `{reply}`, `{max_text}`, `{max_adds}`, `{max_impression}` |
@@ -486,6 +487,7 @@ ai_chat:
   memory_check: true         # check each new memory with one more cheap call; jokes aren't kept
   digest_comment: true       # end the weekly digest with a short comment
   opinion_summary: true      # sum up a 征集意见 when it ends, after the list
+  fortune: false             # /今日运势: her comment takes in the member's latest messages (privacy policy!)
   game_state: true           # tell her today's teams, birthdays, open poll and 征集意见
   dynamic_temperature: true  # judge each reply's temperature and length first (one more cheap call)
   temperatures: {严谨: 0.6, 平衡: 1.0, 奔放: 1.15}

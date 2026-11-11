@@ -69,6 +69,8 @@ class MyClient(botpy.Client):
         self.sleep_module.count = self.manager_module.count
         if self.ai_chat_module.enabled:
             self.social_module.opinion_summarizer = self.ai_chat_module.summarize_opinions
+            if self.ai_chat_module.fortune:
+                self.social_module.fortune_reader = self.ai_chat_module.read_fortune
         reserved = (HelpModule.TRIGGERS + CASTORICE_COMMANDS + ai_chat.COMMANDS + social.COMMANDS
                     + tuple(name for name, *_ in self.manager_module.commands))
         self.teams_module = TeamsModule(self.gateway, config, is_admin=self.manager_module.is_admin,

@@ -114,6 +114,7 @@ PROMPT_FIELDS = {
     "summary": set(),
     "digest_comment": {"digest"},
     "opinion_summary": {"topic", "opinions"},
+    "fortune_comment": {"member", "level", "good", "bad", "said"},
     "day": {"date", "weekday"},
     "observer": {"member", "known", "impression", "said", "reply", "max_text", "max_adds", "max_impression"},
     "register": {"member", "said", "last", "search"},
@@ -132,6 +133,7 @@ MEMORY_SPEAKERS = 5         # members whose memories ride along: the speaker plu
 DIGEST_COMMENT_LIMIT = 120  # characters; the prompt asks for 60
 OPINION_SUMMARY_MIN = 3     # a 征集意见 with fewer opinions than this ends without her summary
 OPINION_SUMMARY_LIMIT = 300  # characters; the prompt asks for 150
+FORTUNE_COMMENT_LIMIT = 120  # characters; the prompt asks for 60
 DEFAULT_TEMPERATURE = 1.0   # chat replies when dynamic_temperature is off or its judgement fails
 WEEKDAYS = "一二三四五六日"
 DAY = 86400
@@ -205,6 +207,8 @@ class AIChatModule:
         self.memory_check = bool(chat.get("memory_check", True))
         self.digest_comment = bool(chat.get("digest_comment", True))
         self.opinion_summary = bool(chat.get("opinion_summary", True))
+        # 今日运势 reading: off unless asked for, as it sends members' own messages that didn't @ her.
+        self.fortune = bool(chat.get("fortune", False))
         self.game_state = bool(chat.get("game_state", True))
         # seekchat's 动态想象力: one cheap call before each reply picks its temperature and length.
         self.dynamic = bool(chat.get("dynamic_temperature", True))
@@ -958,6 +962,28 @@ class AIChatModule:
             return None
         text = stickers.extract(voice.as_text(text.strip()), {})[0]
         return text[:OPINION_SUMMARY_LIMIT] or None
+
+    async def read_fortune(self, member, level, good, bad, said):
+        """Her comment on someone's 今日运势 in light of their own latest messages, or None.
+
+        Only the fortune and those messages go to DeepSeek, with her persona. A failure just means
+        the style's own comment.
+        """
+        if not (self.enabled and self.fortune) or not said:
+            return None
+        persona = "\n\n".join(filter(None, [current().system_prompt, t("talking_to")]))
+        prompt = render(self.prompts["fortune_comment"], member=member, level=level, good=join(good), bad=join(bad),
+                        said="\n".join(f"- {text}" for text in said))
+        try:
+            text = await self._complete(self.client, self.helper_model, [
+                {"role": "system", "content": persona},
+                {"role": "user", "content": prompt},
+            ])
+        except Exception as e:
+            _log.warning(f"[AIChat] 今日运势的解读没写成: {e}")
+            return None
+        text = stickers.extract(voice.as_text(text.strip()), {})[0]
+        return text[:FORTUNE_COMMENT_LIMIT] or None
 
     # ------------------------------------------------------------------ her day, and speaking up
 

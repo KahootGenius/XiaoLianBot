@@ -58,6 +58,8 @@ secret: "YOUR_APP_SECRET"
 #   memory_check: true       # check each new memory with one more cheap call, so jokes aren't kept
 #   digest_comment: true     # end the weekly digest with a short in-character comment
 #   opinion_summary: true    # after /结束征集 lists the opinions, she sums them up (3 or more)
+#   fortune: false           # /今日运势: her comment takes in the member's own latest messages, which the
+#                            # bot then keeps in memory (at most 20, for a day). Read the privacy policy first.
 #   game_state: true         # tell the bot today's teams, birthdays, open poll and 征集意见 (teams.yaml hide_from_ai)
 #   dynamic_temperature: true    # judge each reply's temperature and length first (one more cheap call)
 #   temperatures: {严谨: 0.6, 平衡: 1.0, 奔放: 1.15}   # the temperature for each judgement
