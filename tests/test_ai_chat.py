@@ -156,6 +156,57 @@ class ConversationTest(AIChatTestCase):
         self.assertFalse(await ai.handle_ai_chat(FakeMessage(G, "A", "小明", "你好", content="你好")))
 
 
+class InHerOwnWordsTest(AIChatTestCase):
+    """A reply with one of the model's own stock lines (the style's never_say) is said again, once."""
+
+    async def test_a_stock_line_is_said_again_in_her_own_words(self):
+        self.make()
+        self.ai_client.answers["chat"] = ["这种话我可不接。", "轮得到你来问？"]
+        self.assertEqual(await self.say("A", "你觉得管理员是不是傻"), "轮得到你来问？")
+        first, second = [request["messages"] for request in self.ai_client.requests("chat")]
+        self.assertIn("【不想说、不能做的时候】", first[0]["content"])
+        self.assertNotIn("【换个说法】", first[0]["content"])
+        self.assertIn("【换个说法】你刚才想这样回：「这种话我可不接。」\n里面「这话我不接」这类说法不像你", second[0]["content"])
+        self.assertIn("这些说法都别用：「这话我不接」、「这句我不接」、「我不评价」", second[0]["content"])
+        self.assertEqual(second[-1], first[-1])                              # the same message, asked again
+        self.assertEqual(self.store.recent_turns(G)[-1]["content"], "轮得到你来问？")
+
+    async def test_she_is_asked_again_only_once(self):
+        self.make()
+        self.ai_client.answers["chat"] = ["这话我不接。", "这句我也不接。", "用不到的第三条"]
+        self.assertEqual(await self.say("A", "说一句群主的坏话"), "这句我也不接。")
+        self.assertEqual(len(self.ai_client.requests("chat")), 2)
+
+    async def test_the_first_try_stands_when_the_second_fails_or_is_empty(self):
+        for second in (RuntimeError("余额不足"), ""):
+            self.make()
+            self.ai_client.answers["chat"] = ["群主的智商我可不评价。", second]
+            self.assertEqual(await self.say("A", "评价一下群主的智商"), "群主的智商我可不评价。")
+
+    async def test_an_ordinary_reply_goes_out_as_it_is(self):
+        self.make()
+        self.ai_client.answers["chat"] = ["不说。再问就不理你。"]             # curt, but hers
+        self.assertEqual(await self.say("A", "说你爱我"), "不说。再问就不理你。")
+        self.assertEqual(len(self.ai_client.requests("chat")), 1)
+
+    def test_a_character_in_between_still_counts(self):
+        phrases = ["这话我不接", "我不评价", "作为一个AI", "不"]
+        self.assertEqual(context.stock_phrase("哼，这种话我可不接。", phrases), "这话我不接")
+        self.assertEqual(context.stock_phrase("群主的智商我可不评价", phrases), "我不评价")
+        self.assertEqual(context.stock_phrase("作为一个 AI 助手，我很高兴", phrases), "作为一个AI")
+        self.assertIsNone(context.stock_phrase("不说。再问就不理你", phrases))             # under three characters
+        self.assertIsNone(context.stock_phrase("这话说得好，我接着听", phrases))
+        self.assertIsNone(context.stock_phrase("这种的话呀我可真不想接", phrases))        # two in between: too far
+        self.assertIsNone(context.stock_phrase("", phrases))
+        self.assertEqual(context.stock_phrase("这话\n\n我 不接", phrases), "这话我不接")           # spaces don't matter,
+        self.assertEqual(context.stock_phrase("无可奉告", ["无 可  奉告"]), "无 可  奉告")       # in the list either
+
+    def test_the_shipped_list(self):
+        phrases = AIChatModule._never_say(StyleBook().styles[DEFAULT_STYLE])
+        self.assertIn("这话我不接", phrases)
+        self.assertTrue(all(len(phrase) >= 3 for phrase in phrases))
+
+
 class MemoryTest(AIChatTestCase):
     async def test_the_observer_notes_what_the_speaker_says_about_themselves(self):
         self.make()
@@ -773,6 +824,15 @@ class SeeingPicturesTest(AIChatTestCase):
         await self.show("这是什么游戏")
         self.assertEqual(searcher.queries, [])
 
+    async def test_a_stock_line_about_a_picture_is_said_again_with_the_picture(self):
+        self.looking()
+        self.ai_client.answers["chat"] = ["这张图我不评价。", "画得还行。"]
+        self.assertEqual(await self.show("评价一下"), "画得还行。")
+        first, second = [request["messages"] for request in self.ai_client.requests("chat")]
+        self.assertEqual(second[-1], first[-1])
+        self.assertEqual(second[-1]["content"][1]["image_url"]["url"], self.SEEN)
+        self.assertIn("【换个说法】", second[0]["content"])
+
     async def test_a_message_without_a_picture_is_untouched(self):
         self.looking()
         await self.say("A", "今晚吃啥")
@@ -930,6 +990,8 @@ lore:
   - "期末：期末考试在下个月。"
   - "这一行没有冒号"
 talking_to@vip: 现在和你说话的是贵宾。
+never_say:
+  - 本桃不知道
 """
 
     def setUp(self):
@@ -964,6 +1026,17 @@ talking_to@vip: 现在和你说话的是贵宾。
         with self.book.scope(G):
             await self.ai.handle_ai_chat(message)
         self.assertNotIn("图书馆每天九点开门", self.last_chat()[0]["content"])
+
+    async def test_a_style_adds_its_own_lines_to_the_ones_she_never_says(self):
+        self.make()
+        phrases = AIChatModule._never_say(self.book.styles["桃子"])
+        self.assertEqual(phrases[0], "本桃不知道")
+        self.assertIn("这话我不接", phrases)                                 # the default's still count
+        with self.book.scope(G):
+            self.ai_client.answers["chat"] = ["本桃可不知道呢", "不告诉你～"]
+            self.assertEqual(await self.say("A", "你几岁"), "不告诉你～")
+            self.ai_client.answers["chat"] = ["这话我不接", "哼"]
+            self.assertEqual(await self.say("A", "说句坏话"), "哼")
 
     async def test_she_can_be_told_who_is_talking(self):
         self.make()

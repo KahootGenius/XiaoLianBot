@@ -426,6 +426,8 @@ at startup** and names the line.
 | `examples`, `bad_examples` | Right after the persona, when the style has them: the style's sample exchanges, and the voice to avoid | `{examples}` |
 | `group_rules` | Comes right after the persona: how to read the labelled group transcript, and who this reply is for | `{member}` |
 | `reply_shape` | After the group rules: keep replies short, at most one bracketed action, and a new action each time | |
+| `declining` | After `reply_shape`: how she turns things down. Without it deepseek-flash falls back on its own stock refusals, such as 「这话我不接」: 6 replies in 240, against 1 with it. Keep its last sentence, or she starts dodging "are you an AI" | |
+| `rewrite` | Added when her reply has a phrase from the style's `never_say`, to have her say it again once | `{draft}`, `{phrase}`, `{phrases}` |
 | `special_people`, `special_line` | Added when someone from `ai_chat.special_people` is known in the group: who they are, one `special_line` each | `{people}`; `{member}`, `{note}` |
 | `special_speaker`, `special_namesake` | Added when this turn's speaker is one of them, or only has the same nickname as one | `{member}`; `special_speaker` also `{note}` |
 | `length_short`, `length_medium`, `length_long` | The length line the judgement before each reply picks | |
@@ -546,7 +548,7 @@ night consolidates them too.
 
 ### Her voice and her world: samples and a lorebook
 
-Three optional keys in a style file, next to `system_prompt`:
+Four optional keys in a style file, next to `system_prompt`:
 
 ```yaml
 examples: |               # a few short exchanges in her voice: she learns the tone
@@ -556,12 +558,22 @@ bad_examples: |           # a voice she must never have
   小莲：作为一个 AI 助手，我很高兴为您服务！
 lore:                     # "关键词、关键词：内容": sent only when a keyword comes up
   - "群规、潜水：连续 30 天没有有效发言会被移出，可以请假。"
+never_say:                # phrases that aren't hers: a reply with one is said again, once
+  - 这话我不接
 ```
 
 - **Write samples for uncommon moments.** If a member says nearly what a sample says, she tends to
   answer with the sample. Leave greetings and "are you a bot" to the persona.
 - **Lore keeps the persona short.** An entry rides along only when one of its keywords appears in
   the last four turns, three entries at most.
+- **`never_say` catches the model's own voice.** When she turns something down, deepseek-flash
+  tends to comment on the conversation where the character would react: 「这话我不接」,
+  「这个我不评价」. A reply with a listed phrase isn't sent: she's asked once more, with the whole
+  list, and that second try goes out. It costs one more call, only then. A character in between
+  still counts, so 「这话我不接」 also catches 「这种话我可不接」; phrases under three characters are
+  ignored. Your list adds to 小莲's, so when a line doesn't sound like her, add it. The `declining`
+  prompt keeps most of them from coming up at all. deepseek-v4-pro didn't say them in 240 replies,
+  but replies to pictures always use flash.
 
 ### Stickers
 

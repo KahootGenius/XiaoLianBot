@@ -111,6 +111,18 @@ def parse_characters(raw, known):
     return list(dict.fromkeys(names))
 
 
+def stock_phrase(text, phrases):
+    """The first of `phrases` that `text` says, or None. A character in between still counts, so
+    「这话我不接」 also catches 「这种话我可不接」, and spaces don't matter. Phrases under three
+    characters are ignored: they'd catch ordinary words."""
+    squeezed = "".join(text.split())
+    for phrase in phrases:
+        letters = "".join(str(phrase).split())
+        if len(letters) >= 3 and re.search(".{0,1}".join(map(re.escape, letters)), squeezed):
+            return str(phrase)
+    return None
+
+
 def with_sender(window, member, someone):
     """The chat when real people are in a picture: the sender's lines and her replies to them, so she
     can follow what they're talking about. Anyone else's stay out, even without a name: 「刚才说去

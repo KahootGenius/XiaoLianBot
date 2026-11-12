@@ -126,7 +126,8 @@ seekchat (`Desktop/ai`):
   seekchat: 严谨 (0.6), 平衡 (1.0) or 奔放 (1.15) sets the temperature, and 短/中/长 the length. The
   actions in her last few replies are listed so she picks new ones.
 - **Her voice and world come from the style.** Optional `examples` and `bad_examples` teach her
-  tone; `lore` entries ride along only when their keywords come up. Try changes first with
+  tone; `lore` entries ride along only when their keywords come up; a reply with a phrase from
+  `never_say`, the model's own stock lines such as 「这话我不接」, is said again. Try changes first with
   `python -m modules.ai.rehearse`, which plays a scripted chat against the real DeepSeek.
 - **She sends stickers.** Put images and a `stickers.yaml` (label and when to use each) in the
   private `local/stickers/`. She writes 「[表情:标签]」 as in seekchat, and the sticker shows small

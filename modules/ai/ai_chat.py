@@ -70,6 +70,8 @@ PROMPT_FIELDS = {
     "examples": {"examples"},
     "bad_examples": {"examples"},
     "reply_shape": set(),
+    "declining": set(),
+    "rewrite": {"draft", "phrase", "phrases"},
     "length_short": set(),
     "length_medium": set(),
     "length_long": set(),
@@ -500,15 +502,27 @@ class AIChatModule:
         return [examples and render(self.prompts["examples"], examples=examples),
                 bad and render(self.prompts["bad_examples"], examples=bad)]
 
+    @staticmethod
+    def _never_say(style):
+        """The phrases a style never says (never_say): its own list, and the default's behind it."""
+        phrases = []
+        while style is not None:
+            own = style.own("never_say")
+            phrases += [str(phrase) for phrase in own] if isinstance(own, list) else []
+            style = style.base
+        return list(dict.fromkeys(phrases))
+
     def _impression(self, group, member):
         row = self.store.impression(group, member)
         return row["text"] if row else None
 
-    def _prompt(self, group, member, member_name, window, length=None, found=None, sight=vision.NOTHING):
+    def _prompt(self, group, member, member_name, window, length=None, found=None, sight=vision.NOTHING, redo=None):
         """(instructions, evidence) for one reply. `length` is the pre-reply call's 短/中/长, if it gave
         one, `found` what a web search for this message turned up, as look_up returns it, and `sight`
         what she has of its pictures. When real people are in them she knows only the sender: no rule
-        stops her pinning them on someone she knows, but she can't name someone she isn't told about."""
+        stops her pinning them on someone she knows, but she can't name someone she isn't told about.
+        `redo` is (her first try, the phrase in it she never says), when she's asked to say it again:
+        the whole list goes along, or she swaps one of its phrases for another."""
         style = current()
         alone = sight.strangers
         lore = None if alone else context.lore_for(style.lookup("lore"), window)
@@ -517,6 +531,7 @@ class AIChatModule:
                         render(self.prompts["group_rules"], member=member_name),
                         render(self.prompts["honesty"]),
                         render(self.prompts["reply_shape"]),
+                        render(self.prompts["declining"]),
                         length and render(self.prompts[context.LENGTHS[length]]),
                         self.stickers and render(self.prompts["stickers"], stickers=stickers.listing(self.stickers),
                                                  max=stickers.MAX_PER_REPLY),
@@ -529,7 +544,9 @@ class AIChatModule:
                         sight.pictures and render(self.prompts["vision_rules"]),
                         alone and render(self.prompts["vision_strangers"]),
                         sight.characters and render(self.prompts["vision_characters"]),
-                        sight.missed and render(self.prompts["vision_missing"])]
+                        sight.missed and render(self.prompts["vision_missing"]),
+                        redo and render(self.prompts["rewrite"], draft=redo[0], phrase=redo[1],
+                                        phrases=join(f"「{phrase}」" for phrase in self._never_say(style)))]
         evidence = [self._today(group, window, alone)]
         summary = None if alone else self.store.summary(group)
         if summary:
@@ -656,11 +673,11 @@ class AIChatModule:
             self.careful_until[group] = self._now() + vision.CAREFUL_SECONDS
         return sight
 
-    async def _answer(self, group, member, name, window, length, found, sight, register):
+    async def _answer(self, group, member, name, window, length, found, sight, register, redo=None):
         """Her reply. If DeepSeek can't take the pictures she answers without them, and says so.
         Who the character check found goes right after the pictures: among the reference notes
         she kept to an earlier 「认不出来」 in the chat, and named the character 3 times in 10."""
-        instructions, evidence = self._prompt(group, member, name, window, length, found, sight)
+        instructions, evidence = self._prompt(group, member, name, window, length, found, sight, redo)
         hint = render(self.prompts["picture_characters"], names=join(sight.characters)) if sight.characters else ""
         messages = context.build_messages(instructions, evidence, window, sight.pictures, hint)
         temperature = self.register_temperatures.get(register, self.temperature)
@@ -673,7 +690,22 @@ class AIChatModule:
             self.vision_off_until = self._now() + vision.RETRY_SECONDS
             _log.warning(f"[Vision] 看图失败，{vision.RETRY_SECONDS // 60} 分钟内先不看: {str(e)[:200]}")
         return await self._answer(group, member, name, window, length, found,
-                                  vision.Sight(strangers=sight.strangers, missed=True), register)
+                                  vision.Sight(strangers=sight.strangers, missed=True), register, redo)
+
+    async def _in_her_words(self, reply, *asked):
+        """`reply`, or her second try at it when it has a phrase the style never says (never_say): the
+        model's own stock lines, such as 「这话我不接」, which deepseek-flash fell back on when declining
+        6 times in 240 where deepseek-v4-pro never did. One more call; if it fails, the first stands."""
+        phrase = context.stock_phrase(reply, self._never_say(current()))
+        if not phrase:
+            return reply
+        try:
+            again = (await self._answer(*asked, redo=(reply, phrase))).strip()
+        except Exception as e:
+            _log.warning(f"[AIChat] 换个说法没成，用原来那条: {str(e)[:120]}")
+            return reply
+        _log.info(f"[AIChat] 回复里有「{phrase}」这类说法，让她重说了一次")
+        return again or reply
 
     async def chat(self, message, text):
         group, member = message.group_openid, message.member_openid
@@ -694,13 +726,15 @@ class AIChatModule:
             register = length = None
         # With a picture she can't know what to search for until she has looked at it.
         found = await self.look_up(group, *wanted) if wanted and not images else None
+        asked = (group, member, name, window, length, found, sight, register)
         try:
-            reply = (await self._answer(group, member, name, window, length, found, sight, register)).strip()
+            reply = (await self._answer(*asked)).strip()
         except Exception as e:
             await self._reply(message, t("ai.error", error=e))
             return
         if not reply:
             return
+        reply = await self._in_her_words(reply, *asked)
         reply = await self._send_reply(message, reply)
         self.store.add_turn(group, None, current().name, "assistant", reply, self._now())
         # What's in a picture never becomes a memory, and a mistake about who's in it can't stick.
