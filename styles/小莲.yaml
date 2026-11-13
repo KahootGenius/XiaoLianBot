@@ -521,6 +521,8 @@ games:
     # 接在上面那一段后面的几句。teams.yaml 里写了躲的地方才有 help_hide，写了突发事件才有 help_events。
     # {hide}、{seek}、{record}：躲起来、队长找人、看档案的指令（也可以在 teams.yaml 的 commands 里改名）
     help_hide: "还没进队的人：{hide} 躲起来 · 队长：{seek} 地点 去翻，翻对了就抓进队"
+    # teams.yaml 里每个 effect: steal 的操作各有一句。{action} 是它的指令，{need} 要掷出几点，{times} 每天能掷几次
+    help_steal: "队长：{action} @别队的队员 掷骰子抢人，掷出 {need} 点以上就抢进自己的队伍，每天 {times} 次"
     help_events: 队员和队长在群里聊天时，偶尔会遇上突发事件
     help_record: "{record} 看自己的游戏档案 · {record} @某人 看别人的"
     title: "🏳️ 今日队伍 · {date}"
@@ -533,10 +535,15 @@ games:
     not_here: 这个群没有开启组队游戏哦～
     usage: "要 @ 对象哦，例如：@我 /{action} @某人"
     denied: "只有{who}才能用 /{action} 哦～"
+    captain: 队长       # 上面那句 {who} 里对队长的叫法
     admins: 管理员
     in_a_team: "你现在是 {captain} 队伍里的队员，不能另外组队哦。"
     done: "{actor} 对 {members} 使用了「{action}」。"     # teams.yaml 里没写 say 的操作用这句
     rolled: "🎲 {actor} 为 {members} 掷出了「{status}」！"    # effect: roll 的操作没写 say 时用这句
+    # effect: steal 的操作（掷骰子抢别的队长的队员）没写 say、fail 时用这两句：抢到了，没抢到。
+    # {captain} 是原来的队长，{roll} 掷出的点数，{need} 要几点才算抢到，{left} 今天还能掷几次
+    stolen: "🎲 {actor} 用「{action}」掷出了 {roll} 点（{need} 点以上算抢到），把 {members} 从 {captain} 的队伍里抢了过来！今天还能掷 {left} 次。"
+    missed: "🎲 {actor} 用「{action}」掷出了 {roll} 点，要 {need} 点以上才算抢到：{members} 还在 {captain} 的队伍里。今天还能掷 {left} 次。"
     fail:
       self: 不能抓自己哦～
       captain: "{member} 今天是队长，不能这样做哦。"
@@ -548,6 +555,7 @@ games:
       already: "{member} 已经是「{status}」了。"
       needs: "{member} 不是「{status}」，不能用 /{action}。"
       hidden: "{member} 躲起来了，抓不到。用 {seek} 地点 去翻翻看吧。"
+      throws: "你今天已经掷了 {max} 次 /{action}，明天再来吧。"
     # 躲猫猫：还没进队的人躲起来，藏在哪儿由她定，谁也不告诉
     hide:
       disabled: 这个游戏没有设置躲猫猫的地方哦。
@@ -576,6 +584,8 @@ games:
       caught_by: "，最常抓到 TA 的是 {member}（{count} 次）"       # 接在上一句后面
       grabbed: "抓过 {count} 人次"
       grabbed_most: "，最常抓的是 {member}（{count} 次）"          # 接在上一句后面
+      stolen: "被别的队长掷骰子抢走 {count} 次"
+      steals: "掷骰子抢人：抢到 {count} 次，失手 {missed} 次"
       statuses: "经历过：{list}"
       status_item: "{status} {count} 次"
       hid: "躲猫猫：躲了 {hid} 次，被找到 {found} 次，躲到清空 {slipped} 次"

@@ -4,6 +4,7 @@ doesn't end a game.
 A group's teams belong to one game day and are cleared when the next one
 starts (prompts/teams.yaml: reset_time). So is everything about hide-and-seek:
 who is hiding and where, how often each has hidden, how often each captain has looked.
+And so are the throws of the die each captain has used to take other captains' members.
 """
 import json
 import os
@@ -44,6 +45,7 @@ class GroupTeams:
     hiding: dict = field(default_factory=dict)      # openid -> Hider, in the order they hid
     hides: dict = field(default_factory=dict)       # openid -> how often they've hidden today
     searches: dict = field(default_factory=dict)    # captain openid -> how often they've looked today
+    throws: dict = field(default_factory=dict)      # a steal's name -> {openid: how often they've thrown its die today}
 
     def team_of(self, member):
         """The team `member` was grabbed into, or None. Captains lead a team rather than sit in one."""
@@ -52,7 +54,7 @@ class GroupTeams:
     @property
     def played(self):
         """Whether anything has happened in this game day that's worth keeping."""
-        return bool(self.teams or self.hiding or self.hides or self.searches)
+        return bool(self.teams or self.hiding or self.hides or self.searches or self.throws)
 
 
 class Roster:
@@ -102,8 +104,9 @@ class Roster:
             team.members.pop(member, None)
             if not team.members:
                 del teams.teams[team.captain]
-        for kept in (teams.hiding, teams.hides, teams.searches):
+        for kept in (teams.hiding, teams.hides, teams.searches, *teams.throws.values()):
             kept.pop(member, None)
+        teams.throws = {action: thrown for action, thrown in teams.throws.items() if thrown}
         self.save()
 
     def save(self):
@@ -111,7 +114,7 @@ class Roster:
             return
         data = {"groups": {group: {"day": teams.day, "teams": [asdict(team) for team in teams.teams.values()],
                                    "hiding": {openid: asdict(hider) for openid, hider in teams.hiding.items()},
-                                   "hides": teams.hides, "searches": teams.searches}
+                                   "hides": teams.hides, "searches": teams.searches, "throws": teams.throws}
                            for group, teams in self.groups.items() if teams.played}}
         folder = os.path.dirname(self.path)
         os.makedirs(folder, exist_ok=True)
@@ -147,6 +150,8 @@ class Roster:
                         teams.hiding[openid] = Hider(str(h.get("name") or ""), str(h["spot"]), int(h.get("since") or 0))
                 teams.hides = {str(k): int(v) for k, v in (saved.get("hides") or {}).items()}
                 teams.searches = {str(k): int(v) for k, v in (saved.get("searches") or {}).items()}
+                teams.throws = {str(action): {str(k): int(v) for k, v in thrown.items()}
+                                for action, thrown in (saved.get("throws") or {}).items()}
                 self.groups[group] = teams
         except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
             _log.warning(f"[Teams] {self.path} 读不了（{e}），队伍从空的开始")

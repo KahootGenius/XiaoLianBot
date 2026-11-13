@@ -6,6 +6,9 @@ can take -- lives in prompts/teams.yaml, so new actions and statuses need no
 code. Grabbed members can't leave on their own; their captain, or an admin
 acting as referee, decides. Teams last one game day.
 
+An action with the effect "steal" is a captain's way to another captain's members: a die is
+thrown, a few times a day, and at the points the action needs the member changes teams.
+
 Three things from the same file give the caught something to do, and the game a memory:
 - hide-and-seek: someone who isn't on a team hides (/躲). The bot picks the place and tells nobody,
   as a command sent in a group can't be secret. A captain can't grab them, only look in one place
@@ -15,7 +18,7 @@ Three things from the same file give the caught something to do, and the game a 
 - records: counts of what has happened to each member across game days (/档案), kept by history.py.
 
 Every line comes from the style files via t(), except each action's and each event's own
-announcement, which sits next to it in teams.yaml.
+announcements, which sit next to it in teams.yaml.
 """
 import asyncio
 import random
@@ -29,7 +32,7 @@ from core.config import root_path
 from core.style import join, render, t
 from modules.fun.teams.history import STATUS, History
 from modules.fun.teams.roster import GroupTeams, Hider, Member, Roster, Team
-from modules.fun.teams.rules import CAPTAIN, RULES_FILE, Action, load_rules
+from modules.fun.teams.rules import CAPTAIN, DIE, RULES_FILE, TAKING, Action, load_rules
 
 
 _log = logging.get_logger()
@@ -55,8 +58,9 @@ class Turn:
     action: Action
     teams: GroupTeams
     now: int
-    team: Team = None       # grab only: the team people are grabbed into
+    team: Team = None       # grab and steal: the team people are brought into
     rolled: dict = None     # roll only: member openid -> the status it landed on
+    dice: dict = None       # steal only: member openid -> (what the die showed, the throws the actor has left)
 
 
 class TeamsModule:
@@ -117,8 +121,9 @@ class TeamsModule:
         return any(member.status.get(self.rules.column_of(s)) == s for s in statuses if s != CAPTAIN)
 
     def _denied(self, action):
-        who = list(action.by)
-        if action.effect != "grab":         # admins referee every action except grabbing
+        # `by` names captains with the file's fixed word; the group hears the style's word for them.
+        who = [t("games.teams.captain") if allowed == CAPTAIN else allowed for allowed in action.by]
+        if action.effect not in TAKING:     # admins referee every action, but take nobody for themselves
             who.append(t("games.teams.admins"))
         return t("games.teams.denied", who=join(who), action=action.name)
 
@@ -144,13 +149,16 @@ class TeamsModule:
             _log.error(f"[Teams] 回复失败: {e}")
 
     def help_block(self):
-        """The 【组队游戏】 part of /帮助, listing the actions in teams.yaml; then a line each for
-        hide-and-seek and events, when the file has them, and one for the records."""
+        """The 【组队游戏】 part of /帮助, listing the actions in teams.yaml; then a line for each action
+        that takes other captains' members, one each for hide-and-seek and events, when the file has
+        them, and one for the records."""
         grab = " ".join(f"/{a.name}" for a in self.rules.actions if a.effect == "grab")
-        others = " ".join(f"/{a.name}" for a in self.rules.actions if a.effect != "grab")
+        others = " ".join(f"/{a.name}" for a in self.rules.actions if a.effect not in TAKING)
         words = self._fixed_words()
         lines = [t("games.teams.help", grab=grab, actions=others, reset=self.rules.reset_time.strftime("%H:%M"),
                    **words)]
+        lines += [t("games.teams.help_steal", action=f"/{a.name}", need=a.need, times=a.times)
+                  for a in self.rules.actions if a.effect == "steal"]
         if self.rules.spots:
             lines.append(t("games.teams.help_hide", **words))
         if self.rules.events:
@@ -173,6 +181,16 @@ class TeamsModule:
         """Someone was caught, by a grab or by being found: both records, and the badges it may earn."""
         return (self._note(group, member, name, "caught", actor, actor_name, counter="caught")
                 + self._note(group, actor, actor_name, "grabbed", member, name, counter="grabbed"))
+
+    def _thrown(self, group, turn, member, name):
+        """A die was thrown for someone. When it took them they have been caught again, which goes in
+        both records and may earn a badge; when it fell short, that goes in the thrower's."""
+        if turn.dice[member][0] < turn.action.need:
+            self._note(group, turn.actor, turn.actor_name, "misses")
+            return []
+        self._note(group, member, name, "stolen", turn.actor, turn.actor_name)
+        self._note(group, turn.actor, turn.actor_name, "steals", member, name)
+        return self._joined(group, member, name, turn.actor, turn.actor_name)
 
     def _close_days(self):
         """A game day that has ended is put away: whoever was still hiding has slipped through it,
@@ -219,14 +237,14 @@ class TeamsModule:
         return True
 
     async def use(self, message, teams, action):
-        """An action from teams.yaml -- /抓, /踢出, /死亡 … -- on everyone @-ed in the message."""
+        """An action from teams.yaml -- /抓, /踢出, /死亡, /抢人 … -- on everyone @-ed in the message."""
         group, actor = message.group_openid, message.member_openid
         if actor in teams.teams and message.nickname:
             teams.teams[actor].name = message.nickname
         turn = Turn(actor, self._name(group, actor, message.nickname), self.is_admin(group, actor, message.role),
                     action, teams, int(self.clock().timestamp()))
         try:
-            if action.effect == "grab":
+            if action.effect in TAKING:
                 turn.team = self._grabbing_team(turn)
             elif not turn.admin and not self._may_use(turn):
                 raise Refused(self._denied(action))
@@ -239,35 +257,49 @@ class TeamsModule:
             return
 
         effect = getattr(self, f"effect_{action.effect}")
-        turn.rolled = {}
-        done, problems, earned = [], [], []     # done: (name, their captain's name, the status they now have)
+        turn.rolled, turn.dice = {}, {}
+        # done: (openid, name, the name of the captain whose team it happened in, the status they now have)
+        done, problems, earned = [], [], []
         for openid, name in targets:
             try:
                 captain = effect(turn, openid, name).name
-                status = turn.rolled.get(openid, action.status)
-                done.append((name, captain, status))
-                if action.effect == "grab":
-                    earned += self._joined(group, openid, name, actor, turn.actor_name)
-                elif status:
-                    self._note(group, openid, name, STATUS + status)
             except Refused as e:
                 problems.append(str(e))
-        lines = []
+                continue
+            status = turn.rolled.get(openid, action.status)
+            done.append((openid, name, captain, status))
+            if action.effect == "steal":
+                earned += self._thrown(group, turn, openid, name)
+            elif action.effect == "grab":
+                earned += self._joined(group, openid, name, actor, turn.actor_name)
+            elif status:
+                self._note(group, openid, name, STATUS + status)
+        lines, buttons = [], None
         if done:
-            if action.effect == "grab":
+            if action.effect in TAKING:
                 teams.hiding.pop(actor, None)       # a captain who was hiding has shown themself
             self.roster.save()
-            # A roll lands differently for each member, so each gets a line of their own.
-            groups = [[d] for d in done] if action.effect == "roll" else [done]
-            for group in groups:
-                said = dict(actor=turn.actor_name, members=join([name for name, _, _ in group]), count=len(group),
-                            captain=group[0][1], action=action.name, status=group[0][2])
-                generic = "games.teams.rolled" if action.effect == "roll" else "games.teams.done"
-                lines.append(render(action.say, **said) if action.say else t(generic, **said))
-        await self._reply(message, "\n".join(lines + problems + earned))
+            # A roll lands differently for each member, and so does a die: each gets a line of their own.
+            alone = action.effect in ("roll", "steal")
+            for batch in [[d] for d in done] if alone else [done]:
+                said = dict(actor=turn.actor_name, members=join([name for _, name, _, _ in batch]), count=len(batch),
+                            captain=batch[0][2], action=action.name, status=batch[0][3])
+                say, generic = action.say, "games.teams.rolled" if action.effect == "roll" else "games.teams.done"
+                if action.effect == "steal":
+                    points, left = turn.dice[batch[0][0]]
+                    said.update(roll=points, need=action.need, left=left)
+                    if points < action.need:
+                        say, generic = action.fail, "games.teams.missed"
+                    else:
+                        generic = "games.teams.stolen"
+                    # The die again, for as long as they have a throw left: they add whom to throw it for.
+                    buttons = [[(action.name, f"/{action.name} ")]] if left else None
+                lines.append(render(say, **said) if say else t(generic, **said))
+        await self._reply(message, "\n".join(lines + problems + earned), buttons=buttons)
 
     def _grabbing_team(self, turn):
-        """The team /抓 adds people to: the one the actor leads, or a new one if they're a captain."""
+        """The team a grab or a steal brings people into: the one the actor leads, or a new one if
+        they're a captain."""
         actor, action, teams = turn.actor, turn.action, turn.teams
         if actor in teams.teams and CAPTAIN in action.by:
             return teams.teams[actor]
@@ -307,10 +339,14 @@ class TeamsModule:
         if not turn.admin and not self._commands(turn, team):
             raise Refused(t("games.teams.fail.not_yours", member=name))
         member = team.members[openid]
+        self._fits(turn, member, name)
+        return team, member
+
+    def _fits(self, turn, member, name):
+        """Refuses a member who lacks a status the action asks for with `only`."""
         for status in turn.action.only:
             if member.status.get(self.rules.column_of(status)) != status:
                 raise Refused(t("games.teams.fail.needs", member=name, status=status, action=turn.action.name))
-        return team, member
 
     # Effects: each takes one target and returns the team it happened in, or raises Refused.
 
@@ -353,6 +389,38 @@ class TeamsModule:
         if member.status.get(action.column) == action.status:
             raise Refused(t("games.teams.fail.already", member=name, status=action.status))
         member.status[action.column] = action.status
+        return team
+
+    def effect_steal(self, turn, openid, name):
+        """One throw of the die for a member of another captain's team. At the points the action needs
+        they change teams, starting there like anyone newly grabbed; below, nothing happens. Either
+        way it's one of the actor's throws for the day. Returns the team they were in."""
+        action, teams = turn.action, turn.teams
+        if openid == turn.actor:
+            raise Refused(t("games.teams.fail.self"))
+        if openid in teams.teams:
+            raise Refused(t("games.teams.fail.captain", member=name))
+        team = teams.team_of(openid)
+        if team is None:
+            raise Refused(t("games.teams.fail.free", member=name))
+        if team.captain == turn.team.captain:
+            raise Refused(t("games.teams.fail.mine", member=name))
+        self._fits(turn, team.members[openid], name)
+        limit = self.rules.max_members
+        if limit and len(turn.team.members) >= limit:
+            raise Refused(t("games.teams.fail.full", member=name, max=limit))
+        used = teams.throws.get(action.name, {}).get(turn.actor, 0)
+        if used >= action.times:
+            raise Refused(t("games.teams.fail.throws", action=action.name, max=action.times))
+        teams.throws.setdefault(action.name, {})[turn.actor] = used + 1
+        points = self.rng.randint(1, DIE)
+        turn.dice[openid] = (points, action.times - used - 1)
+        if points >= action.need:
+            del team.members[openid]
+            if not team.members:
+                del teams.teams[team.captain]
+            turn.team.members[openid] = Member(openid, name, self.rules.starting(), turn.now)
+            teams.teams.setdefault(turn.team.captain, turn.team)
         return team
 
     # ---- fixed commands ----
@@ -556,6 +624,10 @@ class TeamsModule:
             lines.append(line("caught", "caught_by"))
         if totals.get("grabbed"):
             lines.append(line("grabbed", "grabbed_most"))
+        if totals.get("stolen"):
+            lines.append(t("games.teams.record.stolen", count=totals["stolen"]))
+        if totals.get("steals") or totals.get("misses"):
+            lines.append(t("games.teams.record.steals", count=totals.get("steals", 0), missed=totals.get("misses", 0)))
         # Every status but each column's first, which is only where everyone starts, in the file's order.
         been = [t("games.teams.record.status_item", status=status, count=totals[STATUS + status])
                 for statuses in self.rules.columns.values() for status in statuses[1:] if totals.get(STATUS + status)]

@@ -68,6 +68,7 @@ takes one or more @mentions.
 | `/撤销小队长 @某人…` | Captains | "Revoke vice-captain" |
 | `/死亡 @某人…` (`/阵亡`) | Captains, vice-captains | "Dead": mark members as dead in the game |
 | `/复活 @某人…` | Captains | "Revive" |
+| `/抢人 @某人…` | Captains | "Take": throw a die for a member of another captain's team; at 4 or more they join mine. Three throws a day |
 | `/队伍` | Anyone | "Teams": today's teams with each member's statuses |
 | `/解散队伍` | Captains; admins with `@队长` | "Disband": let a whole team go |
 | `/清空队伍` | Admins | "Clear teams": end every team in the group, and bring out whoever is hiding |
@@ -75,7 +76,7 @@ takes one or more @mentions.
 | `/找 地点`, `/找` | Captains | "Look" in one hiding place: everyone hiding there joins my team; alone, it lists the places as buttons |
 | `/档案`, `/档案 @某人` | Anyone | "Record": what has happened to me, or to someone else, in the game across days |
 
-Admins can use every action except `/抓` on any team. They don't look for hiders either.
+Admins can use every action except `/抓` and `/抢人` on any team. They don't look for hiders either.
 
 ### Social (every group)
 

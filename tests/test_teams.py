@@ -1,14 +1,17 @@
 """The team game (/抓): rules file checks and simulated game nights with a fake QQ."""
 import asyncio
 import contextlib
+import io
 import os
 import re
 import shutil
 import tempfile
 import unittest
 from datetime import timedelta
+from unittest import mock
 from core.config import root_path
-from modules.fun.teams import TeamsModule
+from core.style import STYLES
+from modules.fun.teams import TeamsModule, check
 from modules.fun.teams.history import History
 from modules.fun.teams.module import _log as teams_log
 from modules.fun.teams.rules import load_rules
@@ -41,10 +44,16 @@ def rules_with(events=None, hide=None, **replaced):
 
 
 class Dice:
-    """A random source the test sets: random() gives `roll`, from 0 to 1, and choice() the item at `pick`."""
+    """A random source the test sets: random() gives `roll`, from 0 to 1, choice() the item at `pick`,
+    and randint() the next of `die`: the points a thrown die shows, one throw after another."""
 
-    def __init__(self, roll=0.0, pick=0):
+    def __init__(self, roll=0.0, pick=0, die=()):
         self.roll, self.pick, self.rolls = roll, pick, 0
+        self.die, self.throws, self.faces = list(die), 0, None
+
+    def randint(self, low, high):
+        self.throws, self.faces = self.throws + 1, (low, high)
+        return self.die.pop(0)
 
     def random(self):
         self.rolls += 1
@@ -121,6 +130,9 @@ class GrabTest(TeamGameTestCase):
         self.assertEqual(await self.say("ADMIN", "/抓 @M2"), "只有队长才能用 /抓 哦～")
         self.assertIsNone(self.team("ADMIN"))
         self.assertIn("要 @ 对象", await self.say("CA", "/抓"))
+        with mock.patch.dict(STYLES.default().data["games"]["teams"], {"captain": "船长"}):    # a style's own word
+            self.assertEqual(await self.say("M1", "/抓 @M2"), "只有船长才能用 /抓 哦～")
+            self.assertEqual(await self.say("M1", "/死亡 @M2"), "只有船长、小队长、管理员才能用 /死亡 哦～")
 
     async def test_a_captain_without_a_team_can_be_grabbed_and_then_cannot_lead(self):
         self.make()
@@ -577,6 +589,166 @@ class EventTest(TeamGameTestCase):
         await off.observe(FakeMessage(GROUP, "M1", "小一", "在吗", content="在吗"))
 
 
+class StealTest(TeamGameTestCase):
+    """An action with effect: steal, the shipped /抢人: a die thrown for another captain's member."""
+
+    async def start(self, *die, rules=None, **kwargs):
+        """CA has M1 and M2, CB has M3. The die will show `die`, one throw after another."""
+        self.dice = Dice(die=die)
+        self.make(rules_path=self.rules_file(rules) if rules else None, rng=self.dice, **kwargs)
+        await self.say("CA", "/抓 @M1 @M2")
+        await self.say("CB", "/抓 @M3")
+
+    def throws(self, group=GROUP):
+        return self.teams.roster.today(group, self.teams._day()).throws
+
+    async def test_at_four_or_more_they_change_teams(self):
+        await self.start(4, 6)
+        await self.say("CA", "/设为小队长 @M1")
+        self.assertEqual(await self.say("CB", "/抢人 @M1"),
+                         "🎲 贝队 掷出了 4 点，把 小一 从 阿队 的队伍里抢了过来！（今天还能掷 2 次）")
+        fresh = {"职位": "队员", "生死": "存活"}
+        self.assertEqual(self.team("CB"), {"M3": fresh, "M1": fresh})          # they start over, like anyone grabbed
+        self.assertEqual(set(self.team("CA")), {"M2"})
+        self.assertEqual(self.gw.buttons[-1], (GROUP, [[("抢人", "/抢人 ")]]))    # the die again; they add whom
+        self.assertIn("把 小二 从 阿队 的队伍里抢了过来！（今天还能掷 1 次）", await self.say("CB", "/抢人@M2"))
+        self.assertIsNone(self.team("CA"))                                      # a team with nobody left disappears
+        self.assertEqual(list(self.team("CB")), ["M3", "M1", "M2"])
+        self.assertEqual((self.throws(), self.dice.faces), ({"抢人": {"CB": 2}}, (1, 6)))
+        self.assertIn("\n掷骰子抢人：抢到 2 次，失手 0 次", await self.say("CB", "/档案"))
+
+    async def test_below_four_nothing_moves_and_the_throws_run_out(self):
+        await self.start(3, 1, 2, 5, 6)
+        self.assertEqual(await self.say("CB", "/抢人 @M1"),
+                         "🎲 贝队 掷出了 3 点，差一点：小一 还在 阿队 的队伍里。（今天还能掷 2 次）")
+        self.assertEqual((set(self.team("CA")), set(self.team("CB"))), ({"M1", "M2"}, {"M3"}))
+        await self.say("CB", "/抢人 @M1")
+        buttons = len(self.gw.buttons)
+        self.assertIn("（今天还能掷 0 次）", await self.say("CB", "/抢人 @M1"))
+        self.assertEqual(len(self.gw.buttons), buttons)                         # no throw left, no button for one
+        self.assertEqual(await self.say("CB", "/抢人 @M1"), "你今天已经掷了 3 次 /抢人，明天再来吧。")
+        self.assertEqual(self.dice.throws, 3)                                   # the die stayed where it was
+        self.assertIn("阿队 掷出了 5 点，把 小三 从 贝队", await self.say("CA", "/抢人 @M3"))     # each has their own throws
+        self.now += timedelta(days=1)                                           # a new game day brings new ones
+        await self.say("CA", "/抓 @M1")
+        self.assertIn("贝队 掷出了 6 点，把 小一 从 阿队 的队伍里抢了过来！（今天还能掷 2 次）", await self.say("CB", "/抢人 @M1"))
+
+    async def test_whoever_cannot_be_taken_costs_no_throw(self):
+        rules = shipped_rules().replace("max_members: 0", "max_members: 2")
+        await self.start(5, rules=rules.replace("    need: 4\n", "    need: 4\n    only: [存活]\n"))
+        await self.say("CA", "/死亡 @M2")
+        self.assertEqual(await self.say("CB", "/抢人 @M3"), "小三 已经在你的队伍里啦。")
+        self.assertEqual(await self.say("CB", "/抢人 @CA"), "阿队 今天是队长，不能这样做哦。")
+        self.assertEqual(await self.say("CB", "/抢人 @M5"), "小五 现在不在任何队伍里。")
+        self.assertEqual(await self.say("CC", "/抢人 @CC"), "不能抓自己哦～")
+        self.assertEqual(await self.say("CB", "/抢人 @M2"), "小二 不是「存活」，不能用 /抢人。")
+        self.assertEqual(await self.say("CA", "/抢人 @M3"), "队伍满员了（最多 2 人），小三 没能加入。")
+        self.assertIn("要 @ 对象", await self.say("CB", "/抢人"))
+        self.assertEqual((self.dice.throws, self.throws(), self.gw.buttons), (0, {}, []))
+        self.assertEqual(await self.say("CB", "/抢人 @M3 @M1"),                # one who can't be and one who can: one throw
+                         "🎲 贝队 掷出了 5 点，把 小一 从 阿队 的队伍里抢了过来！（今天还能掷 2 次）\n小三 已经在你的队伍里啦。")
+        self.assertEqual(self.dice.throws, 1)
+
+    async def test_only_captains_throw_it(self):
+        await self.start()
+        self.assertEqual(await self.say("M1", "/抢人 @M3"), "只有队长才能用 /抢人 哦～")
+        self.assertEqual(await self.say("ADMIN", "/抢人 @M3"), "只有队长才能用 /抢人 哦～")       # a referee leads no team
+        await self.say("CA", "/抓 @CC")
+        self.assertEqual(await self.say("CC", "/抢人 @M3"), "你现在是 阿队 队伍里的队员，不能另外组队哦。")
+        self.assertEqual(self.dice.throws, 0)
+
+    async def test_a_captain_with_no_team_starts_one_with_it_and_has_come_out_of_hiding(self):
+        await self.start(2, 6)
+        await self.say("CC", "/躲")
+        self.assertIn("CC", self.hiding())
+        self.assertIn("西队 掷出了 2 点，差一点", await self.say("CC", "/抢人 @M3"))
+        self.assertEqual((self.team("CC"), self.hiding()), (None, {}))         # seen, and still without a team
+        self.assertIn("西队 掷出了 6 点，把 小三 从 贝队 的队伍里抢了过来", await self.say("CC", "/抢人 @M3"))
+        self.assertEqual((set(self.team("CC")), self.team("CB")), ({"M3"}, None))
+
+    async def test_a_status_named_in_by_throws_it_for_the_team_they_are_in(self):
+        await self.start(4, rules=shipped_rules().replace("    need: 4\n", "    need: 4\n    by: [队长, 小队长]\n"))
+        self.assertEqual(await self.say("M1", "/抢人 @M3"), "只有队长、小队长才能用 /抢人 哦～")
+        await self.say("CA", "/设为小队长 @M1")
+        self.assertEqual(await self.say("M1", "/抢人 @M2"), "小二 已经在你的队伍里啦。")
+        self.assertIn("小一 掷出了 4 点，把 小三 从 贝队 的队伍里抢了过来", await self.say("M1", "/抢人 @M3"))
+        self.assertEqual((set(self.team("CA")), self.throws()), ({"M1", "M2", "M3"}, {"抢人": {"M1": 1}}))
+
+    async def test_each_of_several_gets_a_throw_and_a_line_of_their_own(self):
+        await self.start(2, 5, rules=shipped_rules().replace("    times: 3\n", "    times: 2\n"))
+        await self.say("CA", "/抓 @M4")
+        self.assertEqual(await self.say("CB", "/抢人 @M1 @M2 @M4"),
+                         "🎲 贝队 掷出了 2 点，差一点：小一 还在 阿队 的队伍里。（今天还能掷 1 次）\n"
+                         "🎲 贝队 掷出了 5 点，把 小二 从 阿队 的队伍里抢了过来！（今天还能掷 0 次）\n"
+                         "你今天已经掷了 2 次 /抢人，明天再来吧。")
+        self.assertEqual((set(self.team("CA")), set(self.team("CB"))), ({"M1", "M4"}, {"M3", "M2"}))
+        self.assertEqual(self.gw.buttons, [])
+
+    async def test_without_lines_of_its_own_it_speaks_the_styles(self):
+        rules, removed = re.subn(r'(?m)^    (say|fail): "🎲.*\n', "", shipped_rules())
+        self.assertEqual(removed, 2)
+        await self.start(5, 1, rules=rules)
+        self.assertEqual(await self.say("CB", "/抢人 @M1"),
+                         "🎲 贝队 用「抢人」掷出了 5 点（4 点以上算抢到），把 小一 从 阿队 的队伍里抢了过来！今天还能掷 2 次。")
+        self.assertEqual(await self.say("CB", "/抢人 @M2"),
+                         "🎲 贝队 用「抢人」掷出了 1 点，要 4 点以上才算抢到：小二 还在 阿队 的队伍里。今天还能掷 1 次。")
+
+    async def test_need_sets_what_the_die_must_show(self):
+        await self.start(5, 6, 1, rules=shipped_rules().replace("    need: 4\n", "    need: 6\n"))
+        self.assertIn("掷出了 5 点，差一点", await self.say("CB", "/抢人 @M1"))
+        self.assertIn("掷出了 6 点，把 小一", await self.say("CB", "/抢人 @M1"))
+        self.make(rules_path=self.rules_file(shipped_rules().replace("    need: 4\n", "    need: 1\n")), rng=self.dice)
+        await self.say("CA", "/抓 @M1")
+        self.assertIn("掷出了 1 点，把 小一", await self.say("CB", "/抢人 @M1"))                 # need: 1 never misses
+
+    async def test_the_days_throws_outlast_a_restart_and_leave_with_the_member(self):
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder)
+        data = os.path.join(folder, "teams.json")
+        await self.start(1, data_path=data)
+        await self.say("CB", "/抢人 @M1")
+        await self.say("ADMIN", "/清空队伍")                                      # no team left: the throw alone keeps the day
+        self.make(data_path=data, rng=Dice(die=(6,)))                           # the bot restarts
+        self.assertEqual(self.throws(), {"抢人": {"CB": 1}})
+        await self.say("CA", "/抓 @M1")
+        self.assertIn("（今天还能掷 1 次）", await self.say("CB", "/抢人 @M1"))
+        self.teams.forget_member(GROUP, "CB")                                   # left the group
+        self.assertEqual(self.throws(), {})
+
+    async def test_it_goes_in_both_records_and_counts_as_being_caught(self):
+        counted = []
+
+        def count(group, member, name, key):
+            counted.append((member, key))
+            return [f"🎖️ {name}：{key}"] if member == "M1" else []
+
+        await self.start(2, 5, 1, count=count)
+        del counted[:]
+        await self.say("CB", "/抢人 @M1")                                        # falls short: nobody was caught
+        self.assertEqual(counted, [])
+        self.assertEqual(await self.say("CB", "/抢人 @M1"),
+                         "🎲 贝队 掷出了 5 点，把 小一 从 阿队 的队伍里抢了过来！（今天还能掷 1 次）\n🎖️ 小一：caught")
+        self.assertEqual(counted, [("M1", "caught"), ("CB", "grabbed")])
+        await self.say("CC", "/抢人 @M2")
+        self.assertEqual(await self.say("M1", "/档案"),
+                         "📒 小一 的游戏档案\n被抓进队 2 次，最常抓到 TA 的是 阿队（1 次）\n被别的队长掷骰子抢走 1 次")
+        self.assertEqual(await self.say("CB", "/档案"),
+                         "📒 贝队 的游戏档案\n抓过 2 人次，最常抓的是 小三（1 次）\n掷骰子抢人：抢到 1 次，失手 1 次")
+        self.assertEqual(await self.say("CC", "/档案"), "📒 西队 的游戏档案\n掷骰子抢人：抢到 0 次，失手 1 次")
+        self.assertEqual(self.teams.history.most(GROUP, "M1", "stolen"), ("CB", 1, "贝队"))
+        self.assertEqual(self.teams.history.most(GROUP, "CB", "steals"), ("M1", 1, "小一"))
+        self.teams.forget_record(GROUP, "CB")                                   # and their part in it goes with them
+        self.assertEqual(self.teams.history.totals(GROUP, "M1"), {"caught": 1})
+
+    async def test_help_gives_it_a_line_of_its_own(self):
+        self.make()
+        block = self.teams.help_block()
+        self.assertIn("队长对自己的队员：/踢出 /设为小队长 /撤销小队长 /死亡 /复活（都要 @ 对象）", block)
+        self.assertIn("\n队长：/抢人 @别队的队员 掷骰子抢人，掷出 4 点以上就抢进自己的队伍，每天 3 次\n还没进队的人", block)
+        self.make(rules_path=self.rules_file(re.sub(r"(?ms)^  - name: 抢人\n.*?(?=^# 想加新的)", "", shipped_rules())))
+        self.assertNotIn("掷骰子", self.teams.help_block())                       # a game without one says nothing of it
+
+
 class RecordTest(TeamGameTestCase):
     """/档案: what has happened to someone in the game, across game days. Counts only."""
 
@@ -699,7 +871,7 @@ class RenamedCommandsTest(TeamGameTestCase):
             scheduler.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await scheduler
-        self.assertIn("寻宝游戏已开启：3 位船长，所有群，6 个操作，每天 05:00 清空船队", logged.output[0])
+        self.assertIn("寻宝游戏已开启：3 位船长，所有群，7 个操作，每天 05:00 清空船队", logged.output[0])
         self.assertIn("新的一天，已清空 1 个群的船队", logged.output[1])
 
 
@@ -817,6 +989,42 @@ class RulesFileTest(unittest.TestCase):
         self.assertRefused(self.GOOD.replace("hide_from_ai: []", "hide_from_ai: [失踪]"), "hide_from_ai", "「失踪」")
         self.assertRefused(self.GOOD.replace("aliases: [放人]", "aliases: [成员踢出]"), "/成员",
                            reserved=("/成员", "/帮助"))
+
+    def test_a_steal_and_its_mistakes(self):
+        steal = self.check(self.GOOD).action("抢人")
+        self.assertEqual((steal.effect, steal.need, steal.times, len(steal.say), len(steal.fail)), ("steal", 4, 3, 1, 1))
+        bare = self.check(self.GOOD + "\n  - name: 夺人\n    effect: steal\n    only: [存活]\n").action("夺人")
+        self.assertEqual((bare.need, bare.times, bare.say, bare.fail, bare.only), (4, 3, (), (), ("存活",)))
+        refuse = lambda old, new, *phrases: self.assertRefused(self.GOOD.replace(old, new), *phrases)
+        refuse("    need: 4\n", "    need: 0\n", "第 7 个操作（抢人）的 need", "不小于 1")
+        refuse("    need: 4\n", "    need: 7\n", "（抢人）的 need 最多写 6")
+        refuse("    need: 4\n", "    need: 很大\n", "（抢人）的 need")
+        refuse("    times: 3\n", "    times: 0\n", "（抢人）的 times", "不小于 1")
+        refuse("    effect: kick\n", "    effect: kick\n    need: 4\n", "只有 effect: steal 才能写 need")
+        refuse("    effect: kick\n", "    effect: kick\n    times: 3\n", "只有 effect: steal 才能写 times")
+        refuse("    set: 存活\n", "    set: 存活\n    fail: 没成\n", "（复活）：只有 effect: steal 才能写 fail")
+        refuse("差一点：{members}", "差一点：{status}", "fail 里的 {status}", "{left}")
+        refuse("把 {members} 从", "把 {count} 个人从", "say 里的 {count}")
+        refuse("{actor} 抓到了", "{actor} 掷出 {roll} 点抓到了", "{roll}")          # only a steal has a die to show
+        refuse("    need: 4\n", "    need: 4\n    from: [存活]\n", "只有 effect: roll 才能写 from")
+        self.assertEqual(self.check(self.GOOD.replace("    need: 4\n", "    need: 6\n")).action("抢人").need, 6)
+
+    def test_the_check_command_says_what_is_in_the_file_or_what_is_wrong(self):
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder)
+        path = os.path.join(folder, "teams.yaml")
+
+        def run(text):
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+            out = io.StringIO()
+            return check.main(path, out), out.getvalue()
+
+        self.assertEqual(run(self.GOOD), (0, f"{path} 没有问题：7 个操作，4 件突发事件，6 个躲的地方。\n"))
+        code, said = run(self.GOOD.replace("event_gap: 10", "event_gap: -1"))
+        self.assertEqual((code, said.startswith("!! teams.yaml 的 event_gap")), (1, True))
+        self.assertEqual(run("actions: [")[0], 1)                           # not YAML at all
+        self.assertEqual(check.main(os.path.join(folder, "missing.yaml"), io.StringIO()), 1)
 
     def test_unquoted_reset_time(self):
         rules = self.check(self.GOOD.replace('reset_time: "05:00"', "reset_time: 06:30"))

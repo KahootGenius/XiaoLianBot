@@ -186,8 +186,11 @@ For the group's games, where a few captains pick teams:
   anyone who isn't on a team yet into theirs. Everyone is on at most one team.
 - **Captains decide what happens next.** They act on their own members with `/踢出`, `/设为小队长`,
   `/撤销小队长`, `/死亡` and `/复活`. Grabbed members can't leave on their own.
-- **Admins act as referees.** They can use any action on any team, dissolve a team
-  (`/解散队伍 @队长`) or clear everything (`/清空队伍`).
+- **Captains can take each other's members.** `/抢人 @某人` throws a die for a member of another
+  captain's team: at 4 or more they change teams and start over as if newly grabbed, below that
+  nothing happens. Each captain has three throws a day.
+- **Admins act as referees.** They can use any action on any team except grabbing and taking,
+  dissolve a team (`/解散队伍 @队长`) or clear everything (`/清空队伍`).
 - **Anyone can look.** `/队伍` lists today's teams, with icons for statuses (⭐小队长 💀死亡).
 - **Teams last one game day.** They clear at 05:00, so a game running past midnight survives. They
   also survive a restart.
@@ -202,8 +205,8 @@ For the group's games, where a few captains pick teams:
   away, their status changes, or the bot just says a line. Each event has its own chance, a group
   gets one every 10 minutes at most, and a member two a day.
 - **The game has a memory.** `/档案` shows how often someone was caught and by whom, how many they
-  grabbed, which statuses befell them, and their hide-and-seek record. Counts only, kept across
-  game days; three of them earn badges.
+  grabbed, how often a die took them or fell short, which statuses befell them, and their
+  hide-and-seek record. Counts only, kept across game days; three of them earn badges.
 - **Everything about the game is one YAML file,** [`prompts/teams.yaml`](prompts/teams.yaml):
   - the statuses a member can have
   - every captain action: its command, who may use it, who it applies to, and what the bot says
@@ -211,7 +214,9 @@ For the group's games, where a few captains pick teams:
   - team size and reset time
 
   Adding a status such as 受伤 or an action such as /复活 takes a few lines and no code. An
-  action can also roll the dice (`effect: roll`) for a random status or position.
+  action can also roll the dice (`effect: roll`) for a random status or position, or throw a die
+  for another captain's member (`effect: steal`), with the points it needs and the throws a day
+  set next to it.
 
 ### 🎲 Social
 - **`/今日运势`:** one fortune per member per day. Every word, including the lists it draws

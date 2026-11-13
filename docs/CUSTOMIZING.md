@@ -165,7 +165,7 @@ The sections of `小莲.yaml`:
 | `social` | `/今日运势` (its title, and the lists it draws levels, 宜, 忌 and comments from), birthdays, polls, 征集意见 (`social.opinion`), `/翻牌子`, and 海龟汤 (`social.soup`: what she says to 是, 不是 and 无关 is under `answers`, a few variants each) |
 | `common.buttons_hint` | The little message that carries the buttons when they can't go in the reply itself: with `buttons_inline: false`, or for an hour after QQ refused that |
 | Keys ending in `button`, `again` or `refresh`; `manager.batch.button_…` and `ask_…` | Button labels, such as `games.blackjack.again` (再来一局); the removal list's buttons and the questions QQ asks before 「确认移出」 and 「已移出」 |
-| `games.teams` | The team game: `/队伍`, the 【组队游戏】 part of `/帮助` (`help`, then `help_hide`, `help_events` and `help_record`), and every refusal ("不在你的队伍里"…). Hide-and-seek is under `hide` and `seek`, and `/档案` under `record` |
+| `games.teams` | The team game: `/队伍`, the 【组队游戏】 part of `/帮助` (`help`, then `help_steal`, `help_hide`, `help_events` and `help_record`), and every refusal ("不在你的队伍里"…). Hide-and-seek is under `hide` and `seek`, and `/档案` under `record` |
 | `games`, `info`, `ai` | Dice, blackjack, 发癫, sleep, the reply when games go too fast (`games.too_fast`); Epic, Steam, Minecraft; AI chat errors |
 | `ai.memory`, `ai.pet_name` | `/我的记忆` and `/忘记`; `/外号` |
 | `ai.teach`, `ai.submit` | `/教她` and `/她学会的`; `/投稿表情` and `/她的表情`. Both have the admins' buttons (`keep_button`, `drop_button`) and the question QQ asks before keeping one (`ask_keep`) |
@@ -286,7 +286,9 @@ In `modules/manager/achievements.py`:
 
 The team game (`/抓`) is defined in `prompts/teams.yaml`. Captains are listed in `config.yaml`
 under `teams.captains`. Restart the bot after editing either file. **A mistake in `teams.yaml`
-stops the bot at startup** and names the bad entry, in Chinese.
+stops the bot at startup** and names the bad entry, in Chinese. To find it before restarting, run
+`.venv/bin/python -m modules.fun.teams.check`: it reads the file the bot would read and says what
+is in it, or what is wrong with it.
 
 ### Statuses
 
@@ -329,11 +331,22 @@ actions:
   - `effect: roll` with `from: [status, …]` rolls the dice: each member gets one of those statuses
     at random, and the bot announces each result on its own line. `{status}` in `say` is what
     they got.
+  - `effect: steal` is how a captain takes another captain's member. It throws a six-sided die for
+    each member named:
+    - At `need` points or more (default 4, so half the throws) the member changes teams. They
+      start there like anyone newly grabbed, with each column's first status, and it counts as
+      being caught. A team left with nobody disappears.
+    - Below that nothing happens, and the bot says the action's `fail` line.
+    - Either way it uses one of the actor's `times` throws for the game day (default 3). Someone
+      who can't be taken costs no throw: a captain, the actor's own member, someone on no team,
+      one without the `only` statuses, or anyone when the actor's team is full.
+    - While a throw is left, the reply carries a button with the command.
 - **`by`** says who may use the action:
   - `队长` means the captain of the target's team.
   - A status, such as `小队长`, lets team members who have it use the action on their own team.
   - `by: []` leaves the action to admins.
-  - Admins can always use every action except grab, on every team.
+  - Admins can always use every action except grab and steal, on every team. Those two bring
+    someone into the actor's own team, and a referee leads none.
 - **`say`** may use:
   - `{actor}`: who acted
   - `{members}`, `{count}`: who it worked on, and how many
@@ -342,6 +355,11 @@ actions:
   - `{name}`: the bot's name in the current style
 
   Without `say`, the bot uses the style's generic `games.teams.done` line.
+
+  A steal's `say` and `fail` are said once for each member, so they have no `{count}`. In them
+  `{captain}` is the captain the member is taken from, and they may also use `{roll}` (what the
+  die showed), `{need}` and `{left}` (the throws the actor still has today). Without them the bot
+  uses `games.teams.stolen` and `games.teams.missed`.
 - **Command words must be free.** An action can't share a name with:
   - another action
   - the built-in `/队伍`, `/解散队伍` and `/清空队伍`, which you can rename under `commands:`
@@ -435,9 +453,10 @@ events:
 ### Records
 
 `/档案` shows what has happened to someone across game days, and `/档案 @某人` someone else's: how
-often they were caught and who caught them most, how many they grabbed and whom most, how often
-each status befell them, their hide-and-seek record, and how many events they met. There's nothing
-to set up.
+often they were caught and who caught them most, how many they grabbed and whom most, how often a
+die took them from one captain to another, how often a captain's own die worked or fell short, how
+often each status befell them, their hide-and-seek record, and how many events they met. There's
+nothing to set up.
 
 - **Counts only,** in `data/teams.db`: no dates, and nothing anyone said. Each count that names
   another member keeps that member's nickname from the last time, so the record reads right in a
@@ -451,7 +470,7 @@ to set up.
 
 ### With code: a new kind of effect
 
-For something beyond grab, kick and set, such as moving a member to another team:
+For something beyond grab, kick, roll, steal and set, such as two members swapping teams:
 1. Add the effect's name to `EFFECTS` in `modules/fun/teams/rules.py`, and describe it in
    `EFFECT_HELP`.
 2. Add a method `effect_<name>(self, turn, openid, name)` to `TeamsModule` in

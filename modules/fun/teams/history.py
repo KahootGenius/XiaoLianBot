@@ -1,8 +1,10 @@
 """What has happened to each member in the team game across game days (data/teams.db), for /档案.
 
 Counts only: how often someone was caught and by whom, how often a captain grabbed someone and
-whom, how often they hid, were found, stayed hidden until the day was over or met an event, and how
-often each status befell them. Nothing says when, and nothing of what anyone said is here.
+whom, how often they hid, were found, stayed hidden until the day was over or met an event, how
+often a die took them from one captain to another, how often a captain's die did that or fell
+short, and how often each status befell them. Nothing says when, and nothing of what anyone said
+is here.
 """
 import os
 import sqlite3
@@ -12,9 +14,10 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS tally (
     group_openid TEXT NOT NULL,
     member_openid TEXT NOT NULL,
-    what TEXT NOT NULL,              -- caught, grabbed, hid, found, finds, slipped, event; a status's name after "="
-    other TEXT NOT NULL DEFAULT '',  -- with whom: the member_openid of who caught them or whom they grabbed;
-                                     -- for an event, its name
+    what TEXT NOT NULL,              -- caught, grabbed, hid, found, finds, slipped, event, stolen, steals, misses;
+                                     -- a status's name after "="
+    other TEXT NOT NULL DEFAULT '',  -- with whom: the member_openid of who caught or took them, or whom they
+                                     -- grabbed or took; for an event, its name
     name TEXT NOT NULL DEFAULT '',   -- that member's nickname the last time it happened, for showing the record
     n INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (group_openid, member_openid, what, other)

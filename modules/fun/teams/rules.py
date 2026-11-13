@@ -1,6 +1,6 @@
 """The team game's rules, read from prompts/teams.yaml: what statuses a team
-member can have, every action captains can use on their members, the events
-that can befall them, and where people can hide.
+member can have, every action captains can use on their members or to take
+someone else's, the events that can befall them, and where people can hide.
 
 A new status, action, event or hiding place is a few lines of YAML. Only a new
 kind of effect needs code: add its name to EFFECTS below and an effect_<name>
@@ -17,8 +17,12 @@ RULES_FILE = content_path("prompts", "teams.yaml")
 # In `by`, the captain of the target's team.
 CAPTAIN = "队长"
 # Effects an action can name with `effect:`. Actions with `set:` have the effect "set".
-EFFECTS = ("grab", "kick", "roll")
-EFFECT_HELP = "grab（把人抓进队）、kick（移出队伍）、roll（从 from 里随机掷一个状态）"
+EFFECTS = ("grab", "kick", "roll", "steal")
+EFFECT_HELP = ("grab（把人抓进队）、kick（移出队伍）、roll（从 from 里随机掷一个状态）、"
+               "steal（掷骰子，把别的队长的队员抢进自己的队伍）")
+# The effects that bring someone into the actor's own team. Every other one is used on the
+# members of a team the actor commands, and admins may referee those.
+TAKING = ("grab", "steal")
 # What an event can do to whoever meets it; one with `set:` has the effect "set", and one with
 # neither only says something.
 EVENT_EFFECTS = ("kick", "roll")
@@ -34,8 +38,15 @@ NAMES = {"game": "组队游戏", "captain": "队长", "team": "队伍"}
 NAMES_HELP = "game（游戏名）、captain（队长的叫法）、team（队伍的叫法）"
 # What an action's `say` line may use; {name} is the style's name.
 SAY_FIELDS = ("actor", "members", "count", "captain", "action", "status", "name")
+# ...a steal's `say` and `fail`: {captain} is who they are taken from, {roll} what the die showed,
+# {need} what it had to show, {left} the throws the actor still has today. One line for each
+# member, who ends up with no new status, so no {count} and no {status}.
+STEAL_FIELDS = ("actor", "members", "captain", "action", "name", "roll", "need", "left")
 # ...and an event's: nobody acts in one.
 EVENT_FIELDS = ("members", "captain", "status", "name")
+DIE = 6                 # the faces of the die a steal throws
+NEED = 4                # what it must show at least, unless the action says otherwise: half the throws
+THROWS = 3              # throws of it each captain gets in a game day
 EVENT_GAP = 10          # minutes between two events in a group, unless teams.yaml says otherwise
 EVENT_DAILY = 2         # events one member can meet in a game day
 MIN_SPOTS = 3           # hiding places: with fewer, a search is hardly a guess
@@ -49,13 +60,16 @@ HIDES = 3               # times one member can hide in a game day
 class Action:
     name: str
     words: tuple            # what people type after "/": the name, then any aliases
-    effect: str             # "grab", "kick" or "set"
+    effect: str             # "grab", "kick", "roll", "steal" or "set"
     status: str = ""        # set: the status it gives
     column: str = ""        # set: the column that status belongs to
     only: tuple = ()        # the target must have every one of these statuses
     by: tuple = (CAPTAIN,)  # who may use it besides admins: CAPTAIN and/or statuses
     say: tuple = ()         # lines to pick from afterwards; empty = the style's generic line
     pool: tuple = ()        # roll: the statuses a roll can land on
+    need: int = 0           # steal: the die must show at least this
+    times: int = 0          # steal: throws of the die each captain gets in a game day
+    fail: tuple = ()        # steal: lines to pick from when the die falls short; empty = the style's generic line
 
 
 @dataclass(frozen=True)
@@ -158,18 +172,32 @@ def _only(entry, where, owner):
     return only
 
 
-def _say(entry, where, fields):
-    """The lines to say (`say`), using only the {names} the program fills in."""
-    say = _names(entry.get("say"))
+def _say(entry, where, fields, key="say"):
+    """The lines to say (`say`, or a steal's `fail`), using only the {names} the program fills in."""
+    say = _names(entry.get(key))
     for line in say:
         try:
             unknown = placeholders(line) - set(fields)
         except ValueError as e:
-            raise ValueError(f"{where}：say 的花括号写得不对（{e}）")
+            raise ValueError(f"{where}：{key} 的花括号写得不对（{e}）")
         if unknown:
-            raise ValueError(f"{where}：say 里的 {'、'.join('{' + u + '}' for u in sorted(unknown))} 程序不会填写，"
+            raise ValueError(f"{where}：{key} 里的 {'、'.join('{' + u + '}' for u in sorted(unknown))} 程序不会填写，"
                              f"能用的有：{'、'.join('{' + f + '}' for f in fields)}")
     return say
+
+
+def _steal(entry, where, effect):
+    """(need, times, fail) of an action that throws the die to take someone else's member; any
+    other action may write none of the three."""
+    if effect != "steal":
+        for key in ("need", "times", "fail"):
+            if key in entry:
+                raise ValueError(f"{where}：只有 effect: steal 才能写 {key}")
+        return 0, 0, []
+    need = _whole(entry, "need", NEED, f"{where}的 need", least=1)
+    if need > DIE:
+        raise ValueError(f"{where}的 need 最多写 {DIE}：骰子只有 {DIE} 点，写 {NEED} 就是一半的机会")
+    return need, _whole(entry, "times", THROWS, f"{where}的 times", least=1), _say(entry, where, STEAL_FIELDS, "fail")
 
 
 def _events(data, owner):
@@ -363,9 +391,11 @@ def load_rules(path=RULES_FILE, reserved=()):
             if who != CAPTAIN and who not in owner:
                 raise ValueError(f"{where}：by 里的「{who}」既不是「{CAPTAIN}」，也不是 statuses 里的状态")
 
-        say = _say(entry, where, SAY_FIELDS)
+        need, times, fail = _steal(entry, where, effect)
+        say = _say(entry, where, STEAL_FIELDS if effect == "steal" else SAY_FIELDS)
         actions.append(Action(name=name, words=tuple(words), effect=effect, status=status, column=column,
-                              only=tuple(only), by=tuple(by), say=tuple(say), pool=tuple(pool)))
+                              only=tuple(only), by=tuple(by), say=tuple(say), pool=tuple(pool),
+                              need=need, times=times, fail=tuple(fail)))
 
     if not any(a.effect == "grab" for a in actions):
         raise ValueError("teams.yaml 至少要有一个 effect: grab 的操作，不然队长没法抓人")
