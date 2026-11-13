@@ -111,7 +111,8 @@ class MyClient(botpy.Client):
         playing += ["joke"] if self.social_module.teller.jokes else []
         self.help_module = HelpModule(self.api, ai_enabled=self.ai_chat_module.enabled,
                                       manager_enabled=self.manager_module.enabled, teams=self.teams_module,
-                                      gateway=self.gateway, extras=self.ai_chat_module.features + playing)
+                                      gateway=self.gateway, extras=self.ai_chat_module.features + playing,
+                                      soup_sets=[f"/海龟汤{name}" for name in self.social_module.soup_sets])
         self._answered = OrderedDict()
         self._started = False
 

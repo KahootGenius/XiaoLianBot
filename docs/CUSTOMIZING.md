@@ -522,6 +522,12 @@ The puzzles are in [`prompts/soups.yaml`](../prompts/soups.yaml), 13 to start wi
   questions a puzzle. One nobody solves closes after 24 hours and says its truth the next time
   someone asks. A group gets every puzzle before one comes round again.
 - **Badges:** solving one counts toward `soup` (喝到汤底 at 1, 名侦探 at 5).
+- **Sets:** a puzzle with `set: 悬疑` belongs to a set of its own. `/海龟汤悬疑` (or `/海龟汤 悬疑`)
+  opens one of that set's puzzles, and `/海龟汤` alone opens only the puzzles in no set, so a themed
+  set can sit beside the ordinary one. Each set has its own round: a group gets all of a set before
+  one of its puzzles comes again. One puzzle is open at a time, whatever its set. The name is what
+  members type after the command: letters, digits and Chinese characters, twelve at most. With a
+  set in the file, `/帮助` adds the style's `help.soup_sets` line with its command.
 
 ## Special days
 

@@ -11,7 +11,8 @@ class HelpModule:
 
     TRIGGERS = ("/帮助", "/菜单", "/help", "/指令")
 
-    def __init__(self, api_client, ai_enabled=True, manager_enabled=False, teams=None, gateway=None, extras=()):
+    def __init__(self, api_client, ai_enabled=True, manager_enabled=False, teams=None, gateway=None, extras=(),
+                 soup_sets=()):
         self.api = api_client
         # Optional features are only advertised when actually usable.
         self.ai_enabled = ai_enabled
@@ -21,6 +22,8 @@ class HelpModule:
         # The smaller things that can be switched off, each a line of its own in the style (help.<name>)
         # under the section it belongs to: joke, soup, pet_names, teach, member_stickers.
         self.extras = tuple(extras)
+        # The commands of the 海龟汤 sets that have a name, e.g. "/海龟汤悬疑": a line of their own after help.soup.
+        self.soup_sets = tuple(soup_sets)
 
     def buttons(self):
         """Quick-tap buttons under /帮助, for the features this bot has switched on."""
@@ -47,7 +50,10 @@ class HelpModule:
         sections += [t("help.games"), t("help.minecraft"), t("help.fun")]
         if self.teams is not None and self.teams.enabled:
             sections.append(self.teams.help_block())
-        sections += [self._with("help.social", "joke", "soup"), t("help.sleep")]
+        social = self._with("help.social", "joke", "soup")
+        if self.soup_sets and "soup" in self.extras:
+            social += "\n" + t("help.soup_sets", sets="  ".join(self.soup_sets))
+        sections += [social, t("help.sleep")]
         if self.ai_enabled:
             sections.append(self._with("help.ai", "pet_names", "teach", "member_stickers"))
         sections.append(t("help.footer"))

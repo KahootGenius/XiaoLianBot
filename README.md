@@ -238,7 +238,9 @@ For the group's games, where a few captains pick teams:
   Members ask yes-or-no questions with `/问` and guess with `/猜`; a cheap call that holds the truth
   judges each one, and the group sees only her fixed lines, so the truth can't slip out. Hints come
   as the group asks, a group gets every puzzle before one repeats, and solving one counts toward a
-  badge. It needs AI chat; `social.soup: false` turns it off.
+  badge. It needs AI chat; `social.soup: false` turns it off. A puzzle written with `set: 名字`
+  belongs to a set of its own, opened with `/海龟汤名字`, so a group can keep a themed set beside
+  the ordinary one.
 - **`/讲笑话`:** she tells a joke from [`prompts/jokes.yaml`](prompts/jokes.yaml). Most are a question
   and its answer: she asks, and whoever sends `/为什么` (or taps the button) gets the answer. A group
   hears every joke before one repeats. It needs no AI; with AI chat on, about 3 in 10 are made up

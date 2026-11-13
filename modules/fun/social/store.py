@@ -238,8 +238,10 @@ class FunStore:
         return [r["puzzle"] for r in self._all("SELECT puzzle FROM soup_played WHERE group_openid = ? "
                                                "ORDER BY played_at, rowid", group)]
 
-    def reset_soup_played(self, group):
-        self._write("DELETE FROM soup_played WHERE group_openid = ?", group)
+    def reset_soup_played(self, group, codes):
+        """The group may have these puzzles again: it has been through their whole set."""
+        for code in codes:
+            self._write("DELETE FROM soup_played WHERE group_openid = ? AND puzzle = ?", group, code)
 
     def add_soup_turn(self, soup_id, member, nickname, kind, text, answer, ts):
         self._write("INSERT INTO soup_turns (soup_id, member_openid, nickname, kind, text, answer, created_at) "

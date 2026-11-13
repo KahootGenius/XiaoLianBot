@@ -65,8 +65,7 @@ SOUP_PER_MINUTE = 6         # questions and guesses one member can send a minute
 SOUP_HINT_EVERY = 3         # questions the group has to ask for each hint
 SOUP_CLUES = 6              # answered questions /海龟汤 shows again
 SOUP_SECONDS = 20           # how long she waits for a verdict
-SOUP_HINT_WORDS = ("提示", "线索")
-SOUP_END_WORDS = ("结束", "放弃", "揭晓", "答案", "汤底")
+SOUP_HINT_WORDS, SOUP_END_WORDS = soup.HINT_WORDS, soup.END_WORDS
 # What members type. Listed so team-game actions can't take them.
 JOKE_ANSWER_WORDS = ("答案", "为什么")    # /讲笑话 答案
 JOKE_WAIT_MINUTES = 30      # how long a joke's answer waits to be asked for
@@ -185,6 +184,7 @@ class SocialModule:
             for problem in problems:
                 _log.warning(f"[Social] 海龟汤的题库：{problem}")
         self.soups = soups
+        self.soup_sets = soup.sets(soups)       # e.g. ["悬疑"]: /海龟汤悬疑 opens one of that set's puzzles
         # Set by main.py when AI chat is on: (汤面, 汤底, [关键点], what a member said, whether it's a
         # guess) -> the host's verdict as DeepSeek wrote it, read by modules/fun/soup.py. No host, no game.
         self.soup_host = None
@@ -339,6 +339,9 @@ class SocialModule:
         vote = re.fullmatch(r"/投([A-Ia-i1-9])", word)       # "/投A" without a space
         if vote:
             word, args = "/投", vote.group(1)
+        themed = re.fullmatch(r"/海龟汤(.+)", word)           # "/海龟汤悬疑": a puzzle from the set 悬疑
+        if themed and themed.group(1) in self.soup_sets:
+            word, args = "/海龟汤", f"{themed.group(1)} {args}".strip()
         opinion = re.fullmatch(r"/意见[:：]?(.+)", word)       # "/意见想玩狼人杀" without a space
         if opinion and word not in self.commands:
             word, args = "/意见", f"{opinion.group(1)} {args}".strip()
@@ -783,7 +786,8 @@ class SocialModule:
 
     async def cmd_soup(self, message, args):
         """/海龟汤 opens a puzzle, or shows the one that's open. /海龟汤 提示 gives its next hint;
-        /海龟汤 结束, from whoever opened it or an admin, gives up and tells the truth."""
+        /海龟汤 结束, from whoever opened it or an admin, gives up and tells the truth. /海龟汤 and
+        the name of a set of puzzles (with or without a space) opens one of that set's."""
         if not self.soups or self.soup_host is None:
             await self._reply(message, t("social.soup.disabled" if not self.soups else "social.soup.no_ai"))
             return
@@ -796,17 +800,18 @@ class SocialModule:
         elif word in SOUP_END_WORDS:
             await self._soup_end(message, row, puzzle)
         elif row is None:
-            await self._soup_start(message, self._cold(cold))
+            await self._soup_start(message, self._cold(cold), word if word in self.soup_sets else "")
         else:
             await self._soup_status(message, row, puzzle)
 
-    async def _soup_start(self, message, lines):
-        """Open the group's next puzzle: one it hasn't had, until it has had them all."""
-        group = message.group_openid
-        played = self.store.soup_played(group)
-        puzzle = soup.pick(self.soups, played, self.rng)
-        if all(code in played for code in self.soups):      # it has had them all: from the top again
-            self.store.reset_soup_played(group)
+    async def _soup_start(self, message, lines, chosen=""):
+        """Open the group's next puzzle of the set asked for: one it hasn't had, until it has had
+        that whole set."""
+        group, puzzles = message.group_openid, soup.of_set(self.soups, chosen)
+        played = [code for code in self.store.soup_played(group) if code in puzzles]
+        puzzle = soup.pick(puzzles, played, self.rng)
+        if len(played) == len(puzzles):         # it has had them all: from the top again
+            self.store.reset_soup_played(group, puzzles)
         self.store.start_soup(group, puzzle.code, message.member_openid, message.nickname,
                               int(self._now().timestamp()))
         lines.append(t("social.soup.started", title=puzzle.title, surface=puzzle.surface, starter=self._name(message)))
@@ -843,7 +848,7 @@ class SocialModule:
             return
         self.store.close_soup(row["id"], int(self._now().timestamp()))
         await self._reply(message, t("social.soup.ended", title=puzzle.title, truth=puzzle.truth),
-                          buttons=[[(t("social.soup.again_button"), "/海龟汤")]])
+                          buttons=[[(t("social.soup.again_button"), f"/海龟汤{puzzle.set}")]])     # another of its kind
 
     def _soup_too_fast(self, group, member):
         """Whether this member is past SOUP_PER_MINUTE questions and guesses a minute, and whether
@@ -927,7 +932,8 @@ class SocialModule:
             self.store.add_soup_turn(row["id"], member, message.nickname, "guess", said, verdict, ts)
             lines = [t("social.soup.solved", member=name, title=puzzle.title, truth=puzzle.truth, asked=asked)]
             lines += self.count(group, member, message.nickname, "soup")
-            await self._reply(message, "\n".join(lines), buttons=[[(t("social.soup.again_button"), "/海龟汤")]])
+            await self._reply(message, "\n".join(lines),
+                              buttons=[[(t("social.soup.again_button"), f"/海龟汤{puzzle.set}")]])
 
     # ------------------------------------------------------------------ housekeeping
 

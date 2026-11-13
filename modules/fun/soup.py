@@ -6,7 +6,9 @@ guess (/猜). The commands are in modules/fun/social/module.py. Judging a questi
 call to DeepSeek that holds the truth (prompts/chat.yaml, soup_question and soup_guess). What it says back is read here and nothing else of it is used: the
 group only ever sees her fixed lines from the style, so a verdict can't leak the truth.
 
-The puzzles are in prompts/soups.yaml (or a private local/prompts/soups.yaml in its place):
+The puzzles are in prompts/soups.yaml (or a private local/prompts/soups.yaml in its place). One
+written with `set: 名字` belongs to a set of its own, opened with /海龟汤名字; the rest are what
+/海龟汤 alone opens:
 
     python -m modules.fun.soup              # check the file
 """
@@ -19,6 +21,10 @@ from modules.ai.memory import first_json
 
 
 CODE = re.compile(r"[A-Za-z0-9_]{1,40}")
+SET = re.compile(r"[0-9A-Za-z\u4e00-\u9fff]{1,12}")       # a set's name is typed straight after /海龟汤
+# What follows /海龟汤 to ask for a hint or to give up: a set can't be called any of these.
+HINT_WORDS = ("提示", "线索")
+END_WORDS = ("结束", "放弃", "揭晓", "答案", "汤底")
 MAX_SURFACE = 400       # characters of a 汤面: it goes out as one message,
 MAX_TRUTH = 400         # and so does the 汤底
 MAX_POINTS = 4          # a guess has to cover every key point, so more than a few can't be met
@@ -37,6 +43,7 @@ class Puzzle:
     truth: str          # 汤底: what they have to work out
     points: tuple       # the facts a guess has to cover
     hints: tuple = ()   # given one at a time, in this order
+    set: str = ""       # the set it belongs to, opened with /海龟汤<set>; "" is /海龟汤 itself
 
 
 def puzzles_file():
@@ -76,7 +83,11 @@ def load(path=None):
         where = f"{where}（{code}）"
         surface, truth = " ".join(entry["surface"].split()), " ".join(entry["truth"].split())
         points, hints = _lines(entry.get("points"), MAX_POINTS), _lines(entry.get("hints"), MAX_HINTS)
-        if not CODE.fullmatch(code):
+        named = str(entry["set"]).strip() if entry.get("set") is not None else ""
+        if "set" in entry and (not SET.fullmatch(named) or named in HINT_WORDS + END_WORDS):
+            problems.append(f"{where}：set 是接在 /海龟汤 后面的名字，只能用汉字、英文和数字，最多 12 个字，"
+                            f"也不能是{'、'.join(HINT_WORDS + END_WORDS)}")
+        elif not CODE.fullmatch(code):
             problems.append(f"{where}：code 只能用英文、数字和下划线，最多 40 个字符")
         elif code in puzzles:
             problems.append(f"{where}：code 和前面的重复了")
@@ -87,8 +98,20 @@ def load(path=None):
         elif hints is None:
             problems.append(f"{where}：hints 要写成列表，最多 {MAX_HINTS} 条，每条一句话")
         else:
-            puzzles[code] = Puzzle(code, " ".join(entry["title"].split()), surface, truth, points, hints)
+            puzzles[code] = Puzzle(code, " ".join(entry["title"].split()), surface, truth, points, hints, named)
     return puzzles, problems
+
+
+def sets(puzzles):
+    """The names of the sets the puzzles are in, in the file's order, without the unnamed one."""
+    return list(dict.fromkeys(puzzle.set for puzzle in puzzles.values() if puzzle.set))
+
+
+def of_set(puzzles, name=""):
+    """{code: Puzzle} of one set. /海龟汤 alone opens the puzzles that are in none; in a file where
+    every puzzle is in one, it opens any of them."""
+    chosen = {code: puzzle for code, puzzle in puzzles.items() if puzzle.set == name}
+    return chosen or ({} if name else dict(puzzles))
 
 
 def pick(puzzles, played, rng):
@@ -124,7 +147,8 @@ def parse_guess(raw):
 def main(out=sys.stdout):
     puzzles, problems = load()
     for puzzle in puzzles.values():
-        print(f"{puzzle.code}  {puzzle.title}  关键点 {len(puzzle.points)} · 提示 {len(puzzle.hints)}", file=out)
+        print(f"{puzzle.code}  {puzzle.title}  关键点 {len(puzzle.points)} · 提示 {len(puzzle.hints)}"
+              f"{'  /海龟汤' + puzzle.set if puzzle.set else ''}", file=out)
     for problem in problems:
         print(f"!! {problem}", file=out)
     print(f"{len(puzzles)} puzzles ready, {len(problems)} problems.", file=out)
