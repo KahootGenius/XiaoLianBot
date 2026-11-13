@@ -20,6 +20,10 @@ scope says who is being answered; "admin" is built in, and config.yaml's
 `audiences` names any others. A version a style leaves out comes from the
 default, like any other line, and everyone else gets the line itself.
 
+A line can have a version for a special day the same way: social.fortune.levels@元旦
+is the list 今日运势 draws from on 元旦. The days are in prompts/occasions.yaml
+(core/occasions.py); on one of them its versions come first, before anyone's.
+
     python -m core.style check 桃子     # list problems in styles/桃子.yaml
 """
 import contextlib
@@ -123,6 +127,11 @@ class Style:
             return self.base.lookup(key)
         return value
 
+    def pick(self, key):
+        """What `key` holds for whoever is being answered, today: the first of its versions that
+        is written, else the line itself. For lists and other values that t() doesn't fill in."""
+        return next((value for value in map(self.lookup, _versions(key)) if value is not None), None)
+
     def _render(self, template, kwargs):
         return _FORMATTER.format(str(template), name=self.name, **kwargs)
 
@@ -175,6 +184,9 @@ class StyleBook:
         self.styles = {}
         self.groups = {}        # group_openid -> style name, from config.yaml's group_styles
         self.audiences = {}     # audience -> member_openids, from config.yaml's audiences
+        # Special days (core/occasions.py installs both): the names of today's, and of all of them.
+        self.days = lambda: ()
+        self.day_names = set()
         self.configured = False
         self.reload()
 
@@ -278,9 +290,10 @@ class StyleBook:
     @contextlib.contextmanager
     def scope(self, group, audiences=()):
         """Everything said inside this block speaks in `group`'s style, to someone in `audiences`
-        (most particular first): their versions of a line win over the line itself."""
+        (most particular first): their versions of a line win over the line itself. On a special
+        day, that day's versions win over both."""
         token = _current.set(self.for_group(group))
-        audience_token = _audiences.set(tuple(audiences))
+        audience_token = _audiences.set((*self.days(), *audiences))
         try:
             yield
         finally:
@@ -328,14 +341,15 @@ class StyleBook:
         return [value for key, value in section.items() if key == last or str(key).startswith(f"{last}@")]
 
     def _audience_problems(self, name):
-        """Versions in a style written for an audience nobody is in: they would never be said."""
-        known = {ADMIN, *self.audiences}
+        """Versions in a style written for an audience nobody is in, or a day that isn't in
+        occasions.yaml: they would never be said."""
+        known = {ADMIN, *self.audiences, *self.day_names}
         problems = []
         for key, _ in _leaves(self.styles[name].data):
             audience = split_version(key)[1]
             if audience is not None and audience not in known:
-                problems.append(f"{key}：没有叫「{audience}」的群友类别，这句不会用到（现有：{'、'.join(sorted(known))}。"
-                                f"{ADMIN} 是管理员，其他类别写在 config.yaml 的 audiences 里）")
+                problems.append(f"{key}：没有叫「{audience}」的群友类别或特别的日子，这句不会用到（现有：{'、'.join(sorted(known))}。"
+                                f"{ADMIN} 是管理员，其他类别写在 config.yaml 的 audiences 里，日子写在 occasions.yaml 里）")
         return problems
 
     def missing(self, name):
@@ -377,7 +391,10 @@ if __name__ == "__main__":
     name = sys.argv[2]
     if name not in STYLES.styles:
         raise SystemExit(f"styles/ 里没有 {name}.yaml。现有：{'、'.join(STYLES.names())}")
-    # config.yaml's audiences, so versions written for anyone else are reported too.
+    # config.yaml's audiences and occasions.yaml's days, so versions written for anything else are reported too.
+    from core.occasions import Calendar, load
+    Calendar(load()[0]).install(STYLES)
+    STYLES.days = lambda: ()
     STYLES.audiences = StyleBook._read_audiences(load_config())
     STYLES.configured = True
     found = STYLES.check(name)

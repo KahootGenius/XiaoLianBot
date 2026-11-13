@@ -239,6 +239,16 @@ For the group's games, where a few captains pick teams:
   judges each one, and the group sees only her fixed lines, so the truth can't slip out. Hints come
   as the group asks, a group gets every puzzle before one repeats, and solving one counts toward a
   badge. It needs AI chat; `social.soup: false` turns it off.
+- **`/讲笑话`:** she tells a joke from [`prompts/jokes.yaml`](prompts/jokes.yaml). Most are a question
+  and its answer: she asks, and whoever sends `/为什么` (or taps the button) gets the answer. A group
+  hears every joke before one repeats. It needs no AI; with AI chat on, about 3 in 10 are made up
+  on the spot in the manner of the file's jokes (`ai_chat.fresh_jokes`), and one that can't be used
+  just means a joke from the file. `social.joke: false` turns it off.
+- **Special days:** on the days in [`prompts/occasions.yaml`](prompts/occasions.yaml) (元旦, 春节, 中秋…,
+  by the solar or the lunar calendar) the bot is a little different without saying why. Any line in a
+  style can have a version for a day, written as `key@元旦`: that is how everyone's `/今日运势` is 大吉
+  at the New Year. A day can also greet the first few members who speak, tell AI chat what day it
+  is, give the team game's die a point, and have jokes of its own.
 - **Speed limit for games:** one member can send 10 game commands a minute (`/21点`, `/摇骰子`,
   `/发癫`…), so nobody floods the group by tapping 再来一局. A normal round of 21点 never reaches it.
   `games.per_minute` in `config.yaml` changes the number.

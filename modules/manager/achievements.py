@@ -11,12 +11,12 @@ A badge's name and description can have versions for particular people, as a
 style's lines can: name@captains. They go by who holds the badge, not who's
 reading, so the weekly digest names each person's badge their way.
 """
-import re
 from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Optional
 import yaml
 from core.config import content_path
+from core.occasions import parse_when
 
 
 BADGES_FILE = content_path("prompts", "achievements.yaml")
@@ -34,8 +34,6 @@ LONG_MESSAGE_UNITS = 50
 # What a badge can have versions of for particular people, written name@captains as in a style.
 VERSIONED = ("name", "desc")
 
-_EVERY_YEAR = re.compile(r"\d{2}-\d{2}")
-_ONE_DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 @dataclass(frozen=True)
@@ -50,7 +48,8 @@ class Badge:
     at_least: int = 0
     streak: int = 0
     comeback: bool = False
-    dates: tuple = ()        # "01-01" every year, "2027-02-06" only then
+    dates: tuple = ()        # "01-01" every year, "2027-02-06" only then, "农历 正月初一" by the lunar calendar
+    when: tuple = field(default=(), compare=False)      # the same days, as core.occasions reads them
     versions: dict = field(default_factory=dict, compare=False)     # {"name@captains": text}
 
     def as_for(self, audiences):
@@ -70,7 +69,7 @@ class Badge:
         if self.streak:
             return streak >= self.streak
         if self.dates:
-            return today is not None and (today.isoformat() in self.dates or today.strftime("%m-%d") in self.dates)
+            return today is not None and any(when.falls_on(today) for when in self.when)
         return counters.get(self.counter, 0) >= self.at_least
 
     def progress(self, counters, streak):
@@ -83,23 +82,19 @@ class Badge:
 
 
 def _read_dates(value, where):
-    """YAML reads an unquoted 2027-02-06 as a date and 01-01 as text; both work."""
+    """(the days as written, the same as core.occasions reads them). YAML reads an unquoted
+    2027-02-06 as a date and 01-01 as text; both work, and so does a lunar day like 农历 正月初一."""
     if not value:
-        return ()
-    days = []
+        return (), ()
+    days, when = [], []
     for item in value if isinstance(value, list) else [value]:
         text = item.isoformat() if isinstance(item, date) else str(item).strip()
         try:
-            if _EVERY_YEAR.fullmatch(text):
-                date.fromisoformat(f"2000-{text}")      # 2000 was a leap year, so 02-29 passes
-            elif _ONE_DAY.fullmatch(text):
-                date.fromisoformat(text)
-            else:
-                raise ValueError(text)
-        except ValueError:
-            raise ValueError(f"{where}：「{text}」不是日期，写成 01-01（每年这天）或 2027-02-06（只有那一天）") from None
+            when.append(parse_when(text))
+        except ValueError as e:
+            raise ValueError(f"{where}：{e}") from None
         days.append(text)
-    return tuple(days)
+    return tuple(days), tuple(when)
 
 
 def load_badges(path=BADGES_FILE):
@@ -139,6 +134,7 @@ def load_badges(path=BADGES_FILE):
             if not value:
                 raise ValueError(f"{where}：{key} 是空的")
             versions[str(key)] = str(value)
+        dates, when = _read_dates(entry.get("dates"), where)
         badges.append(Badge(
             code=code,
             icon=str(entry["icon"]),
@@ -150,7 +146,8 @@ def load_badges(path=BADGES_FILE):
             at_least=int(entry.get("at_least") or 0),
             streak=int(entry.get("streak") or 0),
             comeback=bool(entry.get("comeback", False)),
-            dates=_read_dates(entry.get("dates"), where),
+            dates=dates,
+            when=when,
             versions=versions,
         ))
     return tuple(badges)

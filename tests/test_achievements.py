@@ -31,8 +31,12 @@ class BadgeFileTest(unittest.TestCase):
         self.assertFalse(achievements.BY_CODE["first_words"].announce)
         self.assertEqual(achievements.BY_CODE["streak_7"].streak, 7)
         self.assertEqual({b.code for b in achievements.BADGES if b.hidden}, HIDDEN)
-        self.assertIn("2027-02-06", achievements.BY_CODE["spring_festival"].dates)       # 正月初一
-        self.assertIn("2027-09-15", achievements.BY_CODE["mid_autumn"].dates)            # 八月十五
+        festival, autumn = achievements.BY_CODE["spring_festival"], achievements.BY_CODE["mid_autumn"]
+        for day, met in ((date(2027, 2, 5), True), (date(2027, 2, 6), True), (date(2027, 2, 7), False),
+                         (date(2030, 2, 2), True), (date(2030, 2, 3), True), (date(2035, 2, 8), True)):
+            self.assertEqual(festival.met({}, 0, False, today=day), met, day)           # 除夕、正月初一, every year
+        self.assertTrue(autumn.met({}, 0, False, today=date(2027, 9, 15)))                # 八月十五
+        self.assertFalse(autumn.met({}, 0, False, today=date(2027, 9, 16)))
 
     def test_commented_examples_work_once_uncommented(self):
         with open(achievements.BADGES_FILE, encoding="utf-8") as f:

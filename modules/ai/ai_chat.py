@@ -62,6 +62,7 @@ TOPIC_QUIET_HOURS = 3
 TOPIC_HOURS = (10, 22)
 TOPICS_PER_DAY = 2
 DAY_START_HOUR = 5          # her day is planned ahead for the topic groups from this hour on
+JOKE_TEMPERATURE = 1.3      # a made-up joke wants more room than the helper calls' steady default
 DAY_RETRY_SECONDS = 1800    # after a failed plan, wait this long before asking again
 TICK_SECONDS = 300          # how often the scheduler looks at quiet groups
 HEARD_SAVE_SECONDS = 60     # a group's last message time is written down at most this often
@@ -104,6 +105,7 @@ PROMPT_FIELDS = {
     "evidence_policy": set(),
     "evidence_title": set(),
     "now": {"date", "weekday", "time"},
+    "today_occasion": {"day", "note"},
     "today_teams": {"teams"},
     "team_line": {"captain", "members"},
     "today_birthdays": {"members"},
@@ -132,6 +134,9 @@ PROMPT_FIELDS = {
     "digest_comment": {"digest"},
     "opinion_summary": {"topic", "opinions"},
     "fortune_comment": {"member", "level", "good", "bad", "said"},
+    "joke": {"examples", "extra"},
+    "joke_day": {"day"},
+    "joke_told": {"told"},
     "day": {"date", "weekday"},
     "observer": {"member", "known", "impression", "said", "reply", "max_text", "max_adds", "max_impression"},
     "register": {"member", "said", "last", "search"},
@@ -258,6 +263,12 @@ class AIChatModule:
         self.fortune = bool(chat.get("fortune", False))
         # /教她: members teach her what words mean in their group; an admin accepts each one.
         self.teach = bool(chat.get("teach", True))
+        # /讲笑话: out of a hundred jokes, how many she makes up on the spot in the manner of the
+        # joke file's; the rest come from the file. 0 = all from the file.
+        try:
+            self.fresh_jokes = max(0, min(100, int(chat.get("fresh_jokes", 30))))
+        except (TypeError, ValueError):
+            self.fresh_jokes = 0
         # /外号: she gives a member a nickname from what she remembers of them and how they take part.
         self.pet_names = bool(chat.get("pet_names", True))
         # Set by main.py: (group, member) -> what the group manager's record says of how they take
@@ -343,6 +354,8 @@ class AIChatModule:
         # Today's team game and birthdays/poll, set by main.py: group -> what teams.today_for_ai and
         # social.today_for_ai return. Without them the bot only knows the time.
         self.teams_today = self.social_today = None
+        # () -> today's special days (core/occasions.py), set by main.py: she is told which it is.
+        self.days_today = None
         self.special = read_special_people(chat.get("special_people"))
         self.is_admin = is_admin or (lambda group, member, role=None: False)
         # A member's current nickname in a managed group, for special people who aren't in the chat.
@@ -516,6 +529,8 @@ class AIChatModule:
         now = self.clock()
         lines = [render(self.prompts["now"], date=t("common.date", month=now.month, day=now.day),
                         weekday=WEEKDAYS[now.weekday()], time=now.strftime("%H:%M"))]
+        for occasion in self.days_today() if self.days_today else ():
+            lines.append(render(self.prompts["today_occasion"], day=occasion.name, note=occasion.chat))
         day = self._her_day()
         if day:
             lines.append(render(self.prompts["her_day"], events="\n".join(f"- {event}" for event in day)))
@@ -1141,6 +1156,30 @@ class AIChatModule:
             return None
         text = stickers.extract(voice.as_text(text.strip()), {})[0]
         return text[:FORTUNE_COMMENT_LIMIT] or None
+
+    async def write_joke(self, examples, day="", told=()):
+        """A joke made up in the manner of `examples` ([(question, answer)] from the joke file), as
+        the JSON DeepSeek answered with, read by modules/fun/jokes.py; None when it can't be had.
+
+        Only those jokes, the name of today's special day and the questions she has made up lately
+        go to DeepSeek: nothing about any member. One with a phrase the style never says is dropped.
+        """
+        if not (self.enabled and self.fresh_jokes) or not examples:
+            return None
+        extra = [render(self.prompts["joke_day"], day=day)] if day else []
+        if told:
+            extra.append(render(self.prompts["joke_told"], told="\n".join(f"- {question}" for question in told)))
+        prompt = render(self.prompts["joke"], extra="\n".join(extra),
+                        examples="\n".join(f"- 问：{question} 答：{answer}" for question, answer in examples))
+        try:
+            raw = await self._complete(self.client, self.helper_model, [{"role": "user", "content": prompt}],
+                                       temperature=JOKE_TEMPERATURE)
+        except Exception as e:
+            _log.warning(f"[AIChat] 笑话没写成: {e}")
+            return None
+        if context.stock_phrase(raw, self._never_say(current())):
+            return None
+        return memory.first_json(raw)
 
     # ------------------------------------------------------------------ her day, and speaking up
 

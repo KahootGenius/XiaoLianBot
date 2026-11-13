@@ -95,6 +95,8 @@ Admins can use every action except `/抓` and `/抢人` on any team. They don't 
 | `/海龟汤`, `/海龟汤 提示`, `/海龟汤 结束` | "Turtle soup", a lateral-thinking puzzle she hosts: open one or show the open one; its next hint (also `线索`); give up and hear the truth (whoever opened it or an admin; also `放弃`, `揭晓`, `答案`, `汤底`) |
 | `/问 是非题` | "Ask" a yes-or-no question about the open puzzle (also `/提问`); she answers 是, 不是, 无关 or 是也不是 |
 | `/猜 真相` | "Guess" the truth; covering its key points solves it |
+| `/讲笑话` (`/笑话`) | "Tell a joke": she asks the question of the next joke, or tells a one-line joke whole |
+| `/为什么` (`/讲笑话 答案`) | "Why?": the answer to the joke she asked last |
 
 ### Inherited from Castorice
 

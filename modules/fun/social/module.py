@@ -1,4 +1,4 @@
-"""Social commands: 今日运势, birthdays, polls, 征集意见, 翻牌子 and 海龟汤.
+"""Social commands: 今日运势, birthdays, polls, 征集意见, 翻牌子, 海龟汤 and 讲笑话.
 
 - /今日运势: a fortune per member per day, worded entirely by the style file. With AI chat's
   fortune reading on, her comment on it takes in what the member has said lately.
@@ -31,6 +31,7 @@ from botpy import logging
 from core.config import root_path
 from core.style import current, join, render, t
 from modules.fun import soup
+from modules.fun import jokes as joke_file
 from modules.fun.social import fortune
 from modules.fun.social.store import FunStore
 from modules.manager.classifier import clean_text
@@ -67,7 +68,13 @@ SOUP_SECONDS = 20           # how long she waits for a verdict
 SOUP_HINT_WORDS = ("提示", "线索")
 SOUP_END_WORDS = ("结束", "放弃", "揭晓", "答案", "汤底")
 # What members type. Listed so team-game actions can't take them.
-COMMANDS = ("/今日运势", "/生日", "/本月生日", "/投票", "/结束投票", "/投", "/征集意见", "/意见征集", "/意见",
+JOKE_ANSWER_WORDS = ("答案", "为什么")    # /讲笑话 答案
+JOKE_WAIT_MINUTES = 30      # how long a joke's answer waits to be asked for
+JOKE_EXAMPLES = 6           # jokes from the file that show DeepSeek the manner, when she makes one up
+JOKE_EXAMPLES_LEAST = 3     # with fewer to show, there's no manner to follow: the file's own are told
+JOKE_SECONDS = 10           # how long /讲笑话 waits for a made-up joke before telling one from the file
+FRESH_KEPT = 20             # questions she made up lately that are kept per group, so she doesn't repeat one
+COMMANDS = ("/讲笑话", "/笑话", "/为什么", "/今日运势", "/生日", "/本月生日", "/投票", "/结束投票", "/投", "/征集意见", "/意见征集", "/意见",
             "/结束征集", "/结束征集意见", "/翻牌子", "/海龟汤", "/问", "/提问", "/猜")
 DELETE_WORDS = ("删除", "取消", "清除")
 TAKE_BACK_WORDS = ("撤回",) + DELETE_WORDS
@@ -132,8 +139,11 @@ def _short(text, limit=30):
 
 class SocialModule:
     def __init__(self, gateway, store=None, clock=None, is_admin=None, activity=None, rng=None, config=None,
-                 nickname_of=None, count=None, has_left=None, find_nickname=None, soups=None):
+                 nickname_of=None, count=None, has_left=None, find_nickname=None, soups=None, days=None,
+                 jokes=None):
         self.gw = gateway
+        # () -> today's special days (core/occasions.py): the first members to speak get the day's line.
+        self.days = days or (lambda: ())
         self.store = store or FunStore(root_path("data", "fun.db"))
         self.tz = pytz.timezone('Asia/Shanghai')
         self.clock = clock or (lambda: datetime.now(self.tz))
@@ -178,13 +188,27 @@ class SocialModule:
         # Set by main.py when AI chat is on: (汤面, 汤底, [关键点], what a member said, whether it's a
         # guess) -> the host's verdict as DeepSeek wrote it, read by modules/fun/soup.py. No host, no game.
         self.soup_host = None
+        # /讲笑话: the jokes in prompts/jokes.yaml; config.yaml's social.joke: false leaves it out.
+        if jokes is None:
+            jokes, problems = joke_file.load() if not isinstance(social, dict) or social.get("joke", True) else ([], [])
+            for problem in problems:
+                _log.warning(f"[Social] 笑话：{problem}")
+        self.teller = joke_file.Teller(jokes, self.rng)
+        # Set by main.py when AI chat makes up some of the jokes: ([(question, answer)] as examples,
+        # today's special day, [questions made up lately]) -> the JSON DeepSeek wrote, or None; and
+        # how many jokes in a hundred are made up that way.
+        self.joke_writer = None
+        self.fresh_share = 0
+        self.fresh_told = {}    # group -> the questions she made up there lately
+        self.unanswered = {}    # group -> (the joke whose answer is still waiting, when it was asked)
         self.soup_pace = {}     # (group, member) -> when their latest questions and guesses came
         self.soup_told = set()  # those already told to slow down this time
         self.commands = {"/今日运势": self.cmd_fortune, "/生日": self.cmd_birthday, "/本月生日": self.cmd_month,
                          "/投票": self.cmd_poll, "/投": self.cmd_vote, "/结束投票": self.cmd_close,
                          "/征集意见": self.cmd_call, "/意见征集": self.cmd_call, "/意见": self.cmd_opinion,
                          "/结束征集": self.cmd_end_call, "/结束征集意见": self.cmd_end_call, "/翻牌子": self.cmd_flip,
-                         "/海龟汤": self.cmd_soup, "/问": self.cmd_ask, "/提问": self.cmd_ask, "/猜": self.cmd_guess}
+                         "/海龟汤": self.cmd_soup, "/问": self.cmd_ask, "/提问": self.cmd_ask, "/猜": self.cmd_guess,
+                         "/讲笑话": self.cmd_joke, "/笑话": self.cmd_joke, "/为什么": self.cmd_why}
         self.pruned = None
 
     # ------------------------------------------------------------------ helpers
@@ -260,11 +284,13 @@ class SocialModule:
     # ------------------------------------------------------------------ intake
 
     async def observe(self, message):
-        """Every message the bot sees: a birthday wish on the member's first one of their day, and,
-        while fortune reading is on, their latest messages, in memory only."""
+        """Every message the bot sees: a birthday wish on the member's first one of their day, a
+        special day's line for the first few who speak on it, and, while fortune reading is on,
+        their latest messages, in memory only."""
         group, member = message.group_openid, message.member_openid
         if not member or message.is_bot:
             return
+        await self._greet(message)
         if self.fortune_reader is not None:
             ts = int(self._now().timestamp())
             text = " ".join(clean_text(message.content).split())      # no emoji or mention tags, so no IDs
@@ -287,6 +313,22 @@ class SocialModule:
         lines = [t("social.birthday.wish", member=self._name(message))]
         lines += self.count(group, member, message.nickname, "birthday")
         await self._reply(message, "\n".join(lines))
+
+    async def _greet(self, message):
+        """On a special day with a greeting, the first members to speak in each group get it, once
+        each, numbered in the order they came. Past the day's `first`, nothing is kept or said."""
+        group, member = message.group_openid, message.member_openid
+        today = self._now().date().isoformat()
+        for occasion in self.days():
+            kind = f"day:{occasion.name}"
+            if not occasion.greet or self.store.daily(group, member, kind)[0] == today:
+                continue
+            came = self.store.count_daily(group, kind, today)
+            if occasion.first and came >= occasion.first:
+                continue
+            self.store.mark_daily(group, member, kind, today)
+            await self._reply(message, render(list(occasion.greet), member=self._name(message), n=came + 1,
+                                              day=occasion.name))
 
     async def handle_social(self, message):
         text = (message.content or "").strip()
@@ -318,7 +360,8 @@ class SocialModule:
 
     async def cmd_fortune(self, message, args):
         style, now = current(), self._now()
-        pools = {key: _pool(style.lookup(f"social.fortune.{key}")) for key in ("levels", "good", "bad", "comments")}
+        # pick, not lookup: each list can have a version for a special day, like levels@元旦: [大吉].
+        pools = {key: _pool(style.pick(f"social.fortune.{key}")) for key in ("levels", "good", "bad", "comments")}
         seed = f"{message.group_openid}:{message.member_openid}:{now.date().isoformat()}"
         level, good, bad, comment = fortune.draw(seed, **pools)
         name = self._name(message)
@@ -329,6 +372,63 @@ class SocialModule:
                  t("social.fortune.bad_line", items=join(bad)),
                  reading or render(comment, member=name, level=level)]
         await self._reply(message, "\n".join(lines), buttons=[[(t("social.fortune.button"), "/今日运势")]])
+
+    # ------------------------------------------------------------------ 讲笑话
+
+    async def cmd_joke(self, message, args):
+        """/讲笑话: the group's next joke. One with an answer stops at the question, with a button that
+        asks 为什么; one without is told whole. /讲笑话 答案 is the same as /为什么."""
+        if not self.teller.jokes:
+            await self._reply(message, t("social.joke.disabled"))
+            return
+        if args.split()[:1] and args.split()[0] in JOKE_ANSWER_WORDS:
+            await self.cmd_why(message, "")
+            return
+        group, days = message.group_openid, [day.name for day in self.days()]
+        joke = await self._fresh_joke(group, days) or self.teller.next(group, days)
+        if joke is None:
+            await self._reply(message, t("social.joke.disabled"))
+        elif joke.answer:
+            self.unanswered[group] = (joke, int(self._now().timestamp()))
+            await self._reply(message, t("social.joke.ask", question=joke.question),
+                              buttons=[[(t("social.joke.why_button"), "/为什么")]])
+        else:
+            self.unanswered.pop(group, None)
+            await self._reply(message, t("social.joke.told", joke=joke.question),
+                              buttons=[[(t("social.joke.again_button"), "/讲笑话")]])
+
+    async def _fresh_joke(self, group, days):
+        """A joke made up for this turn, for the share of turns that get one, or None: then the
+        next one from the file is told. The file's jokes that fit today show the manner."""
+        if self.joke_writer is None or self.rng.random() * 100 >= self.fresh_share:
+            return None
+        fitting = [joke for joke in self.teller.jokes if joke.answer and (not joke.day or joke.day in days)]
+        if len(fitting) < JOKE_EXAMPLES_LEAST:
+            return None
+        examples = self.rng.sample(fitting, min(JOKE_EXAMPLES, len(fitting)))
+        told = self.fresh_told.setdefault(group, deque(maxlen=FRESH_KEPT))
+        try:
+            verdict = await asyncio.wait_for(self.joke_writer([(joke.question, joke.answer) for joke in examples],
+                                                              days[0] if days else "", list(told)), JOKE_SECONDS)
+        except Exception as e:
+            _log.warning(f"[Social] 现写的笑话没等到: {type(e).__name__} {str(e)[:120]}")
+            return None
+        joke = joke_file.fresh(verdict or {}, [known.question for known in self.teller.jokes] + list(told))
+        if joke is None:
+            return None
+        told.append(joke.question)
+        _log.info(f"[Social] 现写的笑话：{joke.question} —— {joke.answer}")
+        return joke
+
+    async def cmd_why(self, message, args):
+        """/为什么: the answer to the joke she asked last, for whoever asks first."""
+        joke, asked = self.unanswered.pop(message.group_openid, (None, 0))
+        if joke is None or int(self._now().timestamp()) - asked > JOKE_WAIT_MINUTES * 60:
+            await self._reply(message, t("social.joke.none"))
+            return
+        await self._reply(message, "\n".join([t("social.joke.answer", question=joke.question, answer=joke.answer),
+                                              t("social.joke.tail")]),
+                          buttons=[[(t("social.joke.again_button"), "/讲笑话")]])
 
     async def _reading(self, message, name, level, good, bad, now):
         """Her comment on today's fortune in light of what the member has said lately, or None for

@@ -19,7 +19,7 @@ class HelpModule:
         self.teams = teams
         self.gw = gateway       # replies through it can carry buttons
         # The smaller things that can be switched off, each a line of its own in the style (help.<name>)
-        # under the section it belongs to: soup, pet_names, teach, member_stickers.
+        # under the section it belongs to: joke, soup, pet_names, teach, member_stickers.
         self.extras = tuple(extras)
 
     def buttons(self):
@@ -32,6 +32,8 @@ class HelpModule:
         second += [("投票", "/投票"), ("翻牌子", "/翻牌子")]
         if "soup" in self.extras:
             second.append(("海龟汤", "/海龟汤"))
+        if "joke" in self.extras:
+            second.append(("讲笑话", "/讲笑话"))
         return [first + [("今日运势", "/今日运势")], second]
 
     def _with(self, key, *extras):
@@ -45,7 +47,7 @@ class HelpModule:
         sections += [t("help.games"), t("help.minecraft"), t("help.fun")]
         if self.teams is not None and self.teams.enabled:
             sections.append(self.teams.help_block())
-        sections += [self._with("help.social", "soup"), t("help.sleep")]
+        sections += [self._with("help.social", "joke", "soup"), t("help.sleep")]
         if self.ai_enabled:
             sections.append(self._with("help.ai", "pet_names", "teach", "member_stickers"))
         sections.append(t("help.footer"))

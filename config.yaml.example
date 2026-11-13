@@ -63,6 +63,8 @@ secret: "YOUR_APP_SECRET"
 #   teach: true              # /教她 词：意思: members teach her what words mean in their group. An admin
 #                            # accepts each one (/记下); she then knows it when the word comes up
 #   pet_names: true          # /外号: she gives a member a nickname from what she remembers of them
+#   fresh_jokes: 30          # /讲笑话: out of 100 jokes, how many she makes up on the spot in the manner of
+#                            # the joke file's (one cheap call each); the rest come from the file. 0 = none
 #   member_stickers: false   # /投稿表情: members send her stickers for their own group, and an admin
 #                            # accepts each one (/收下). Their pictures go to DeepSeek to be looked at
 #                            # and are kept in data/member_stickers/. Read the privacy policy first.
@@ -118,8 +120,14 @@ secret: "YOUR_APP_SECRET"
 # /海龟汤: puzzles she hosts, from prompts/soups.yaml (or your own local/prompts/soups.yaml). Members
 # ask yes-or-no questions with /问 and guess with /猜; each one costs a cheap DeepSeek call, so it
 # needs the deepseek section above. On unless you write soup: false.
+# /讲笑话: she tells a joke from prompts/jokes.yaml (or your own local/prompts/jokes.yaml); /为什么 asks
+# for the answer. No AI needed; with AI chat on, some are made up on the spot (ai_chat.fresh_jokes above).
+# On unless you write joke: false.
 # social:
 #   soup: true
+#   joke: true
+#
+# Special days need no setting here: they are in prompts/occasions.yaml (see docs/CUSTOMIZING.md).
 #
 # A member with their own /翻牌子 chances. Key: the flipper's member_openid (@机器人 /我的ID);
 # under it, the members they may draw and each one's chance in percent (60 or "60%").

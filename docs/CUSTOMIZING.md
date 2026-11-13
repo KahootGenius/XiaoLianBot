@@ -14,6 +14,8 @@ Changing how the bot talks means editing YAML, and you can keep several characte
 | `styles/<名字>.yaml` | Your own styles, such as `桃子.yaml` or `葡萄.yaml`. The file name is the style's name |
 | `prompts/achievements.yaml` | The badges (see "Adding achievements") |
 | `prompts/teams.yaml` | The team game's statuses and captain actions (see "Changing the team game") |
+| `prompts/occasions.yaml` | Special days and what happens on them (see "Special days") |
+| `prompts/jokes.yaml` | The jokes `/讲笑话` tells (see "Jokes") |
 | `prompts/chat.yaml` | AI chat's rules around the persona: group chat, summaries, memory notes (see "Changing how AI chat remembers") |
 | `prompts/rehearsal.yaml` | A scripted group chat for trying a persona against the real DeepSeek (see "Trying changes before the group sees them") |
 | `config.yaml` | `style:` and `group_styles:` pick the styles; `manager.rules_text` overrides the rule text in `/群规`; `social.flip.special` gives members their own `/翻牌子` chances (see "Someone's own `/翻牌子` chances") |
@@ -29,6 +31,7 @@ Anything in `styles/` or `prompts/` can have a private version that never goes t
 | `styles/桃子.yaml`, or a style only you have | `local/styles/桃子.yaml` |
 | `prompts/teams.yaml` | `local/prompts/teams.yaml` |
 | `prompts/achievements.yaml` | `local/prompts/achievements.yaml` |
+| `prompts/occasions.yaml`, `prompts/jokes.yaml` | `local/prompts/occasions.yaml`, `local/prompts/jokes.yaml` |
 | `prompts/chat.yaml`, `prompts/server_qa_prompt.yaml`, `prompts/rehearsal.yaml` | `local/prompts/…` |
 
 - **A private `小莲.yaml` only needs the lines you change.** Every line it leaves out, or writes
@@ -519,6 +522,66 @@ The puzzles are in [`prompts/soups.yaml`](../prompts/soups.yaml), 13 to start wi
   questions a puzzle. One nobody solves closes after 24 hours and says its truth the next time
   someone asks. A group gets every puzzle before one comes round again.
 - **Badges:** solving one counts toward `soup` (喝到汤底 at 1, 名侦探 at 5).
+
+## Special days
+
+`prompts/occasions.yaml` lists days on which the bot behaves a little differently, without telling
+the group why. Restart after editing; a day written wrong is left out and named in the log, and
+`.venv/bin/python -m core.occasions` lists each day with the date it next falls on.
+
+```yaml
+days:
+  - name: 春节                 # what the style file calls it after "@"
+    when: 农历 正月初一          # or 01-01 (every year), 2027-02-06 (only then), 农历 除夕; a list works
+    lasts: 3                   # optional: how many days it runs
+    chat: 正在过年，可以拜年。     # optional: a note for AI chat, which is always told the day's name
+    greet: "🧧 {member} 是今天第 {n} 个来拜年的～"   # optional: said to the first members who speak
+    first: 8                   # optional: how many per group get it (default 10; 0 = everyone)
+    die: 1                     # optional: added to the team game's die that day, up to its six
+```
+
+- **Any line in a style can have a version for a day,** written next to it as `key@春节`, the same
+  way a line has versions for particular people. On the day, that version is what's said. Lists work
+  too: `social.fortune.levels@元旦: [大吉]` is why every `/今日运势` is 大吉 on 元旦. The day's version
+  wins over a person's (`@admin`); with two days at once, the one written first in the file wins.
+  `python -m core.style check` reports a version for a day that isn't in the file.
+- **Lunar dates** come from a table in `core/lunar.py` copied from the Hong Kong Observatory's
+  conversion tables, 2025 to 2041. Month names 正月…腊月 and days 初一…三十 work, as does `农历 8-15`;
+  a leap month never counts. In the table's last year the log asks for more years to be added.
+- **The greeting** is a reply to the member's first message of the day, numbered in the order they
+  came (`{n}`). To number them the bot keeps who was greeted, for two days.
+- **Badges** can use the same dates: `dates: [农历 除夕, 农历 正月初一]` in `prompts/achievements.yaml`.
+- **A private `local/prompts/occasions.yaml` replaces the shared file completely.**
+
+## Jokes
+
+`/讲笑话` (or `/笑话`) tells the next joke from `prompts/jokes.yaml`; `/为什么` gives the answer to the
+one she asked last, to whoever asks within half an hour. Check the file with
+`.venv/bin/python -m modules.fun.jokes`.
+
+```yaml
+jokes:
+  - q: 为什么数学书总是不开心？     # she asks this, with a 为什么？ button
+    a: 因为它的问题太多了。
+  - text: 一句话讲完的笑话。        # told whole
+  - q: 为什么过年的时候饺子最紧张？
+    a: 因为一家人都盯着它，还要下锅。
+    day: 春节                     # optional: told only on that special day, and first
+```
+
+- **Every group hears every joke once** before one comes again, in its own random order. That is
+  kept in memory, so a restart starts the round over.
+- **Some are made up on the spot.** With AI chat on, `ai_chat.fresh_jokes` (default 30) is how many
+  jokes in a hundred she writes herself: one cheap call that is shown six of the file's jokes that
+  fit today, the day's name, and the questions she made up lately in that group, and nothing about
+  any member. So the file sets the manner: change its jokes and hers follow. A joke that isn't a
+  question and its answer, runs long, repeats one, or has a phrase from the style's `never_say` is
+  dropped for one from the file, as is one that takes over ten seconds. The request is `joke` in
+  `prompts/chat.yaml`; each made-up joke is written to the log. `fresh_jokes: 0` turns it off.
+- **Her lines around a joke** are under `social.joke` in the style: `ask`, `told`, `answer`, the
+  `tail` she adds after an answer, and the two button labels.
+- **A private `local/prompts/jokes.yaml` replaces the shared file completely.** Nothing about who
+  asked is stored.
 
 ## Someone's own `/翻牌子` chances
 

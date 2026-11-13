@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS joined (
 CREATE TABLE IF NOT EXISTS daily (
     group_openid TEXT NOT NULL,
     member_openid TEXT NOT NULL,
-    kind TEXT NOT NULL,              -- birthday | flip
+    kind TEXT NOT NULL,              -- birthday | flip | "day:" and a special day's name, once greeted on it
     day TEXT NOT NULL,               -- the Beijing date it happened, e.g. 2026-10-25
     value TEXT,                      -- flip: who was drawn
     PRIMARY KEY (group_openid, member_openid, kind)
@@ -258,6 +258,11 @@ class FunStore:
         row = self._one("SELECT day, value FROM daily WHERE group_openid = ? AND member_openid = ? AND kind = ?",
                         group, member, kind)
         return (row["day"], row["value"]) if row else (None, None)
+
+    def count_daily(self, group, kind, day):
+        """How many members in the group it has happened to on that day."""
+        return self._one("SELECT COUNT(*) AS n FROM daily WHERE group_openid = ? AND kind = ? AND day = ?",
+                         group, kind, day)["n"]
 
     def mark_daily(self, group, member, kind, day, value=None):
         self._write("INSERT INTO daily (group_openid, member_openid, kind, day, value) VALUES (?, ?, ?, ?, ?) "

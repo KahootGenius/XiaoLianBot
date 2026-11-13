@@ -36,7 +36,7 @@ class FakeDeepSeek:
         self.calls = []
         self.answers = {"chat": [], "register": [], "observer": [], "check": [], "consolidation": [], "summary": [],
                         "day": [], "topic": [], "people": [], "characters": [], "teach": [], "pet_name": [],
-                        "sticker": [], "soup": []}
+                        "sticker": [], "soup": [], "joke": []}
         self.hooks = {}
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
 
@@ -60,6 +60,8 @@ class FakeDeepSeek:
                 return "teach"
             if "你是海龟汤（情境推理游戏）的主持人" in content:
                 return "soup"
+            if "你在给一个 QQ 群写笑话" in content:
+                return "joke"
             if "睡一觉" in content:
                 return "consolidation"
             return "check" if "防止把玩笑当真" in content else "observer"
@@ -79,7 +81,8 @@ class FakeDeepSeek:
                                              "teach": '{"ok": true}',
                                              "pet_name": '{"nickname": "小夜猫", "why": "半夜还在群里晃的就是你。"}',
                                              "sticker": '{"ok": true, "label": "无语", "desc": "被气到说不出话的时候"}',
-                                             "soup": '{"answer": "无关", "key": false}'}[kind]
+                                             "soup": '{"answer": "无关", "key": false}',
+                                             "joke": '{"q": "为什么现写的笑话最新鲜？", "a": "因为刚出锅。"}'}[kind]
         if isinstance(answer, Exception):
             raise answer
         return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=answer))])

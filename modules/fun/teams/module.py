@@ -65,7 +65,8 @@ class Turn:
 
 class TeamsModule:
     def __init__(self, gateway, config=None, is_admin=None, nickname_of=None, reserved=(),
-                 rules_path=RULES_FILE, data_path=DATA_FILE, clock=None, rng=None, count=None, history=None):
+                 rules_path=RULES_FILE, data_path=DATA_FILE, clock=None, rng=None, count=None, history=None,
+                 days=None):
         cfg = (config or {}).get("teams") or {}
         self.captains = {str(c) for c in cfg.get("captains") or []}
         self.groups = {str(g) for g in cfg.get("groups") or []}     # empty: every group
@@ -80,6 +81,8 @@ class TeamsModule:
         # (group, member_openid, nickname, counter) -> congratulations for any badge that earned, from
         # the group manager's achievements: being caught, grabbing, and hiding a whole day each count.
         self.count = count or (lambda group, member, nickname, key: [])
+        # () -> today's special days (core/occasions.py): one may add to what the die shows.
+        self.days = days or (lambda: ())
         self.rules = self.roster = self.history = None
         if self.enabled:
             self.rules = load_rules(rules_path, reserved)
@@ -413,7 +416,8 @@ class TeamsModule:
         if used >= action.times:
             raise Refused(t("games.teams.fail.throws", action=action.name, max=action.times))
         teams.throws.setdefault(action.name, {})[turn.actor] = used + 1
-        points = self.rng.randint(1, DIE)
+        # On a special day the die may be kinder: what the day adds, up to the die's own six.
+        points = min(DIE, self.rng.randint(1, DIE) + max((day.die for day in self.days()), default=0))
         turn.dice[openid] = (points, action.times - used - 1)
         if points >= action.need:
             del team.members[openid]

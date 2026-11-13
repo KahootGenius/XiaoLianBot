@@ -3,6 +3,7 @@ from collections import OrderedDict
 import botpy
 from botpy import logging
 from core.config import load_config
+from core import occasions
 from core.style import STYLES
 from modules.help import HelpModule
 from modules.ai import ai_chat, vision
@@ -33,6 +34,12 @@ CASTORICE_COMMANDS = ("/epicfree", "/订阅epic", "/epicTD", "/steamfree", "/订
 
 # Which style file speaks (styles/<name>.yaml): config.yaml's `style` for every group,
 # `group_styles` for particular groups. Set only on this machine, never from chat.
+# Special days (prompts/occasions.yaml): on one, a style's lines written for it (key@元旦) are the
+# ones said, and a few features do something of their own. Installed first, so the style check
+# below knows the days' names.
+_days, _day_problems = occasions.load()
+CALENDAR = occasions.Calendar(_days)
+CALENDAR.install(STYLES)
 STYLES.configure(config)
 
 # botpy 1.2.1 doesn't know GROUP_MESSAGE_CREATE (every group message, not just
@@ -68,21 +75,26 @@ class MyClient(botpy.Client):
                                           activity=self.manager_module.active_members, config=config,
                                           nickname_of=self.manager_module.current_nickname,
                                           count=self.manager_module.count, has_left=self.manager_module.has_left,
-                                          find_nickname=self.manager_module.nickname_anywhere)
+                                          find_nickname=self.manager_module.nickname_anywhere, days=CALENDAR.today)
         self.sleep_module.count = self.manager_module.count
         if self.ai_chat_module.enabled:
             self.social_module.opinion_summarizer = self.ai_chat_module.summarize_opinions
             self.social_module.soup_host = self.ai_chat_module.host_soup       # /海龟汤 needs a host
             if self.ai_chat_module.fortune:
                 self.social_module.fortune_reader = self.ai_chat_module.read_fortune
+            if self.ai_chat_module.fresh_jokes:                                 # some of /讲笑话 is made up on the spot
+                self.social_module.joke_writer = self.ai_chat_module.write_joke
+                self.social_module.fresh_share = self.ai_chat_module.fresh_jokes
         reserved = (HelpModule.TRIGGERS + CASTORICE_COMMANDS + ai_chat.COMMANDS + social.COMMANDS
                     + tuple(name for name, *_ in self.manager_module.commands))
         self.teams_module = TeamsModule(self.gateway, config, is_admin=self.manager_module.is_admin,
                                         nickname_of=self.manager_module.known_nickname, reserved=reserved,
-                                        count=self.manager_module.count)
-        # AI chat knows today's teams, birthdays, poll and 征集意见, so she can play along.
+                                        count=self.manager_module.count, days=CALENDAR.today)
+        # AI chat knows today's teams, birthdays, poll and 征集意见, so she can play along, and
+        # whether today is one of the special days.
         self.ai_chat_module.teams_today = self.teams_module.today_for_ai
         self.ai_chat_module.social_today = self.social_module.today_for_ai
+        self.ai_chat_module.days_today = CALENDAR.today
         # /删除数据 @某人 also clears their team place, their game record and what AI chat kept about them.
         self.manager_module.forget_hooks += [self.teams_module.forget_member, self.teams_module.forget_record,
                                              self.ai_chat_module.forget_member, self.social_module.forget_member]
@@ -96,6 +108,7 @@ class MyClient(botpy.Client):
         if self.manager_module.enabled and dashboard_config.get("enabled", True):
             self.dashboard = Dashboard.from_config(self.manager_module, dashboard_config)
         playing = ["soup"] if self.social_module.soups and self.social_module.soup_host else []
+        playing += ["joke"] if self.social_module.teller.jokes else []
         self.help_module = HelpModule(self.api, ai_enabled=self.ai_chat_module.enabled,
                                       manager_enabled=self.manager_module.enabled, teams=self.teams_module,
                                       gateway=self.gateway, extras=self.ai_chat_module.features + playing)
@@ -107,6 +120,11 @@ class MyClient(botpy.Client):
         _log.info(f"[Style] 默认风格：{STYLES.default_name}；可用：{'、'.join(STYLES.names())}")
         for group, name in STYLES.groups.items():
             _log.info(f"[Style] 群 {group[:8]}… 使用风格：{name}")
+        for problem in _day_problems + [CALENDAR.running_out()]:
+            if problem:
+                _log.warning(f"[Days] {problem}")
+        if CALENDAR.occasions:
+            _log.info(f"[Days] 特别的日子：{len(CALENDAR.occasions)} 个，今天是：{'、'.join(CALENDAR.names()) or '平常的一天'}")
         # Lets RichGroupMessage recognise the bot's own @mention inside
         # every-message events.
         events.RichGroupMessage.self_ids.update({str(self.robot.id), str(config.get("appid"))})
