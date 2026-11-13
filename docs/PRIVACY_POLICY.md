@@ -41,6 +41,8 @@
 
 5. **组队游戏记录**（仅在管理员开启组队游戏后）
    当天的队伍名单：队长和队员的成员标识、昵称、被抓进队的时间，以及游戏内状态（例如「小队长」「死亡」）。
+   躲猫猫：当天谁躲了起来、躲在哪个地方（由本机器人随机决定，不向任何人显示）、每人躲过几次、每位队长找过几次。
+   游戏档案：每位成员在游戏里的**累计次数**：被抓进队几次、被谁抓的各几次、抓过谁各几次、经历过各种游戏状态几次、躲猫猫的次数、遇到突发事件的次数。只有次数，没有时间，也不含任何聊天内容；记录对方时保存对方的成员标识和当时的昵称。成员可以用 `/档案` 查看自己的，也可以查看别人的。成就还会用到其中三项次数：被抓进队、抓人、躲猫猫躲到当天清空。
 
 6. **与机器人的 AI 对话**（仅在配置了 AI 后）
    - @ 本机器人的消息和它的回复，连同发言人的昵称，用于让它记得群里刚才聊了什么；更早的内容会被整理成一段群聊总结。
@@ -105,7 +107,8 @@
 - **消息元数据**：保存 **35 天**后自动删除。
 - **提醒、请假、移出等操作记录**：保存 **180 天**后自动删除。
 - **已离开或被移出群聊的成员**（从本机器人得知其离开时算起）：其统计数据、生日、长期记忆和印象再保留 **180 天**（方便重新入群），之后自动删除。
-- **组队游戏的队伍名单**：保存在服务器本地文件中，**每天清空一次**（默认北京时间 5:00）。
+- **组队游戏的队伍名单**：保存在服务器本地文件中，**每天清空一次**（默认北京时间 5:00）。躲猫猫的记录（谁躲着、躲在哪儿、躲过和找过几次）同时清空。
+- **游戏档案**：保留到管理员按要求删除、成员离开群聊满 180 天，或本机器人被移出该群为止。删除某位成员的数据时，TA 在别人档案里的那部分（被 TA 抓过几次等）一并删除。
 - **AI 对话记录**（@ 机器人的消息和它的回复）：保存 **7 天**后自动删除。删除前，尚未整理的内容会先并入群聊总结。
 - **群聊总结**：保留到管理员发送 `/重置对话`，或本机器人被移出该群为止。
 - **长期记忆**：每人最多 8 条，最弱的一条先被删除；很久没再提起的会自动忘掉（一般几周到几个月，越重要、被提起越多的保留越久）；也可由成员用 `/忘记` 删除、管理员按要求删除；成员离开群聊满 180 天，或本机器人被移出该群时，一并删除。
@@ -124,7 +127,7 @@
 - **今日运势解读**（仅在运营者开启时）：每位成员最近的消息只暂存在服务器内存中，每人最多 20 条，每条最多保留约 **1 天**，不写入硬盘，机器人重启即清除；指令和只有表情、数字或标点的消息不会发送；点评只保留当天。管理员按要求删除数据、本机器人被移出该群时一并清除。
 - **联网搜索**：不保存搜索词和查到的内容，只记下每次搜索的时间，用于每个群每天的次数限制，**7 天**后删除。
 - **看图**：图片和图片链接都不保存：图片下载到服务器内存，用完就丢弃，不写入硬盘，聊天记录里只留一个「[图片]」记号。机器人对图片的回复和其他回复一样保存。只记下每次看图的时间，用于每个群每天的次数限制，**7 天**后删除。
-- **本机器人被移出某个群时**：立即删除该群的全部群管理数据、队伍名单、AI 对话记录、群聊总结、长期记忆、外号、教的说法、投稿的表情（含图片）、生日、投票、意见征集和海龟汤。
+- **本机器人被移出某个群时**：立即删除该群的全部群管理数据、队伍名单、游戏档案、AI 对话记录、群聊总结、长期记忆、外号、教的说法、投稿的表情（含图片）、生日、投票、意见征集和海龟汤。
 - 群组绑定、订阅状态、游戏状态、睡眠记录**仅保存在服务器内存中**，机器人重启后即全部清除；睡眠记录在记录后 **24 小时**自动删除。
 - 运行日志保留期不超过 **30 天**，到期自动删除。
 - **服务终止时**，我们将在 **24 小时内**删除全部用户数据，包括运行日志。
@@ -181,7 +184,11 @@ splits managed and unmanaged groups.
     and birthdays a member showed up on (counts only)
   - the member list (nickname, role, join time), if Tencent grants that invite-only API
 - For team games, once enabled: today's rosters (captain and member IDs, nicknames, when each was
-  grabbed, in-game statuses such as 小队长 or 死亡).
+  grabbed, in-game statuses such as 小队长 or 死亡); who is hiding today and where, which nobody is
+  shown, with how often each has hidden and each captain has looked; and each member's game record
+  (`data/teams.db`): counts of how often they were caught and by whom, whom they grabbed, which
+  statuses befell them, their hide-and-seek and how many events they met. Counts only, no dates,
+  with the other member's ID and nickname where one is named. Three of the counts go toward badges.
 - For AI chat, once a DeepSeek key is set (`data/chat.db`):
   - messages that @ the bot and its replies, with speakers' nicknames
   - a rolling summary per group
@@ -266,7 +273,8 @@ The newer commands each send DeepSeek only what they need:
 | Message metadata | 35 days | `MESSAGE_RETENTION_DAYS` in `modules/manager/module.py` |
 | Action log | 180 days | `ACTION_RETENTION_DAYS` |
 | Departed members' stats, birthdays, AI memories and impressions | 180 days from when the bot knows they've gone | `DEPARTED_RETENTION_DAYS`, `expired_hooks` |
-| Team rosters (`data/teams.json`) | until the daily reset (05:00 by default) | `reset_time` in `prompts/teams.yaml`, cleared by `TeamsModule.run_scheduler` |
+| Team rosters and hide-and-seek (`data/teams.json`) | until the daily reset (05:00 by default) | `reset_time` in `prompts/teams.yaml`, cleared by `TeamsModule.run_scheduler` |
+| Game records (`data/teams.db`) | until `/删除数据`, 180 days after they leave, or the bot leaves. Deleting someone also removes their part in other members' records | `TeamsModule.forget_record` (`forget_hooks`, `expired_hooks`), `forget_group` |
 | AI chat turns (`data/chat.db`) | 7 days, after being folded into the summary | `ai_chat.keep_days`, `AIChatModule.housekeeping` (hourly) |
 | AI chat summary | until `/重置对话` or the bot leaves | `ChatStore.reset_chat` / `forget_group` |
 | AI chat memories | until they fade (weeks to months, longer when important or mentioned again), `/忘记`, `/删除数据`, 180 days after they leave, or the bot leaves; 8 per member, weakest dropped | `ai_chat.memories_per_member`, `AIChatModule.fade`, `modules/ai/memory.py` |
@@ -288,7 +296,7 @@ The newer commands each send DeepSeek only what they need:
 | Which puzzles a group has had | until the bot leaves; nothing about members | `FunStore.soup_played`, `forget_group` |
 | A member's latest messages, for `/今日运势` (`ai_chat.fortune`) | in memory only, never on disk: at most 20 each, each for about a day; gone on restart, `/删除数据` or when the bot leaves. Commands and messages of only emoji, numbers or punctuation aren't sent. Her comment stays for that day | `RECENT_KEPT`, `RECENT_SECONDS` in `modules/fun/social/module.py` |
 | A group's data after the bot is removed | deleted immediately (manager data, rosters, AI chat) | `on_group_del_robot` in `main.py` |
-| Deletion on request | when an admin runs it (also takes them off every team; deletes their AI chat turns, memories and nickname, what they taught her and the stickers they sent in, the group's summary, their birthday, votes, opinions and the 征集 they joined, their questions and guesses in 海龟汤, and their ID on removal lists and in what they did as an admin) | `/删除数据` with an @, or the whole nickname for someone who has left |
+| Deletion on request | when an admin runs it (also takes them off every team and out of hiding; deletes their game record, their AI chat turns, memories and nickname, what they taught her and the stickers they sent in, the group's summary, their birthday, votes, opinions and the 征集 they joined, their questions and guesses in 海龟汤, and their ID on removal lists and in what they did as an admin) | `/删除数据` with an @, or the whole nickname for someone who has left |
 | botpy logs | 7 rotated files (< 30 days) | botpy's own `TimedRotatingFileHandler` |
 
 ### Before you submit, check these

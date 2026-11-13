@@ -78,17 +78,19 @@ class MyClient(botpy.Client):
         reserved = (HelpModule.TRIGGERS + CASTORICE_COMMANDS + ai_chat.COMMANDS + social.COMMANDS
                     + tuple(name for name, *_ in self.manager_module.commands))
         self.teams_module = TeamsModule(self.gateway, config, is_admin=self.manager_module.is_admin,
-                                        nickname_of=self.manager_module.known_nickname, reserved=reserved)
+                                        nickname_of=self.manager_module.known_nickname, reserved=reserved,
+                                        count=self.manager_module.count)
         # AI chat knows today's teams, birthdays, poll and 征集意见, so she can play along.
         self.ai_chat_module.teams_today = self.teams_module.today_for_ai
         self.ai_chat_module.social_today = self.social_module.today_for_ai
-        # /删除数据 @某人 also clears their team place and what AI chat kept about them.
-        self.manager_module.forget_hooks += [self.teams_module.forget_member, self.ai_chat_module.forget_member,
-                                             self.social_module.forget_member]
+        # /删除数据 @某人 also clears their team place, their game record and what AI chat kept about them.
+        self.manager_module.forget_hooks += [self.teams_module.forget_member, self.teams_module.forget_record,
+                                             self.ai_chat_module.forget_member, self.social_module.forget_member]
         # Someone who has left comes off today's teams; the rest of their record stays, in case they return.
         self.manager_module.gone_hooks.append(self.teams_module.forget_member)
-        # When that time is up, their birthday and what AI chat remembers go with their stats.
-        self.manager_module.expired_hooks += [self.ai_chat_module.forget_memories, self.social_module.forget_member]
+        # When that time is up, their birthday, game record and what AI chat remembers go with their stats.
+        self.manager_module.expired_hooks += [self.ai_chat_module.forget_memories, self.social_module.forget_member,
+                                              self.teams_module.forget_record]
         dashboard_config = (config.get("manager") or {}).get("dashboard") or {}
         self.dashboard = None
         if self.manager_module.enabled and dashboard_config.get("enabled", True):
@@ -131,6 +133,7 @@ class MyClient(botpy.Client):
         with STYLES.scope(message.group_openid, audiences=self._audiences(message)):
             await self.manager_module.observe(message)
             await self.social_module.observe(message)
+            await self.teams_module.observe(message)    # something may befall a team member who speaks
             self.ai_chat_module.noticed(message)        # it isn't quiet: only the time is kept
             if message.mentions_bot:
                 await self._handle_command(message)
@@ -141,6 +144,7 @@ class MyClient(botpy.Client):
         with STYLES.scope(message.group_openid, audiences=self._audiences(message)):
             await self.manager_module.observe(message)
             await self.social_module.observe(message)
+            await self.teams_module.observe(message)
             self.ai_chat_module.noticed(message)
             await self._handle_command(message)
 

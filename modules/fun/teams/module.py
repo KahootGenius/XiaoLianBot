@@ -6,25 +6,37 @@ can take -- lives in prompts/teams.yaml, so new actions and statuses need no
 code. Grabbed members can't leave on their own; their captain, or an admin
 acting as referee, decides. Teams last one game day.
 
-Every line comes from the style files via t(), except each action's own
-announcement, which sits next to the action in teams.yaml.
+Three things from the same file give the caught something to do, and the game a memory:
+- hide-and-seek: someone who isn't on a team hides (/躲). The bot picks the place and tells nobody,
+  as a command sent in a group can't be secret. A captain can't grab them, only look in one place
+  (/找 地点), a few times a day; whoever hides there joins their team.
+- events: while the group chats, something from the file's list may befall a team member who speaks,
+  or, when it's their captain who speaks, one of that captain's members.
+- records: counts of what has happened to each member across game days (/档案), kept by history.py.
+
+Every line comes from the style files via t(), except each action's and each event's own
+announcement, which sits next to it in teams.yaml.
 """
 import asyncio
 import random
 import re
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 import pytz
 from botpy import logging
 from core.config import root_path
 from core.style import join, render, t
-from modules.fun.teams.roster import GroupTeams, Member, Roster, Team
+from modules.fun.teams.history import STATUS, History
+from modules.fun.teams.roster import GroupTeams, Hider, Member, Roster, Team
 from modules.fun.teams.rules import CAPTAIN, RULES_FILE, Action, load_rules
 
 
 _log = logging.get_logger()
 
 DATA_FILE = root_path("data", "teams.json")
+HISTORY_FILE = root_path("data", "teams.db")
+COME_OUT_WORDS = ("出来", "不躲了")
 # The command word: "/抓" out of "/抓 @小明" or "/抓@小明".
 COMMAND_RE = re.compile(r"/[^\s@/]+")
 MAX_MESSAGE_LENGTH = 900
@@ -49,7 +61,7 @@ class Turn:
 
 class TeamsModule:
     def __init__(self, gateway, config=None, is_admin=None, nickname_of=None, reserved=(),
-                 rules_path=RULES_FILE, data_path=DATA_FILE, clock=None, rng=None):
+                 rules_path=RULES_FILE, data_path=DATA_FILE, clock=None, rng=None, count=None, history=None):
         cfg = (config or {}).get("teams") or {}
         self.captains = {str(c) for c in cfg.get("captains") or []}
         self.groups = {str(g) for g in cfg.get("groups") or []}     # empty: every group
@@ -61,14 +73,22 @@ class TeamsModule:
         self.clock = clock or (lambda: datetime.now(self.tz))
         self.task = None
         self.rng = rng or random.Random()
-        self.rules = self.roster = None
+        # (group, member_openid, nickname, counter) -> congratulations for any badge that earned, from
+        # the group manager's achievements: being caught, grabbing, and hiding a whole day each count.
+        self.count = count or (lambda group, member, nickname, key: [])
+        self.rules = self.roster = self.history = None
         if self.enabled:
             self.rules = load_rules(rules_path, reserved)
             self.roster = Roster(data_path, self.rules)
+            self.history = history or History(HISTORY_FILE)
         self.fixed = {}         # "/队伍" -> handler; the words can be renamed in teams.yaml
         if self.enabled:
-            handlers = {"teams": self.cmd_teams, "disband": self.cmd_disband, "clear": self.cmd_clear}
+            handlers = {"teams": self.cmd_teams, "disband": self.cmd_disband, "clear": self.cmd_clear,
+                        "hide": self.cmd_hide, "seek": self.cmd_seek, "record": self.cmd_record}
             self.fixed = {f"/{word}": handlers[key] for key, word in self.rules.commands.items()}
+        self.event_at = {}      # group -> when its last event happened
+        self.event_count = {}   # (group, member, game day) -> events they've met that day
+        self.observed = OrderedDict()   # ids of the latest messages observe() has seen: an @ arrives twice
 
     @property
     def enabled(self):
@@ -124,15 +144,49 @@ class TeamsModule:
             _log.error(f"[Teams] 回复失败: {e}")
 
     def help_block(self):
-        """The 【组队游戏】 part of /帮助, listing the actions in teams.yaml."""
+        """The 【组队游戏】 part of /帮助, listing the actions in teams.yaml; then a line each for
+        hide-and-seek and events, when the file has them, and one for the records."""
         grab = " ".join(f"/{a.name}" for a in self.rules.actions if a.effect == "grab")
         others = " ".join(f"/{a.name}" for a in self.rules.actions if a.effect != "grab")
-        return t("games.teams.help", grab=grab, actions=others, reset=self.rules.reset_time.strftime("%H:%M"),
-                 **self._fixed_words())
+        words = self._fixed_words()
+        lines = [t("games.teams.help", grab=grab, actions=others, reset=self.rules.reset_time.strftime("%H:%M"),
+                   **words)]
+        if self.rules.spots:
+            lines.append(t("games.teams.help_hide", **words))
+        if self.rules.events:
+            lines.append(t("games.teams.help_events", **words))
+        lines.append(t("games.teams.help_record", **words))
+        return "\n".join(lines)
 
     def _fixed_words(self):
-        """{teams}, {disband}, {clear}: the built-in commands as this group types them, e.g. "/队伍"."""
+        """{teams}, {disband}, {clear}, {hide}, {seek}, {record}: the built-in commands as this group
+        types them, e.g. "/队伍"."""
         return {key: f"/{word}" for key, word in self.rules.commands.items()}
+
+    def _note(self, group, member, name, what, other="", other_name="", counter=None):
+        """One more of something in a member's record, with whom when that matters. With `counter` it
+        also counts toward a badge: returns the congratulations to add to the reply if that earned one."""
+        self.history.add(group, member, what, other, other_name)
+        return self.count(group, member, name, counter) if counter else []
+
+    def _joined(self, group, member, name, actor, actor_name):
+        """Someone was caught, by a grab or by being found: both records, and the badges it may earn."""
+        return (self._note(group, member, name, "caught", actor, actor_name, counter="caught")
+                + self._note(group, actor, actor_name, "grabbed", member, name, counter="grabbed"))
+
+    def _close_days(self):
+        """A game day that has ended is put away: whoever was still hiding has slipped through it,
+        which goes in their record, and its teams are cleared. Returns how many groups had a game."""
+        today = self._day()
+        for group, old in self.roster.stale(today).items():
+            for openid, hider in old.hiding.items():
+                self._note(group, openid, hider.name, "slipped", counter="slipped")
+        return self.roster.reset_stale(today)
+
+    def _today(self, group):
+        """The group's game today, yesterday's put away first."""
+        self._close_days()
+        return self.roster.today(group, self._day())
 
     # ------------------------------------------------------------------ commands
 
@@ -142,8 +196,11 @@ class TeamsModule:
         match = COMMAND_RE.match((message.content or "").strip())
         if not match:
             return False
-        word = match.group(0)
+        word, rest = match.group(0), (message.content or "").strip()[match.end():].strip()
         handler = self.fixed.get(word)
+        seek = f"/{self.rules.commands['seek']}"
+        if handler is None and word.startswith(seek) and word[len(seek):] in self.rules.spots:
+            handler, rest = self.fixed[seek], word[len(seek):]      # "/找柜子里" without a space
         action = None if handler else self.rules.action(word[1:])
         if handler is None and action is None:
             return False
@@ -151,9 +208,9 @@ class TeamsModule:
             await self._reply(message, t("games.teams.not_here"))
             return True
         try:
-            teams = self.roster.today(message.group_openid, self._day())
+            teams = self._today(message.group_openid)
             if handler is not None:
-                await handler(message, teams)
+                await handler(message, teams, rest)
             else:
                 await self.use(message, teams, action)
         except Exception as e:
@@ -183,15 +240,22 @@ class TeamsModule:
 
         effect = getattr(self, f"effect_{action.effect}")
         turn.rolled = {}
-        done, problems = [], []     # done: (name, their captain's name, the status they now have)
+        done, problems, earned = [], [], []     # done: (name, their captain's name, the status they now have)
         for openid, name in targets:
             try:
                 captain = effect(turn, openid, name).name
-                done.append((name, captain, turn.rolled.get(openid, action.status)))
+                status = turn.rolled.get(openid, action.status)
+                done.append((name, captain, status))
+                if action.effect == "grab":
+                    earned += self._joined(group, openid, name, actor, turn.actor_name)
+                elif status:
+                    self._note(group, openid, name, STATUS + status)
             except Refused as e:
                 problems.append(str(e))
         lines = []
         if done:
+            if action.effect == "grab":
+                teams.hiding.pop(actor, None)       # a captain who was hiding has shown themself
             self.roster.save()
             # A roll lands differently for each member, so each gets a line of their own.
             groups = [[d] for d in done] if action.effect == "roll" else [done]
@@ -200,7 +264,7 @@ class TeamsModule:
                             captain=group[0][1], action=action.name, status=group[0][2])
                 generic = "games.teams.rolled" if action.effect == "roll" else "games.teams.done"
                 lines.append(render(action.say, **said) if action.say else t(generic, **said))
-        await self._reply(message, "\n".join(lines + problems))
+        await self._reply(message, "\n".join(lines + problems + earned))
 
     def _grabbing_team(self, turn):
         """The team /抓 adds people to: the one the actor leads, or a new one if they're a captain."""
@@ -260,6 +324,8 @@ class TeamsModule:
             if current.captain == turn.team.captain:
                 raise Refused(t("games.teams.fail.mine", member=name))
             raise Refused(t("games.teams.fail.taken", member=name, captain=current.name))
+        if openid in turn.teams.hiding:         # hidden: a captain has to look for them
+            raise Refused(t("games.teams.fail.hidden", member=name, **self._fixed_words()))
         limit = self.rules.max_members
         if limit and len(turn.team.members) >= limit:
             raise Refused(t("games.teams.fail.full", member=name, max=limit))
@@ -291,17 +357,20 @@ class TeamsModule:
 
     # ---- fixed commands ----
 
-    async def cmd_teams(self, message, teams):
-        """/队伍: every team, with each member's statuses."""
+    async def cmd_teams(self, message, teams, args=""):
+        """/队伍: every team, with each member's statuses, and who is hiding (not where)."""
+        hiding = [t("games.teams.hiding", count=len(teams.hiding),
+                    members=join([hider.name for hider in teams.hiding.values()]))] if teams.hiding else []
         if not teams.teams:
             grab = next(f"/{a.name}" for a in self.rules.actions if a.effect == "grab")
-            await self._reply(message, t("games.teams.none", grab=grab))
+            await self._reply(message, "\n".join([t("games.teams.none", grab=grab)] + hiding))
             return
         day = self._day()
         lines, shown = [t("games.teams.title", date=t("common.date", month=day.month, day=day.day))], set()
         for team in teams.teams.values():
             members = join([self._label(m, shown) for m in team.members.values()])
             lines.append(t("games.teams.team", captain=team.name, count=len(team.members), members=members))
+        lines += hiding
         legend = [f"{icon}{status}" for status, icon in self.rules.icons.items() if status in shown]
         if legend:
             lines.append(t("games.teams.legend", legend=" ".join(legend)))
@@ -340,7 +409,7 @@ class TeamsModule:
         label = icons + member.name
         return t("games.teams.tagged", member=label, statuses=join(plain)) if plain else label
 
-    async def cmd_disband(self, message, teams):
+    async def cmd_disband(self, message, teams, args=""):
         """/解散队伍: a captain lets their whole team go; an admin can name captains with @."""
         group, actor = message.group_openid, message.member_openid
         admin = self.is_admin(group, actor, message.role)
@@ -364,28 +433,234 @@ class TeamsModule:
         self.roster.save()
         await self._reply(message, "\n".join(lines))
 
-    async def cmd_clear(self, message, teams):
-        """/清空队伍: admins end every team in the group at once."""
+    async def cmd_clear(self, message, teams, args=""):
+        """/清空队伍: admins end every team in the group at once, and bring out whoever is hiding."""
         if not self.is_admin(message.group_openid, message.member_openid, message.role):
             await self._reply(message, t("common.not_admin"))
             return
         count = len(teams.teams)
-        if not count:
+        if not count and not teams.hiding:
             await self._reply(message, t("games.teams.cleared_none"))
             return
         teams.teams.clear()
+        teams.hiding.clear()
         self.roster.save()
         await self._reply(message, t("games.teams.cleared", count=count))
+
+    # ---- hide-and-seek ----
+
+    async def cmd_hide(self, message, teams, args=""):
+        """/躲: someone who isn't on a team hides. The bot picks where and tells nobody, them
+        included: a command sent in the group can't be a secret. /躲 出来 comes back out."""
+        group, actor = message.group_openid, message.member_openid
+        name, rules, words = self._name(group, actor, message.nickname), self.rules, self._fixed_words()
+        team = teams.team_of(actor)
+        if not rules.spots:
+            await self._reply(message, t("games.teams.hide.disabled"))
+        elif args in COME_OUT_WORDS:
+            hider = teams.hiding.pop(actor, None)
+            self.roster.save()
+            await self._reply(message, t("games.teams.hide.out", member=name) if hider else t("games.teams.hide.not_hiding"))
+        elif actor in teams.teams:
+            await self._reply(message, t("games.teams.hide.leading"))
+        elif team is not None:
+            await self._reply(message, t("games.teams.hide.caught", captain=team.name))
+        elif actor in teams.hiding:
+            await self._reply(message, t("games.teams.hide.already", **words))
+        elif teams.hides.get(actor, 0) >= rules.hides:
+            await self._reply(message, t("games.teams.hide.times", max=rules.hides))
+        else:
+            teams.hiding[actor] = Hider(name, self.rng.choice(rules.spots), int(self.clock().timestamp()))
+            teams.hides[actor] = teams.hides.get(actor, 0) + 1
+            self.roster.save()
+            self._note(group, actor, name, "hid")
+            await self._reply(message, t("games.teams.hide.done", member=name, count=len(rules.spots), **words))
+
+    def _seek_buttons(self):
+        """A button for every hiding place, five to a row; tapping one looks there."""
+        seek, spots = self.rules.commands["seek"], self.rules.spots
+        return [[(spot, f"/{seek} {spot}") for spot in spots[i:i + 5]] for i in range(0, len(spots), 5)]
+
+    async def cmd_seek(self, message, teams, args=""):
+        """/找 地点: a captain looks in one hiding place, a few times a day. Everyone hiding there
+        joins their team, as if grabbed; a full team leaves the rest where they are, unseen."""
+        group, actor = message.group_openid, message.member_openid
+        name, rules, words = self._name(group, actor, message.nickname), self.rules, self._fixed_words()
+        used, sitting = teams.searches.get(actor, 0), teams.team_of(actor)
+        team = teams.teams.get(actor) or Team(actor, name)
+        limit = rules.max_members
+        spots = join(list(rules.spots))
+        if not rules.spots:
+            await self._reply(message, t("games.teams.hide.disabled"))
+        elif actor not in self.captains and actor not in teams.teams:
+            await self._reply(message, t("games.teams.seek.denied", **words))
+        elif sitting is not None:
+            await self._reply(message, t("games.teams.in_a_team", captain=sitting.name))
+        elif not args:
+            await self._reply(message, t("games.teams.seek.usage", hiding=len(teams.hiding), left=max(0, rules.searches - used),
+                                         spots=spots, **words), buttons=self._seek_buttons())
+        elif args not in rules.spots:
+            await self._reply(message, t("games.teams.seek.no_such", spot=args, spots=spots), buttons=self._seek_buttons())
+        elif not teams.hiding:
+            await self._reply(message, t("games.teams.seek.nobody"))
+        elif used >= rules.searches:
+            await self._reply(message, t("games.teams.seek.used_up", max=rules.searches))
+        elif limit and len(team.members) >= limit:
+            await self._reply(message, t("games.teams.seek.full", max=limit))
+        else:
+            teams.searches[actor] = used + 1
+            teams.hiding.pop(actor, None)           # a captain who was hiding has shown themself
+            now, left, found, earned = int(self.clock().timestamp()), rules.searches - used - 1, [], []
+            for openid, hider in list(teams.hiding.items()):
+                if hider.spot == args and not (limit and len(team.members) >= limit):
+                    del teams.hiding[openid]
+                    team.members[openid] = Member(openid, hider.name, rules.starting(), now)
+                    found.append(hider.name)
+                    self._note(group, openid, hider.name, "found", actor, name)
+                    self._note(group, actor, name, "finds", openid, hider.name)
+                    earned += self._joined(group, openid, hider.name, actor, name)
+            if found:
+                teams.teams.setdefault(actor, team)
+            self.roster.save()
+            said = dict(actor=name, spot=args, left=left)
+            line = t("games.teams.seek.found", members=join(found), count=len(found), **said) if found \
+                else t("games.teams.seek.nothing", **said)
+            await self._reply(message, "\n".join([line] + earned),
+                              buttons=self._seek_buttons() if left and teams.hiding else None)
+
+    # ---- records ----
+
+    async def cmd_record(self, message, teams, args=""):
+        """/档案, or /档案 @某人: what has happened to someone in the game across game days."""
+        group = message.group_openid
+        targets = self._targets(message)
+        openid, name = targets[0] if targets else (message.member_openid,
+                                                   self._name(group, message.member_openid, message.nickname))
+        totals = self.history.totals(group, openid)
+        if not totals:
+            await self._reply(message, t("games.teams.record.empty", member=name))
+            return
+
+        def line(what, most):
+            """A count with whoever it was most often with after it, when the record says."""
+            text = t(f"games.teams.record.{what}", count=totals[what])
+            top = self.history.most(group, openid, what)
+            if not top:
+                return text
+            # The name the group manager has for them now, else the one they had when it last happened.
+            return text + t(f"games.teams.record.{most}", count=top[1],
+                            member=self._name(group, top[0], self.nickname_of(group, top[0]) or top[2]))
+
+        lines = [t("games.teams.record.title", member=name)]
+        if totals.get("caught"):
+            lines.append(line("caught", "caught_by"))
+        if totals.get("grabbed"):
+            lines.append(line("grabbed", "grabbed_most"))
+        # Every status but each column's first, which is only where everyone starts, in the file's order.
+        been = [t("games.teams.record.status_item", status=status, count=totals[STATUS + status])
+                for statuses in self.rules.columns.values() for status in statuses[1:] if totals.get(STATUS + status)]
+        if been:
+            lines.append(t("games.teams.record.statuses", list=join(been)))
+        if totals.get("hid"):
+            lines.append(t("games.teams.record.hid", hid=totals["hid"], found=totals.get("found", 0),
+                           slipped=totals.get("slipped", 0)))
+        if totals.get("finds"):
+            lines.append(t("games.teams.record.finds", count=totals["finds"]))
+        if totals.get("event"):
+            lines.append(t("games.teams.record.events", count=totals["event"]))
+        await self._reply(message, "\n".join(lines))
+
+    # ---- events ----
+
+    def _can_meet(self, event, member, group, day):
+        """Whether an event can befall this team member now: they have the statuses it asks for, it
+        would change something, and they haven't met their day's worth."""
+        daily = self.rules.event_daily
+        if daily and self.event_count.get((group, member.openid, day), 0) >= daily:
+            return False
+        if any(member.status.get(self.rules.column_of(status)) != status for status in event.only):
+            return False
+        return event.effect != "set" or member.status.get(event.column) != event.status
+
+    async def observe(self, message):
+        """Any message in a group that plays, commands aside. When whoever spoke is on a team, one of
+        the file's events may befall them; when they lead one, one of the captain's events may befall
+        one of their members. Each event has its own chance, a group gets one every event_gap minutes
+        at most, and a member event_daily a day. The reply is the event's own line."""
+        if not self.enabled or not self.rules.events or getattr(message, "is_bot", False):
+            return
+        group, speaker = message.group_openid, message.member_openid
+        if not speaker or (self.groups and group not in self.groups):
+            return
+        if (message.content or "").strip().startswith(("/", "／")) or message.id in self.observed:
+            return
+        self.observed[message.id] = True
+        while len(self.observed) > 500:
+            self.observed.popitem(last=False)
+        now, day = int(self.clock().timestamp()), self._day().isoformat()
+        teams = self.roster.groups.get(group)
+        if teams is None or teams.day != day or now - self.event_at.get(group, 0) < self.rules.event_gap * 60:
+            return
+        leading, team = speaker in teams.teams, teams.teams.get(speaker) or teams.team_of(speaker)
+        if team is None:
+            return
+        # Each event that could happen now, with whom it could happen to.
+        possible = []
+        for event in self.rules.events:
+            if event.captain == leading:
+                who = [m for m in (team.members.values() if leading else [team.members[speaker]])
+                       if self._can_meet(event, m, group, day)]
+                if who:
+                    possible.append((event, who))
+        roll, reached = self.rng.random() * 100, 0.0
+        for event, who in possible:
+            reached += event.chance
+            if roll < reached:
+                await self._befall(message, teams, team, event, self.rng.choice(who), now, day)
+                return
+
+    async def _befall(self, message, teams, team, event, member, now, day):
+        """An event happens to a team member: what it does, their record, and its line."""
+        group, status = message.group_openid, event.status
+        if event.effect == "kick":
+            del team.members[member.openid]
+            if not team.members:
+                del teams.teams[team.captain]
+        elif event.effect == "roll":
+            status = self.rng.choice(event.pool)
+            member.status[self.rules.column_of(status)] = status
+        elif event.effect == "set":
+            member.status[event.column] = status
+        self.roster.save()
+        self.event_at[group] = now
+        self.event_count[(group, member.openid, day)] = self.event_count.get((group, member.openid, day), 0) + 1
+        self.event_count = {key: n for key, n in self.event_count.items() if key[2] == day}
+        self._note(group, member.openid, member.name, "event", event.name)
+        if status:
+            self._note(group, member.openid, member.name, STATUS + status)
+        _log.info(f"[Teams] 突发事件「{event.name}」")       # not whom: the log outlives the game day
+        await self._reply(message, render(event.say, members=member.name, captain=team.name, status=status))
 
     # ------------------------------------------------------------------ housekeeping
 
     def forget_group(self, group):
         if self.enabled:
             self.roster.forget_group(group)
+            self.history.forget_group(group)
+            self.event_at.pop(group, None)
+            self.event_count = {key: n for key, n in self.event_count.items() if key[0] != group}
 
     def forget_member(self, group, member):
+        """Out of today's game: their team place, the team they lead, their hiding place. Their record
+        stays, for when someone has only left the group and may come back."""
         if self.enabled:
             self.roster.forget_member(group, member)
+
+    def forget_record(self, group, member):
+        """Their record across game days, and their part in other members': on request, or once
+        they've been gone long enough."""
+        if self.enabled:
+            self.history.forget_member(group, member)
 
     async def run_scheduler(self):
         """Clear yesterday's teams at reset_time, even in groups nobody plays in today."""
@@ -397,7 +672,7 @@ class TeamsModule:
                   f"{len(self.rules.actions)} 个操作，每天 {self.rules.reset_time.strftime('%H:%M')} 清空{names['team']}")
         while True:
             try:
-                cleared = self.roster.reset_stale(self._day())
+                cleared = self._close_days()
                 if cleared:
                     _log.info(f"[Teams] 新的一天，已清空 {cleared} 个群的{names['team']}")
             except Exception as e:

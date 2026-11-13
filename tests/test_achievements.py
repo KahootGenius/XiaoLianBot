@@ -26,8 +26,8 @@ class BadgeFileTest(unittest.TestCase):
 
     def test_shipped_file_loads(self):
         codes = [b.code for b in achievements.BADGES]
-        self.assertEqual(len(codes), 32)
-        self.assertEqual(len(set(codes)), 32)
+        self.assertEqual(len(codes), 35)
+        self.assertEqual(len(set(codes)), 35)
         self.assertFalse(achievements.BY_CODE["first_words"].announce)
         self.assertEqual(achievements.BY_CODE["streak_7"].streak, 7)
         self.assertEqual({b.code for b in achievements.BADGES if b.hidden}, HIDDEN)
@@ -157,10 +157,10 @@ class BadgesInTheGroupTest(ManagerTestCase):
         await self.post("A", "大家好，我是新来的，请多关照")
         await self.post("B", "欢迎欢迎，有什么不懂的可以问我们")
         self.assertEqual((await self.badges("A")).split("\n"), [
-            "🎖️ 小A 的成就（1/32）",
+            "🎖️ 小A 的成就（1/35）",
             "已解锁：🌱初次见面",
             "最新：🌱 初次见面 —— 第一次有效发言（11月1日 · 全群 2 人）",
-            "还有 31 个没解锁（隐藏 4 个），/成就 全部 看完整列表",
+            "还有 34 个没解锁（隐藏 4 个），/成就 全部 看完整列表",
             "下一个目标：🔥七日之约 1/7"])
         self.assertEqual(self.gw.buttons[-1][1][0][0], ("全部成就", "/成就 全部"))
 
@@ -172,7 +172,7 @@ class BadgesInTheGroupTest(ManagerTestCase):
         self.assertNotIn("全部成就", [label for label, *_ in self.gw.buttons[-1][1][0]])
 
         text = await self.badges("C")                                     # no badges yet
-        self.assertEqual(text.split("\n")[1], "还有 32 个没解锁（隐藏 4 个），/成就 全部 看完整列表")
+        self.assertEqual(text.split("\n")[1], "还有 35 个没解锁（隐藏 4 个），/成就 全部 看完整列表")
 
     async def test_it_stays_in_one_message_with_every_badge(self):
         self.make(FakeGateway())
@@ -182,7 +182,7 @@ class BadgesInTheGroupTest(ManagerTestCase):
         before = len(self.gw.sent)
         text = await self.badges("A")
         self.assertEqual(len(self.gw.sent), before + 1)
-        self.assertIn("🎖️ 小A 的成就（32/32）", text)
+        self.assertIn("🎖️ 小A 的成就（35/35）", text)
         self.assertIn("全部解锁啦", text)
         self.assertNotIn("个没解锁", text)
         await self.badges("A", "/成就 全部")

@@ -9,6 +9,7 @@ import unittest
 from datetime import timedelta
 from core.config import root_path
 from modules.fun.teams import TeamsModule
+from modules.fun.teams.history import History
 from modules.fun.teams.module import _log as teams_log
 from modules.fun.teams.rules import load_rules
 from tests.test_manager import GROUP, START, FakeGateway, FakeMessage
@@ -24,14 +25,46 @@ def shipped_rules():
         return f.read()
 
 
+def rules_with(events=None, hide=None, **replaced):
+    """The shipped rules with their events (YAML for the list's entries) or hiding settings swapped."""
+    text = shipped_rules()
+    if events is not None:
+        text, done = re.subn(r"(?ms)^events:\n.*?(?=^# -{20,} 档案)", f"events:\n{events}\n", text)
+        assert done == 1
+    if hide is not None:
+        text, done = re.subn(r"(?ms)^hide:\n.*?(?=^# -{20,} 突发事件)", f"hide:\n{hide}\n", text)
+        assert done == 1
+    for old, new in replaced.items():
+        assert old in text, old
+        text = text.replace(old, new)
+    return text
+
+
+class Dice:
+    """A random source the test sets: random() gives `roll`, from 0 to 1, and choice() the item at `pick`."""
+
+    def __init__(self, roll=0.0, pick=0):
+        self.roll, self.pick, self.rolls = roll, pick, 0
+
+    def random(self):
+        self.rolls += 1
+        return self.roll
+
+    def choice(self, items):
+        return list(items)[self.pick % len(items)]
+
+
 class TeamGameTestCase(unittest.IsolatedAsyncioTestCase):
-    def make(self, rules_path=None, data_path=None, **teams_config):
+    def make(self, rules_path=None, data_path=None, rng=None, count=None, history=None, **teams_config):
         self.now = START.replace(hour=20)
         self.gw = FakeGateway()
         config = {"teams": {"captains": CAPTAINS, **teams_config}}
+        if history is None:
+            history = History(":memory:")
+            self.addCleanup(history.db.close)
         self.teams = TeamsModule(self.gw, config, is_admin=lambda group, member, role=None: member == "ADMIN",
                                  rules_path=rules_path or root_path("prompts", "teams.yaml"),
-                                 data_path=data_path, clock=lambda: self.now)
+                                 data_path=data_path, clock=lambda: self.now, rng=rng, count=count, history=history)
         return self.teams
 
     async def say(self, member, text, group=GROUP):
@@ -49,6 +82,25 @@ class TeamGameTestCase(unittest.IsolatedAsyncioTestCase):
         teams = self.teams.roster.today(group, self.teams._day())
         team = teams.teams.get(captain)
         return {openid: m.status for openid, m in team.members.items()} if team else None
+
+    def rules_file(self, text):
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder)
+        path = os.path.join(folder, "teams.yaml")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+        return path
+
+    async def chat(self, member, text="今天好累啊", group=GROUP, **kwargs):
+        """`member` says something in the group that isn't a command; returns what the bot said to it."""
+        message = FakeMessage(group, member, NAMES.get(member, member), text, content=text, **kwargs)
+        before = len(self.gw.sent)
+        await self.teams.observe(message)
+        self.assertTrue(all(replied == message.id for _, _, replied in self.gw.sent[before:]))
+        return "\n".join(content for _, content, _ in self.gw.sent[before:])
+
+    def hiding(self, group=GROUP):
+        return {openid: hider.spot for openid, hider in self.teams.roster.today(group, self.teams._day()).hiding.items()}
 
 
 class GrabTest(TeamGameTestCase):
@@ -252,6 +304,353 @@ class AIViewTest(TeamGameTestCase):
         self.assertEqual(TeamsModule(self.gw, {}).today_for_ai(GROUP), [])     # game off
 
 
+class HideAndSeekTest(TeamGameTestCase):
+    """/躲: someone who isn't on a team hides, where only the bot knows. A captain can't grab them:
+    they look in one place at a time (/找), a few times a day."""
+    SPOTS = "柜子里、窗帘后、床底下、书架后、阳台上、桌子底下"
+
+    async def test_someone_hides_and_only_the_bot_knows_where(self):
+        self.make(rng=Dice(pick=1))
+        self.assertEqual(await self.say("M1", "/躲"),
+                         "🙈 小一 躲起来了！藏在哪儿只有小莲知道（一共 6 个地方）。队长要用 /找 地点 才找得到。")
+        self.assertEqual(self.hiding(), {"M1": "窗帘后"})
+        self.assertEqual(await self.say("CA", "/抓 @M1 @M2"),
+                         "阿队 抓到了 小二！\n小一 躲起来了，抓不到。用 /找 地点 去翻翻看吧。")
+        self.assertEqual(set(self.team("CA")), {"M2"})
+        self.assertEqual(await self.say("M1", "/躲"), "你已经躲好啦，别出声～想出来就发 /躲 出来")
+        listed = await self.say("M3", "/队伍")
+        self.assertIn("【阿队】1 人：小二\n🙈 躲起来的（1 人）：小一", listed)
+        self.assertEqual(await self.say("M2", "/躲"), "你已经在 阿队 的队伍里了，躲不掉啦。")
+        self.assertEqual(await self.say("CA", "/躲"), "你今天带着队伍呢，队长不能躲。")
+        self.assertNotIn("窗帘后", "\n".join(self.gw.texts(GROUP)))          # nobody was told where
+        await self.say("ADMIN", "/解散队伍 @CA")
+        self.assertEqual(await self.say("M3", "/队伍"),                     # with no teams, still who's hiding
+                         "今天还没有队伍哦～队长 @我 /抓 @某人 就能开始组队。\n🙈 躲起来的（1 人）：小一")
+
+    async def test_a_captain_looks_in_one_place_at_a_time(self):
+        self.make(rng=Dice(pick=1))
+        await self.say("M1", "/躲")
+        await self.say("M2", "/躲")
+        self.assertEqual(await self.say("CA", "/找"),
+                         f"要翻哪儿？/找 地点。现在有 2 人躲着，你今天还能找 3 次。\n可以翻的地方：{self.SPOTS}")
+        self.assertEqual(self.gw.buttons[-1], (GROUP, [
+            [("柜子里", "/找 柜子里"), ("窗帘后", "/找 窗帘后"), ("床底下", "/找 床底下"), ("书架后", "/找 书架后"),
+             ("阳台上", "/找 阳台上")], [("桌子底下", "/找 桌子底下")]]))
+        self.assertEqual(await self.say("CA", "/找 柜子里"), "🔦 阿队 翻了翻柜子里……什么也没有。（今天还能找 2 次）")
+        self.assertEqual(self.gw.buttons[-1][1][1], [("桌子底下", "/找 桌子底下")])       # the places again, to try another
+        self.assertIsNone(self.team("CA"))                                  # an empty search starts no team
+        self.assertEqual(await self.say("CA", "/找窗帘后"),                    # everyone hiding there, at once
+                         "🔦 阿队 在窗帘后找到了 小一、小二！抓进队伍。（今天还能找 1 次）")
+        self.assertEqual(self.team("CA"), {"M1": {"职位": "队员", "生死": "存活"}, "M2": {"职位": "队员", "生死": "存活"}})
+        self.assertEqual(self.hiding(), {})
+        self.assertEqual(await self.say("CA", "/找 天花板"), f"没有「天花板」这个地方。可以翻的地方：{self.SPOTS}")
+        self.assertEqual(await self.say("CA", "/找 床底下"), "现在没有人躲着，不用找啦。")
+        self.assertEqual(self.teams.roster.today(GROUP, self.teams._day()).searches, {"CA": 2})     # that one cost nothing
+
+    async def test_who_may_look_and_how_often(self):
+        self.make(rng=Dice(pick=5))
+        await self.say("M1", "/躲")
+        self.assertEqual(await self.say("M2", "/找 柜子里"), "只有队长才能用 /找 找人哦～")
+        self.assertEqual(await self.say("ADMIN", "/找 柜子里"), "只有队长才能用 /找 找人哦～")       # referees don't play
+        await self.say("CB", "/抓 @CC")
+        self.assertEqual(await self.say("CC", "/找 柜子里"), "你现在是 贝队 队伍里的队员，不能另外组队哦。")
+        for left in (2, 1, 0):
+            self.assertIn(f"什么也没有。（今天还能找 {left} 次）", await self.say("CA", "/找 柜子里"))
+        self.assertEqual(self.gw.buttons[-1][0], GROUP)
+        self.assertEqual(await self.say("CA", "/找 桌子底下"), "你今天已经找了 3 次，找不动了。")
+        self.assertEqual(self.hiding(), {"M1": "桌子底下"})
+        self.assertIn("找到了 小一", await self.say("CB", "/找 桌子底下"))       # each captain has their own three
+        self.assertEqual(set(self.team("CB")), {"CC", "M1"})
+
+    async def test_hiding_again_and_coming_out(self):
+        self.make(rng=Dice(pick=0))
+        self.assertEqual(await self.say("M1", "/躲 出来"), "你现在没有躲着哦。")
+        for _ in range(3):
+            self.assertIn("躲起来了", await self.say("M1", "/躲"))
+            self.assertEqual(await self.say("M1", "/躲 出来"), "小一 自己走出来了。")
+        self.assertEqual(await self.say("M1", "/躲"), "今天你已经躲了 3 次，不能再躲了。")
+        self.assertEqual(self.hiding(), {})
+        await self.say("CC", "/躲")                                         # a captain with no team may hide,
+        self.assertIn("抓到了 小二", await self.say("CC", "/抓 @M2"))          # and shows themself by grabbing
+        self.assertEqual(self.hiding(), {})
+        await self.say("CB", "/躲")
+        await self.say("M3", "/躲")
+        self.assertIn("找到了 小三", await self.say("CB", "/找 柜子里"))        # or by looking: they don't find themself
+        self.assertEqual((self.hiding(), set(self.team("CB"))), ({}, {"M3"}))
+
+    async def test_a_full_team_leaves_the_rest_unseen(self):
+        self.make(rules_path=self.rules_file(rules_with(**{"max_members: 0": "max_members: 1"})), rng=Dice(pick=2))
+        await self.say("M1", "/躲")
+        await self.say("M2", "/躲")
+        self.assertEqual(await self.say("CA", "/找 床底下"), "🔦 阿队 在床底下找到了 小一！抓进队伍。（今天还能找 2 次）")
+        self.assertEqual(self.hiding(), {"M2": "床底下"})
+        self.assertEqual(await self.say("CA", "/找 床底下"), "你的队伍满员了（最多 1 人），找到了也装不下。")
+        self.assertEqual(self.teams.roster.today(GROUP, self.teams._day()).searches, {"CA": 1})
+
+    async def test_staying_hidden_all_day_goes_in_the_record(self):
+        counted = []
+        self.make(rng=Dice(pick=0), count=lambda group, member, name, key: counted.append((member, key)) or [])
+        await self.say("M1", "/躲")
+        await self.say("M2", "/躲")
+        await self.say("M3", "/躲", group=OTHER_GROUP)
+        await self.say("CA", "/找 柜子里")                                   # both found: neither slipped through
+        await self.say("CA", "/踢出 @M1")
+        await self.say("M1", "/躲")
+        self.assertEqual([entry for entry in counted if entry[1] == "slipped"], [])
+        self.now += timedelta(days=1)
+        self.assertEqual(self.teams._close_days(), 2)                       # the scheduler's minute
+        self.assertEqual([entry for entry in counted if entry[1] == "slipped"], [("M1", "slipped"), ("M3", "slipped")])
+        self.assertEqual(self.teams.history.totals(GROUP, "M1"), {"hid": 2, "found": 1, "caught": 1, "slipped": 1})
+        self.assertEqual(self.teams.roster.groups, {})
+        await self.say("M1", "/躲")                                          # a new day: a new three of everything
+        self.assertIn("今天还能找 2 次", await self.say("CA", "/找 窗帘后"))
+        self.now += timedelta(days=1)
+        self.assertIn("今天还没有队伍", await self.say("M2", "/队伍"))           # or the day's first command puts it away
+        self.assertEqual(self.teams.history.totals(GROUP, "M1")["slipped"], 2)
+
+    async def test_hiding_survives_a_restart_but_not_a_place_that_is_gone(self):
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder)
+        data = os.path.join(folder, "teams.json")
+        self.make(data_path=data, rng=Dice(pick=0))
+        await self.say("M1", "/躲")
+        self.teams.rng.pick = 1
+        await self.say("M2", "/躲")
+        await self.say("CA", "/找 床底下")
+        self.make(data_path=data)
+        today = self.teams.roster.today(GROUP, self.teams._day())
+        self.assertEqual((self.hiding(), today.hides, today.searches), ({"M1": "柜子里", "M2": "窗帘后"}, {"M1": 1, "M2": 1}, {"CA": 1}))
+        fewer = self.rules_file(rules_with(hide="  spots: [柜子里, 床底下, 书架后]"))
+        self.make(rules_path=fewer, data_path=data)
+        self.assertEqual(self.hiding(), {"M1": "柜子里"})                     # 窗帘后 is no longer a place
+
+    async def test_without_places_there_is_no_hiding(self):
+        self.make(rules_path=self.rules_file(rules_with(hide="  spots: []")))
+        for command in ("/躲", "/躲 出来", "/找", "/找 柜子里"):
+            self.assertEqual(await self.say("CA", command), "这个游戏没有设置躲猫猫的地方哦。")
+        self.assertNotIn("/躲", self.teams.help_block())
+        self.make(rules_path=self.rules_file(re.sub(r"(?ms)^hide:\n.*?(?=^# -{20,} 突发事件)", "", shipped_rules())))
+        self.assertEqual(self.teams.rules.spots, ())                        # the whole section may be left out
+
+    async def test_referees_and_deletion_bring_people_out(self):
+        self.make(rng=Dice(pick=0))
+        await self.say("M1", "/躲")
+        await self.say("M2", "/躲")
+        self.teams.forget_member(GROUP, "M1")                               # they left the group, say
+        self.assertEqual(self.hiding(), {"M2": "柜子里"})
+        self.assertEqual(await self.say("ADMIN", "/清空队伍"), "已清空本群的 0 支队伍，大家都恢复自由啦。")
+        self.assertEqual(self.hiding(), {})
+        self.assertEqual(await self.say("ADMIN", "/清空队伍"), "本群现在没有队伍。")
+
+
+class EventTest(TeamGameTestCase):
+    """Events from teams.yaml befall team members while the group chats."""
+    SLIP = """  - name: 溜走
+    chance: 2
+    effect: kick
+    say: "{members} 从 {captain} 那儿溜走了！"
+"""
+    TRIP = """  - name: 意外
+    only: [存活]
+    chance: 3
+    set: 死亡
+    say: "{members} 摔了一跤，现在是「{status}」。"
+"""
+    CALL = """  - name: 点名
+    speaker: 队长
+    chance: 50
+    say: "{captain} 点到了 {members}。"
+"""
+
+    def play(self, events, roll=0.0, pick=0, **kwargs):
+        self.make(rules_path=self.rules_file(rules_with(events=events, **kwargs)), rng=Dice(roll, pick))
+        return self.teams
+
+    async def test_something_befalls_a_member_who_speaks(self):
+        self.play(self.SLIP)
+        await self.say("CA", "/抓 @M1 @M2")
+        self.assertEqual(await self.chat("M1"), "小一 从 阿队 那儿溜走了！")
+        self.assertEqual(set(self.team("CA")), {"M2"})
+        self.assertEqual(self.teams.history.totals(GROUP, "M1"), {"caught": 1, "event": 1})
+        self.assertEqual(self.teams.history.most(GROUP, "M1", "event"), ("溜走", 1, ""))
+        self.assertEqual(await self.chat("M2"), "")                         # the group has just had one
+        self.now += timedelta(minutes=9, seconds=59)
+        self.assertEqual(await self.chat("M2"), "")
+        self.now += timedelta(seconds=1)
+        self.assertEqual(await self.chat("M2"), "小二 从 阿队 那儿溜走了！")
+        self.assertIsNone(self.team("CA"))                                  # its last member gone, so is the team
+
+    async def test_each_event_has_its_own_chance(self):
+        self.play(self.SLIP + self.TRIP, roll=0.05)                         # 5 in 100: past both, 2 and 3
+        await self.say("CA", "/抓 @M1")
+        self.assertEqual(await self.chat("M1"), "")
+        self.teams.rng.roll = 0.0499                                        # just inside the second
+        self.assertEqual(await self.chat("M1"), "小一 摔了一跤，现在是「死亡」。")
+        self.assertEqual(self.team("CA"), {"M1": {"职位": "队员", "生死": "死亡"}})
+        self.assertEqual(self.teams.history.totals(GROUP, "M1"), {"caught": 1, "event": 1, "=死亡": 1})
+        self.now += timedelta(minutes=10)
+        self.assertEqual(await self.chat("M1"), "")                         # already dead: 意外 can't happen, and 4.99 is past 溜走
+        self.teams.rng.roll = 0.0199
+        self.assertEqual(await self.chat("M1"), "小一 从 阿队 那儿溜走了！")
+
+    async def test_who_an_event_can_befall(self):
+        self.play("""  - name: 招魂
+    only: [死亡]
+    chance: 50
+    effect: kick
+    say: "{members} 的魂被招走了。"
+  - name: 意外
+    chance: 50
+    set: 死亡
+    say: "{members} 现在是「{status}」。"
+""", roll=0.0, **{"event_gap: 10": "event_gap: 0", "event_daily: 2": "event_daily: 0"})
+        await self.say("CA", "/抓 @M1")
+        self.assertEqual(await self.chat("M1"), "小一 现在是「死亡」。")       # alive: 招魂 isn't theirs to meet, so the roll lands on 意外
+        self.teams.rng.roll = 0.99                                          # past 招魂's 50, and 意外 would change nothing now
+        self.assertEqual(await self.chat("M1"), "")
+        self.assertEqual(self.team("CA"), {"M1": {"职位": "队员", "生死": "死亡"}})
+        self.teams.rng.roll = 0.0
+        self.assertEqual(await self.chat("M1"), "小一 的魂被招走了。")
+
+    async def test_a_captains_words_fall_on_one_of_their_members(self):
+        self.play(self.SLIP + self.CALL, pick=1)
+        await self.say("CA", "/抓 @M1 @M2")
+        self.assertEqual(await self.chat("CA"), "阿队 点到了 小二。")           # not 溜走: that's a member's own
+        self.assertEqual(set(self.team("CA")), {"M1", "M2"})                # and this one only says something
+        self.assertEqual(self.teams.history.totals(GROUP, "M2"), {"caught": 1, "event": 1})
+        self.assertEqual(self.teams.history.totals(GROUP, "CA"), {"grabbed": 2})
+        self.now += timedelta(minutes=10)
+        self.assertEqual(await self.chat("CB"), "")                         # a captain with no team
+        self.assertEqual(await self.chat("M3"), "")                         # and someone who isn't playing
+        self.assertEqual(await self.chat("M1"), "小一 从 阿队 那儿溜走了！")
+
+    async def test_a_roll_and_a_days_worth(self):
+        self.play("""  - name: 换岗
+    chance: 100
+    effect: roll
+    from: [队员, 小队长]
+    say: "{members} 现在是「{status}」。"
+""", pick=1, **{"event_gap: 10": "event_gap: 0"})
+        await self.say("CA", "/抓 @M1 @M2")
+        self.assertEqual(await self.chat("M1"), "小一 现在是「小队长」。")
+        self.assertEqual(self.team("CA")["M1"]["职位"], "小队长")
+        self.assertEqual(await self.chat("M1"), "小一 现在是「小队长」。")       # no gap in this game
+        self.assertEqual(await self.chat("M1"), "")                         # two a day each
+        self.assertEqual(await self.chat("M2"), "小二 现在是「小队长」。")
+        self.assertEqual(self.teams.history.totals(GROUP, "M1"), {"caught": 1, "event": 2, "=小队长": 2})
+        self.now += timedelta(days=1)                                       # a new game day: nobody is on a team
+        self.assertEqual(await self.chat("M1"), "")
+        await self.say("CA", "/抓 @M1")
+        self.assertEqual(await self.chat("M1"), "小一 现在是「小队长」。")
+
+    async def test_commands_bots_other_groups_and_the_same_message_twice(self):
+        self.play(self.SLIP)
+        await self.say("CA", "/抓 @M1")
+        for text in ("/今日运势", "／帮助", " /队伍"):
+            self.assertEqual(await self.chat("M1", text), "")
+        self.assertEqual(await self.chat("M1", is_bot=True), "")
+        self.assertEqual(await self.chat("M1", group=OTHER_GROUP), "")      # no game there today
+        self.assertEqual(self.teams.rng.rolls, 0)
+        self.teams.rng.roll = 0.5
+        message = FakeMessage(GROUP, "M1", "小一", "在吗", content="在吗")
+        await self.teams.observe(message)
+        await self.teams.observe(message)                                   # an @ arrives as two events
+        self.assertEqual(self.teams.rng.rolls, 1)
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder)
+        data, rules = os.path.join(folder, "teams.json"), self.rules_file(rules_with(events=self.SLIP))
+        self.make(rules_path=rules, data_path=data, rng=Dice())
+        await self.say("CA", "/抓 @M1")
+        self.make(rules_path=rules, data_path=data, rng=Dice(), groups=[OTHER_GROUP])      # the group stops playing mid-game
+        self.assertEqual(set(self.team("CA")), {"M1"})
+        self.assertEqual(await self.chat("M1"), "")
+        self.assertEqual(self.teams.rng.rolls, 0)
+
+    async def test_no_events_no_rolls(self):
+        self.play("")
+        self.assertEqual(self.teams.rules.events, ())
+        await self.say("CA", "/抓 @M1")
+        self.assertEqual(await self.chat("M1"), "")
+        self.assertEqual(self.teams.rng.rolls, 0)
+        self.assertNotIn("突发事件", self.teams.help_block())
+        off = TeamsModule(self.gw, {})                                      # and with the game off
+        await off.observe(FakeMessage(GROUP, "M1", "小一", "在吗", content="在吗"))
+
+
+class RecordTest(TeamGameTestCase):
+    """/档案: what has happened to someone in the game, across game days. Counts only."""
+
+    async def test_a_record_builds_up_over_the_days(self):
+        counted = []
+
+        def count(group, member, name, key):
+            counted.append((member, key))
+            return [f"🎖️ {name} 第一次被抓"] if (member, key) == ("M1", "caught") and counted.count((member, key)) == 1 else []
+
+        self.make(rng=Dice(pick=0), count=count)
+        self.assertEqual(await self.say("M1", "/档案"), "小一 还没有游戏档案，玩过一次就有了。")
+        self.assertEqual(await self.say("CA", "/抓 @M1 @M2"), "阿队 抓到了 小一、小二！\n🎖️ 小一 第一次被抓")
+        self.assertEqual(counted, [("M1", "caught"), ("CA", "grabbed"), ("M2", "caught"), ("CA", "grabbed")])
+        await self.say("CA", "/死亡 @M1")
+        await self.say("CA", "/复活 @M1")
+        await self.say("CA", "/死亡 @M1")
+        await self.say("CA", "/设为小队长 @M2")
+        self.now += timedelta(days=1)
+        await self.say("CB", "/抓 @M1")
+        await self.say("CB", "/踢出 @M1")
+        await self.say("CA", "/抓 @M1")
+        await self.say("CA", "/踢出 @M1")
+        await self.say("M1", "/躲")
+        await self.say("CA", "/找 柜子里")
+        self.assertEqual(await self.say("M1", "/档案"),
+                         "📒 小一 的游戏档案\n被抓进队 4 次，最常抓到 TA 的是 阿队（3 次）\n经历过：死亡 2 次\n"
+                         "躲猫猫：躲了 1 次，被找到 1 次，躲到清空 0 次")
+        self.assertEqual(await self.say("M3", "/档案 @CA"),
+                         "📒 阿队 的游戏档案\n抓过 4 人次，最常抓的是 小一（3 次）\n找到过躲起来的人 1 人次")
+        self.assertEqual(await self.say("M2", "/档案"), "📒 小二 的游戏档案\n被抓进队 1 次，最常抓到 TA 的是 阿队（1 次）\n经历过：小队长 1 次")
+        self.assertEqual(await self.say("M1", "/档案", group=OTHER_GROUP), "小一 还没有游戏档案，玩过一次就有了。")
+        self.teams.nickname_of = lambda group, member: {"CA": "阿队改名了"}.get(member)      # the name they go by now
+        self.assertIn("最常抓到 TA 的是 阿队改名了（3 次）", await self.say("M1", "/档案"))
+        self.teams.history.db.execute("UPDATE tally SET name = ''")                        # a record from before names were kept
+        self.assertIn("最常抓的是 群友#M1（3 次）", await self.say("CA", "/档案"))
+
+    async def test_a_roll_and_an_event_go_in_it_too(self):
+        events = """  - name: 意外
+    chance: 100
+    only: [存活]
+    set: 死亡
+    say: "{members} 出事了。"
+"""
+        self.make(rules_path=self.rules_file(rules_with(events=events) + """
+  - name: 掷骰
+    effect: roll
+    from: [小队长, 死亡]
+"""), rng=Dice(pick=0))
+        await self.say("CA", "/抓 @M1")
+        await self.say("CA", "/掷骰 @M1")
+        await self.chat("M1")
+        self.assertEqual(await self.say("M1", "/档案"),
+                         "📒 小一 的游戏档案\n被抓进队 1 次，最常抓到 TA 的是 阿队（1 次）\n经历过：小队长 1 次、死亡 1 次\n遇上突发事件 1 次")
+
+    async def test_what_is_kept_and_what_deletion_takes(self):
+        self.make()
+        await self.say("CA", "/抓 @M1 @M2")
+        await self.say("CB", "/抓 @M3")
+        self.teams.forget_member(GROUP, "M1")                               # left the group: off today's team,
+        self.assertEqual(set(self.team("CA")), {"M2"})
+        self.assertEqual(self.teams.history.totals(GROUP, "M1"), {"caught": 1})         # their record kept for now
+        self.teams.forget_record(GROUP, "M1")                               # /删除数据, or gone half a year
+        self.assertEqual(self.teams.history.totals(GROUP, "M1"), {})
+        self.assertEqual(self.teams.history.totals(GROUP, "CA"), {"grabbed": 1})        # and their part in the captain's
+        self.assertEqual(self.teams.history.most(GROUP, "CA", "grabbed"), ("M2", 1, "小二"))
+        self.teams.forget_record(GROUP, "CA")
+        self.assertEqual(self.teams.history.totals(GROUP, "M2"), {})                    # caught by nobody now on record
+        await self.say("CB", "/抓 @M4", group=OTHER_GROUP)
+        self.teams.forget_group(GROUP)
+        self.assertEqual(self.teams.history.totals(GROUP, "M3"), {})
+        self.assertEqual(self.teams.history.totals(OTHER_GROUP, "M4"), {"caught": 1})
+
+
 class RenamedCommandsTest(TeamGameTestCase):
     async def test_built_in_commands_can_be_renamed(self):
         folder = tempfile.mkdtemp()
@@ -267,6 +666,22 @@ class RenamedCommandsTest(TeamGameTestCase):
         self.assertIn("/散队 @队长", await self.say("ADMIN", "/散队"))
         self.assertEqual(await self.say("ADMIN", "/清场"), "已清空本群的 1 支队伍，大家都恢复自由啦。")
         self.assertIn("/看队 查看今天的队伍", self.teams.help_block())
+
+    async def test_and_so_can_hiding_looking_and_the_record(self):
+        rules = self.rules_file(rules_with(**{"hide: 躲": "hide: 藏", "seek: 找": "seek: 搜", "record: 档案": "record: 战绩"}))
+        self.make(rules_path=rules, rng=Dice(pick=0))
+        self.assertIn("队长要用 /搜 地点 才找得到", await self.say("M1", "/藏"))
+        self.assertIsNone(await self.say("M1", "/躲"))                        # the old words pass through
+        self.assertEqual(await self.say("CA", "/抓 @M1"), "小一 躲起来了，抓不到。用 /搜 地点 去翻翻看吧。")
+        self.assertEqual(self.gw.buttons, [])
+        self.assertIn("要翻哪儿？/搜 地点", await self.say("CA", "/搜"))
+        self.assertEqual(self.gw.buttons[-1][1][0][0], ("柜子里", "/搜 柜子里"))
+        self.assertIn("找到了 小一", await self.say("CA", "/搜柜子里"))
+        self.assertIn("📒 小一 的游戏档案", await self.say("M1", "/战绩"))
+        self.assertEqual(await self.say("M1", "/藏 出来"), "你现在没有躲着哦。")
+        block = self.teams.help_block()
+        self.assertIn("还没进队的人：/藏 躲起来 · 队长：/搜 地点 去翻，翻对了就抓进队\n"
+                      "队员和队长在群里聊天时，偶尔会遇上突发事件\n/战绩 看自己的游戏档案 · /战绩 @某人 看别人的", block)
 
     async def test_the_log_uses_the_games_own_names(self):
         folder = tempfile.mkdtemp()
@@ -312,6 +727,56 @@ class RulesFileTest(unittest.TestCase):
         rules = self.check(self.GOOD)
         self.assertEqual(rules.action("阵亡").status, "死亡")
         self.assertEqual(rules.starting(), {"职位": "队员", "生死": "存活"})
+        self.assertEqual((len(rules.spots), rules.searches, rules.hides), (6, 3, 3))
+        self.assertEqual((rules.event_gap, rules.event_daily), (10, 2))
+        self.assertEqual([(e.name, e.chance, e.captain, e.effect, e.status, e.only) for e in rules.events],
+                         [("溜走", 2.0, False, "kick", "", ()), ("点名", 2.0, True, "", "", ()),
+                          ("意外", 1.0, False, "set", "死亡", ("存活",)), ("奇迹", 5.0, False, "set", "存活", ("死亡",))])
+        self.assertEqual(rules.commands, {"teams": "队伍", "disband": "解散队伍", "clear": "清空队伍", "hide": "躲",
+                                          "seek": "找", "record": "档案"})
+
+    def test_an_older_file_without_the_new_sections_still_loads(self):
+        older = re.sub(r"(?ms)^# -{20,} 躲猫猫.*?(?=^# -{20,} 队长的操作)", "", self.GOOD)
+        older = older.replace("  hide: 躲\n  seek: 找\n  record: 档案\n", "")
+        rules = self.check(older)
+        self.assertEqual((rules.spots, rules.events, rules.commands["seek"]), ((), (), "找"))
+
+    def test_mistakes_in_events_and_hiding(self):
+        event = "  - name: 溜走\n    chance: 2\n    effect: kick\n    say: \"{members} 溜了\"\n"
+        bad = lambda **changed: rules_with(events=event.replace(*next(iter(changed.items()))))
+        refuse = lambda old, new, *phrases: self.assertRefused(rules_with(events=event.replace(old, new)), *phrases)
+        refuse("chance: 2", "chance: 0", "第 1 件突发事件（溜走）", "chance")
+        refuse("chance: 2", "chance: 101", "chance")
+        refuse("chance: 2", "chance: 很少", "chance")
+        refuse("    chance: 2\n", "", "chance")
+        refuse("effect: kick", "effect: grab", "没有叫「grab」的效果", "kick")
+        refuse("effect: kick", "effect: kick\n    set: 死亡", "effect 和 set 只能写其中一种")
+        refuse("effect: kick", "set: 牺牲", "「牺牲」")
+        refuse("effect: kick", "effect: roll", "roll 要用 from")
+        refuse("effect: kick", "effect: kick\n    from: [存活]", "只有 effect: roll 才能写 from")
+        refuse("effect: kick", "effect: kick\n    only: [存活, 死亡]", "不可能同时满足")
+        refuse("effect: kick", "effect: kick\n    speaker: 小队长", "speaker 只能写「队长」")
+        refuse("{members} 溜了", "{actor} 溜了", "{actor}", "{members}")
+        refuse("    say: \"{members} 溜了\"\n", "", "say 要写")
+        refuse("  - name: 溜走", "  - chance: 5", "第 1 件突发事件缺少 name")
+        self.assertRefused(rules_with(events=event + event), "第 2 件突发事件（溜走）", "重复")
+        self.assertRefused(self.GOOD.replace("events:\n  - name: 溜走", "events: 溜走\nold:\n  - name: 溜走"), "events 要写成列表")
+        self.assertRefused(self.GOOD.replace("event_gap: 10", "event_gap: -1"), "event_gap", "不小于 0")
+        self.assertRefused(self.GOOD.replace("event_daily: 2", "event_daily: 很多"), "event_daily")
+        say_only = self.check(rules_with(events="  - {name: 路过, chance: 0.5, say: [一句, 两句]}"))     # no effect at all
+        self.assertEqual((say_only.events[0].effect, say_only.events[0].say, say_only.events[0].chance), ("", ("一句", "两句"), 0.5))
+        hide = lambda text, *phrases: self.assertRefused(rules_with(hide=text), *phrases)
+        hide("  spots: [柜子里, 床底下]", "hide.spots", "3 到 25")
+        hide("  spots: [%s]" % ", ".join(f"地方{n}" for n in range(26)), "3 到 25")
+        hide("  spots: [柜子里, 床底下, 柜子里]", "「柜子里」重复了")
+        hide("  spots: [柜子里, 床底下, 很长很长很长的一个地方]", "最多 8 个字")
+        hide("  spots: [柜子里, 床底下, '书架 后']", "不能带空格")
+        hide("  spots: [柜子里, 床底下, 书架后]\n  searches: 0", "hide.searches", "不小于 1")
+        hide("  spots: [柜子里, 床底下, 书架后]\n  times: 一次", "hide.times")
+        hide("  spot: [柜子里, 床底下, 书架后]", "没有「spot」这一项")
+        self.assertRefused(self.GOOD.replace("hide:\n  spots:", "hide: 柜子里\nold:\n  spots:"), "hide 要写成")
+        self.assertRefused(self.GOOD.replace("seek: 找", "seek: 躲"), "同一个名字")
+        self.assertRefused(self.GOOD.replace("aliases: [阵亡]", "aliases: [档案]"), "内置指令")
 
     def test_the_games_own_names(self):
         shipped = {"game": "组队游戏", "captain": "队长", "team": "队伍"}

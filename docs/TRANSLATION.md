@@ -70,9 +70,12 @@ takes one or more @mentions.
 | `/复活 @某人…` | Captains | "Revive" |
 | `/队伍` | Anyone | "Teams": today's teams with each member's statuses |
 | `/解散队伍` | Captains; admins with `@队长` | "Disband": let a whole team go |
-| `/清空队伍` | Admins | "Clear teams": end every team in the group |
+| `/清空队伍` | Admins | "Clear teams": end every team in the group, and bring out whoever is hiding |
+| `/躲`, `/躲 出来` | Anyone not on a team | "Hide": the bot hides me somewhere only it knows, so `/抓` can't reach me; come back out (also `不躲了`) |
+| `/找 地点`, `/找` | Captains | "Look" in one hiding place: everyone hiding there joins my team; alone, it lists the places as buttons |
+| `/档案`, `/档案 @某人` | Anyone | "Record": what has happened to me, or to someone else, in the game across days |
 
-Admins can use every action except `/抓` on any team.
+Admins can use every action except `/抓` on any team. They don't look for hiders either.
 
 ### Social (every group)
 

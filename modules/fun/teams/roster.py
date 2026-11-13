@@ -1,7 +1,9 @@
-"""Today's teams in every group, kept in data/teams.json so a restart doesn't end a game.
+"""Today's teams in every group, and who is hiding, kept in data/teams.json so a restart
+doesn't end a game.
 
 A group's teams belong to one game day and are cleared when the next one
-starts (prompts/teams.yaml: reset_time).
+starts (prompts/teams.yaml: reset_time). So is everything about hide-and-seek:
+who is hiding and where, how often each has hidden, how often each captain has looked.
 """
 import json
 import os
@@ -29,13 +31,28 @@ class Team:
 
 
 @dataclass
+class Hider:
+    name: str
+    spot: str               # where the bot hid them: nobody is told, not even them
+    since: int = 0
+
+
+@dataclass
 class GroupTeams:
     day: str                                        # the game day, e.g. "2026-10-25"
     teams: dict = field(default_factory=dict)       # captain openid -> Team, in the order formed
+    hiding: dict = field(default_factory=dict)      # openid -> Hider, in the order they hid
+    hides: dict = field(default_factory=dict)       # openid -> how often they've hidden today
+    searches: dict = field(default_factory=dict)    # captain openid -> how often they've looked today
 
     def team_of(self, member):
         """The team `member` was grabbed into, or None. Captains lead a team rather than sit in one."""
         return next((team for team in self.teams.values() if member in team.members), None)
+
+    @property
+    def played(self):
+        """Whether anything has happened in this game day that's worth keeping."""
+        return bool(self.teams or self.hiding or self.hides or self.searches)
 
 
 class Roster:
@@ -50,17 +67,21 @@ class Roster:
         day = day.isoformat()
         teams = self.groups.get(group)
         if teams is None or teams.day != day:
-            stale = teams is not None and teams.teams
+            stale = teams is not None and teams.played
             teams = self.groups[group] = GroupTeams(day)
             if stale:
                 self.save()
         return teams
 
-    def reset_stale(self, day):
-        """Clear every group whose teams are from before game day `day`. Returns how many groups had teams."""
+    def stale(self, day):
+        """{group: its GroupTeams} for every group whose game is from before game day `day`."""
         day = day.isoformat()
-        stale = [group for group, teams in self.groups.items() if teams.day != day]
-        cleared = sum(1 for group in stale if self.groups[group].teams)
+        return {group: teams for group, teams in self.groups.items() if teams.day != day}
+
+    def reset_stale(self, day):
+        """Clear every group whose game is from before game day `day`. Returns how many groups had one."""
+        stale = self.stale(day)
+        cleared = sum(1 for teams in stale.values() if teams.played)
         for group in stale:
             del self.groups[group]
         if cleared:
@@ -81,13 +102,17 @@ class Roster:
             team.members.pop(member, None)
             if not team.members:
                 del teams.teams[team.captain]
+        for kept in (teams.hiding, teams.hides, teams.searches):
+            kept.pop(member, None)
         self.save()
 
     def save(self):
         if self.path is None:
             return
-        data = {"groups": {group: {"day": teams.day, "teams": [asdict(team) for team in teams.teams.values()]}
-                           for group, teams in self.groups.items() if teams.teams}}
+        data = {"groups": {group: {"day": teams.day, "teams": [asdict(team) for team in teams.teams.values()],
+                                   "hiding": {openid: asdict(hider) for openid, hider in teams.hiding.items()},
+                                   "hides": teams.hides, "searches": teams.searches}
+                           for group, teams in self.groups.items() if teams.played}}
         folder = os.path.dirname(self.path)
         os.makedirs(folder, exist_ok=True)
         # Write a temporary file and swap it in, so a crash mid-write can't leave half a file.
@@ -116,6 +141,12 @@ class Roster:
                                                       int(m.get("since") or 0))
                     if team.members:
                         teams.teams[team.captain] = team
+                # Someone hidden somewhere the rules no longer have could never be found: they're out.
+                for openid, h in (saved.get("hiding") or {}).items():
+                    if h.get("spot") in self.rules.spots and teams.team_of(openid) is None:
+                        teams.hiding[openid] = Hider(str(h.get("name") or ""), str(h["spot"]), int(h.get("since") or 0))
+                teams.hides = {str(k): int(v) for k, v in (saved.get("hides") or {}).items()}
+                teams.searches = {str(k): int(v) for k, v in (saved.get("searches") or {}).items()}
                 self.groups[group] = teams
         except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
             _log.warning(f"[Teams] {self.path} 读不了（{e}），队伍从空的开始")

@@ -518,10 +518,16 @@ games:
       队长：{grab} @某人 抓人进队 · {disband}
       队长对自己的队员：{actions}（都要 @ 对象）
       管理员（裁判）：对任何队员都能用以上操作 · {disband} @队长 · {clear}
+    # 接在上面那一段后面的几句。teams.yaml 里写了躲的地方才有 help_hide，写了突发事件才有 help_events。
+    # {hide}、{seek}、{record}：躲起来、队长找人、看档案的指令（也可以在 teams.yaml 的 commands 里改名）
+    help_hide: "还没进队的人：{hide} 躲起来 · 队长：{seek} 地点 去翻，翻对了就抓进队"
+    help_events: 队员和队长在群里聊天时，偶尔会遇上突发事件
+    help_record: "{record} 看自己的游戏档案 · {record} @某人 看别人的"
     title: "🏳️ 今日队伍 · {date}"
     team: "【{captain}】{count} 人：{members}"
     tagged: "{member}（{statuses}）"        # 没有图标的状态
     legend: "图例：{legend}"
+    hiding: "🙈 躲起来的（{count} 人）：{members}"      # 只说谁躲着，不说躲在哪儿
     none: "今天还没有队伍哦～队长 @我 {grab} @某人 就能开始组队。"
     unnamed: "群友#{tag}"                   # 不知道昵称时的称呼
     not_here: 这个群没有开启组队游戏哦～
@@ -541,6 +547,40 @@ games:
       free: "{member} 现在不在任何队伍里。"
       already: "{member} 已经是「{status}」了。"
       needs: "{member} 不是「{status}」，不能用 /{action}。"
+      hidden: "{member} 躲起来了，抓不到。用 {seek} 地点 去翻翻看吧。"
+    # 躲猫猫：还没进队的人躲起来，藏在哪儿由她定，谁也不告诉
+    hide:
+      disabled: 这个游戏没有设置躲猫猫的地方哦。
+      done: "🙈 {member} 躲起来了！藏在哪儿只有{name}知道（一共 {count} 个地方）。队长要用 {seek} 地点 才找得到。"
+      already: "你已经躲好啦，别出声～想出来就发 {hide} 出来"
+      leading: 你今天带着队伍呢，队长不能躲。
+      caught: "你已经在 {captain} 的队伍里了，躲不掉啦。"
+      times: "今天你已经躲了 {max} 次，不能再躲了。"
+      out: "{member} 自己走出来了。"
+      not_hiding: 你现在没有躲着哦。
+    # 队长找人：每天能找几次、有哪些地方，都在 teams.yaml 的 hide 里
+    seek:
+      denied: "只有队长才能用 {seek} 找人哦～"
+      usage: "要翻哪儿？{seek} 地点。现在有 {hiding} 人躲着，你今天还能找 {left} 次。\n可以翻的地方：{spots}"
+      no_such: "没有「{spot}」这个地方。可以翻的地方：{spots}"
+      nobody: 现在没有人躲着，不用找啦。
+      used_up: "你今天已经找了 {max} 次，找不动了。"
+      full: "你的队伍满员了（最多 {max} 人），找到了也装不下。"
+      nothing: "🔦 {actor} 翻了翻{spot}……什么也没有。（今天还能找 {left} 次）"
+      found: "🔦 {actor} 在{spot}找到了 {members}！抓进队伍。（今天还能找 {left} 次）"
+    # /档案：一个人在游戏里的记录，只有次数。有哪一项才显示哪一行
+    record:
+      title: "📒 {member} 的游戏档案"
+      empty: "{member} 还没有游戏档案，玩过一次就有了。"
+      caught: "被抓进队 {count} 次"
+      caught_by: "，最常抓到 TA 的是 {member}（{count} 次）"       # 接在上一句后面
+      grabbed: "抓过 {count} 人次"
+      grabbed_most: "，最常抓的是 {member}（{count} 次）"          # 接在上一句后面
+      statuses: "经历过：{list}"
+      status_item: "{status} {count} 次"
+      hid: "躲猫猫：躲了 {hid} 次，被找到 {found} 次，躲到清空 {slipped} 次"
+      finds: "找到过躲起来的人 {count} 人次"
+      events: "遇上突发事件 {count} 次"
     disbanded: "{captain} 的队伍解散了，{count} 人恢复自由。"
     no_team: "{member} 今天没有带队伍。"
     no_own_team: 你今天还没有队伍哦。

@@ -1,9 +1,10 @@
 """The team game's rules, read from prompts/teams.yaml: what statuses a team
-member can have, and every action captains can use on their members.
+member can have, every action captains can use on their members, the events
+that can befall them, and where people can hide.
 
-A new status or a new action is a few lines of YAML. Only a new kind of
-effect needs code: add its name to EFFECTS below and an effect_<name> method
-to TeamsModule.
+A new status, action, event or hiding place is a few lines of YAML. Only a new
+kind of effect needs code: add its name to EFFECTS below and an effect_<name>
+method to TeamsModule.
 """
 from dataclasses import dataclass
 from datetime import time as dtime
@@ -18,16 +19,30 @@ CAPTAIN = "队长"
 # Effects an action can name with `effect:`. Actions with `set:` have the effect "set".
 EFFECTS = ("grab", "kick", "roll")
 EFFECT_HELP = "grab（把人抓进队）、kick（移出队伍）、roll（从 from 里随机掷一个状态）"
+# What an event can do to whoever meets it; one with `set:` has the effect "set", and one with
+# neither only says something.
+EVENT_EFFECTS = ("kick", "roll")
+EVENT_EFFECT_HELP = "kick（掉出队伍）、roll（从 from 里随机掷一个状态）"
 # The game's built-in commands and their default words. teams.yaml may rename
 # them under `commands:`; actions can't take these words.
-FIXED_COMMANDS = {"teams": "队伍", "disband": "解散队伍", "clear": "清空队伍"}
-FIXED_HELP = "teams（查看队伍）、disband（解散队伍）、clear（清空队伍）"
+FIXED_COMMANDS = {"teams": "队伍", "disband": "解散队伍", "clear": "清空队伍", "hide": "躲", "seek": "找",
+                  "record": "档案"}
+FIXED_HELP = "teams（查看队伍）、disband（解散队伍）、clear（清空队伍）、hide（躲起来）、seek（队长找人）、record（游戏档案）"
 # What the game calls itself, its captains and its teams, in the server log and in
 # load_rules' messages. teams.yaml may change them under `names:`.
 NAMES = {"game": "组队游戏", "captain": "队长", "team": "队伍"}
 NAMES_HELP = "game（游戏名）、captain（队长的叫法）、team（队伍的叫法）"
 # What an action's `say` line may use; {name} is the style's name.
 SAY_FIELDS = ("actor", "members", "count", "captain", "action", "status", "name")
+# ...and an event's: nobody acts in one.
+EVENT_FIELDS = ("members", "captain", "status", "name")
+EVENT_GAP = 10          # minutes between two events in a group, unless teams.yaml says otherwise
+EVENT_DAILY = 2         # events one member can meet in a game day
+MIN_SPOTS = 3           # hiding places: with fewer, a search is hardly a guess
+MAX_SPOTS = 25          # they go on the buttons under /找, five rows of five
+MAX_SPOT = 8            # characters in one, so it fits on a button
+SEARCHES = 3            # places each captain can look in a game day
+HIDES = 3               # times one member can hide in a game day
 
 
 @dataclass(frozen=True)
@@ -44,6 +59,20 @@ class Action:
 
 
 @dataclass(frozen=True)
+class Event:
+    """Something that can befall a team member while the group chats."""
+    name: str
+    chance: float           # percent, each time someone it can happen through speaks
+    captain: bool = False   # True: it comes when a captain speaks, to one of their members; else to whoever spoke
+    effect: str = ""        # "kick", "roll" or "set"; "": it only says something
+    status: str = ""        # set: the status it gives
+    column: str = ""        # set: the column that status belongs to
+    only: tuple = ()        # whoever meets it must have every one of these statuses
+    say: tuple = ()         # lines to pick from when it happens
+    pool: tuple = ()        # roll: the statuses it can land on
+
+
+@dataclass(frozen=True)
 class Rules:
     columns: dict           # column -> its statuses; the first is everyone's status when grabbed
     icons: dict             # status -> icon shown in front of names in /队伍
@@ -53,6 +82,12 @@ class Rules:
     commands: dict = None   # built-in command -> its word, see FIXED_COMMANDS
     hidden: tuple = ()      # statuses AI chat is never told about (hide_from_ai)
     names: dict = None      # what the game calls itself, its captains and teams, see NAMES
+    events: tuple = ()      # what can befall members while the group chats
+    event_gap: int = EVENT_GAP          # minutes between two events in a group
+    event_daily: int = EVENT_DAILY      # events one member can meet in a game day; 0 = no limit
+    spots: tuple = ()       # where people can hide; none = no hide-and-seek
+    searches: int = SEARCHES            # places each captain can look in a game day
+    hides: int = HIDES                  # times one member can hide in a game day
 
     def column_of(self, status):
         return next(column for column, statuses in self.columns.items() if status in statuses)
@@ -84,6 +119,126 @@ def _word(value, where):
     if not word or any(c.isspace() or c in "@/" for c in word):
         raise ValueError(f"{where}：指令名「{value}」不能是空的，也不能带空格、@ 或 /")
     return word
+
+
+def _whole(data, key, default, where, least=0):
+    """A whole number of at least `least` from the file, or `default` when it isn't written."""
+    try:
+        number = int(data.get(key, default))
+        if number < least:
+            raise ValueError
+    except (TypeError, ValueError):
+        raise ValueError(f"{where} 要写不小于 {least} 的整数")
+    return number
+
+
+def _pool(entry, where, owner, effect):
+    """The statuses a roll can land on (`from`), which only a roll may have."""
+    pool = _names(entry.get("from"))
+    if effect == "roll" and not pool:
+        raise ValueError(f"{where}：roll 要用 from 列出可能掷出的状态，例如 from: [存活, 死亡]")
+    if pool and effect != "roll":
+        raise ValueError(f"{where}：只有 effect: roll 才能写 from")
+    for rolled in pool:
+        if rolled not in owner:
+            raise ValueError(f"{where}：from 里的「{rolled}」不是 statuses 里的状态")
+    return pool
+
+
+def _only(entry, where, owner):
+    """The statuses someone must have (`only`): each a real one, no two from the same column."""
+    only, seen = _names(entry.get("only")), {}
+    for wanted in only:
+        if wanted not in owner:
+            raise ValueError(f"{where}：only 里的「{wanted}」不是 statuses 里的状态")
+        if owner[wanted] in seen:
+            raise ValueError(f"{where}：only 里的「{seen[owner[wanted]]}」和「{wanted}」都在「{owner[wanted]}」"
+                             f"这一栏，不可能同时满足")
+        seen[owner[wanted]] = wanted
+    return only
+
+
+def _say(entry, where, fields):
+    """The lines to say (`say`), using only the {names} the program fills in."""
+    say = _names(entry.get("say"))
+    for line in say:
+        try:
+            unknown = placeholders(line) - set(fields)
+        except ValueError as e:
+            raise ValueError(f"{where}：say 的花括号写得不对（{e}）")
+        if unknown:
+            raise ValueError(f"{where}：say 里的 {'、'.join('{' + u + '}' for u in sorted(unknown))} 程序不会填写，"
+                             f"能用的有：{'、'.join('{' + f + '}' for f in fields)}")
+    return say
+
+
+def _events(data, owner):
+    """The events in teams.yaml, checked like the actions."""
+    entries = data.get("events") or []
+    if not isinstance(entries, list):
+        raise ValueError("teams.yaml 的 events 要写成列表，每件事以「- name:」开头")
+    events, taken = [], set()
+    for i, entry in enumerate(entries, 1):
+        where = f"teams.yaml 第 {i} 件突发事件"
+        if not isinstance(entry, dict) or not str(entry.get("name") or "").strip():
+            raise ValueError(f"{where}缺少 name")
+        name = str(entry["name"]).strip()
+        where = f"{where}（{name}）"
+        if name in taken:
+            raise ValueError(f"{where}：名字和前面的重复了")
+        taken.add(name)
+        try:
+            chance = float(str(entry.get("chance")).strip().rstrip("%"))
+        except ValueError:
+            chance = 0.0
+        if not 0 < chance <= 100:
+            raise ValueError(f"{where}：chance 要写每次说话遇上它的几率，大于 0、不超过 100 的数，例如 chance: 2")
+        if "effect" in entry and "set" in entry:
+            raise ValueError(f"{where}：effect 和 set 只能写其中一种（都不写，这件事就只是说一句话）")
+        effect = status = column = ""
+        if "effect" in entry:
+            effect = str(entry["effect"])
+            if effect not in EVENT_EFFECTS:
+                raise ValueError(f"{where}：突发事件没有叫「{effect}」的效果，可用的有：{EVENT_EFFECT_HELP}")
+        elif "set" in entry:
+            effect, status = "set", str(entry["set"])
+            if status not in owner:
+                raise ValueError(f"{where}：set 的「{status}」不是 statuses 里的状态，可用的有：{'、'.join(owner)}")
+            column = owner[status]
+        pool = _pool(entry, where, owner, effect)
+        only = _only(entry, where, owner)
+        speaker = str(entry.get("speaker") or "").strip()
+        if speaker and speaker != CAPTAIN:
+            raise ValueError(f"{where}：speaker 只能写「{CAPTAIN}」（{CAPTAIN}说话时，落在 TA 的一名队员身上），"
+                             f"不写就是队员自己说话时遇上")
+        say = _say(entry, where, EVENT_FIELDS)
+        if not say:
+            raise ValueError(f"{where}：say 要写，这是这件事发生时我说的话")
+        events.append(Event(name=name, chance=chance, captain=speaker == CAPTAIN, effect=effect, status=status,
+                            column=column, only=tuple(only), say=tuple(say), pool=tuple(pool)))
+    return tuple(events)
+
+
+def _hiding(data):
+    """(the hiding places, searches a captain gets a day, times a member can hide a day) from `hide`."""
+    raw = data.get("hide") or {}
+    if not isinstance(raw, dict):
+        raise ValueError("teams.yaml 的 hide 要写成几项设置：spots（躲的地方）、searches、times")
+    for key in raw:
+        if key not in ("spots", "searches", "times"):
+            raise ValueError(f"teams.yaml 的 hide 里没有「{key}」这一项，可用的有：spots（躲的地方）、"
+                             f"searches（每位队长每天能找几次）、times（每人每天能躲几次）")
+    spots = _names(raw.get("spots"))
+    if spots and not MIN_SPOTS <= len(spots) <= MAX_SPOTS:
+        raise ValueError(f"teams.yaml 的 hide.spots 要写 {MIN_SPOTS} 到 {MAX_SPOTS} 个地方：太少一找就找到，"
+                         f"太多按钮放不下")
+    for spot in spots:
+        if spots.count(spot) > 1:
+            raise ValueError(f"teams.yaml 的 hide.spots 里「{spot}」重复了")
+        if len(spot) > MAX_SPOT or any(c.isspace() or c in "@/" for c in spot):
+            raise ValueError(f"teams.yaml 的 hide.spots：「{spot}」最多 {MAX_SPOT} 个字，不能带空格、@ 或 /")
+    return (tuple(spots), _whole(raw, "searches", SEARCHES, "teams.yaml 的 hide.searches", least=1),
+            _whole(raw, "times", HIDES, "teams.yaml 的 hide.times", least=1))
 
 
 def _clock(value):
@@ -198,42 +353,17 @@ def load_rules(path=RULES_FILE, reserved=()):
                 raise ValueError(f"{where}：set 的「{status}」不是 statuses 里的状态，可用的有：{'、'.join(owner)}")
             column = owner[status]
 
-        pool = _names(entry.get("from"))
-        if effect == "roll" and not pool:
-            raise ValueError(f"{where}：roll 要用 from 列出可能掷出的状态，例如 from: [存活, 死亡]")
-        if pool and effect != "roll":
-            raise ValueError(f"{where}：只有 effect: roll 才能写 from")
-        for rolled in pool:
-            if rolled not in owner:
-                raise ValueError(f"{where}：from 里的「{rolled}」不是 statuses 里的状态")
-
-        only = _names(entry.get("only"))
-        if only and effect == "grab":
+        pool = _pool(entry, where, owner, effect)
+        if entry.get("only") and effect == "grab":
             raise ValueError(f"{where}：被抓的人还没进队，没有状态，grab 不能写 only")
-        seen = {}
-        for wanted in only:
-            if wanted not in owner:
-                raise ValueError(f"{where}：only 里的「{wanted}」不是 statuses 里的状态")
-            if owner[wanted] in seen:
-                raise ValueError(f"{where}：only 里的「{seen[owner[wanted]]}」和「{wanted}」都在「{owner[wanted]}」"
-                                 f"这一栏，不可能同时满足")
-            seen[owner[wanted]] = wanted
+        only = _only(entry, where, owner)
 
         by = _names(entry["by"]) if "by" in entry else [CAPTAIN]
         for who in by:
             if who != CAPTAIN and who not in owner:
                 raise ValueError(f"{where}：by 里的「{who}」既不是「{CAPTAIN}」，也不是 statuses 里的状态")
 
-        say = _names(entry.get("say"))
-        for line in say:
-            try:
-                unknown = placeholders(line) - set(SAY_FIELDS)
-            except ValueError as e:
-                raise ValueError(f"{where}：say 的花括号写得不对（{e}）")
-            if unknown:
-                raise ValueError(f"{where}：say 里的 {'、'.join('{' + u + '}' for u in sorted(unknown))} 程序不会填写，"
-                                 f"能用的有：{'、'.join('{' + f + '}' for f in SAY_FIELDS)}")
-
+        say = _say(entry, where, SAY_FIELDS)
         actions.append(Action(name=name, words=tuple(words), effect=effect, status=status, column=column,
                               only=tuple(only), by=tuple(by), say=tuple(say), pool=tuple(pool)))
 
@@ -250,5 +380,10 @@ def load_rules(path=RULES_FILE, reserved=()):
         reset_time = _clock(data.get("reset_time", "05:00"))
     except (TypeError, ValueError):
         raise ValueError("teams.yaml 的 reset_time 要写成 \"05:00\" 这样的时间")
+    spots, searches, hides = _hiding(data)
     return Rules(columns=columns, icons=icons, actions=tuple(actions), max_members=max_members,
-                 reset_time=reset_time, commands=commands, hidden=tuple(hidden), names=names)
+                 reset_time=reset_time, commands=commands, hidden=tuple(hidden), names=names,
+                 events=_events(data, owner),
+                 event_gap=_whole(data, "event_gap", EVENT_GAP, "teams.yaml 的 event_gap"),
+                 event_daily=_whole(data, "event_daily", EVENT_DAILY, "teams.yaml 的 event_daily"),
+                 spots=spots, searches=searches, hides=hides)

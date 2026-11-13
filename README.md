@@ -77,7 +77,7 @@ tunnels included.
 - `/我的状态`: activity card showing your last valid message, streak, weekly rank, achievements and
   days left.
 - `/排行`: the week's (or `/排行 月` the month's) leaderboard.
-- `/成就`: 32 badges, such as 七日之约, 开门红 (first to speak after 5 a.m.), 积极投票 and 好久不见.
+- `/成就`: 35 badges, such as 七日之约, 开门红 (first to speak after 5 a.m.), 积极投票 and 好久不见.
   Four stay hidden until someone earns them: a birthday and three holidays. The reply is short:
   what you've earned, your latest badge, how many are left, and the one you're closest to.
   `/成就 全部` lists every badge, with how many members have each. They're announced in the group,
@@ -193,9 +193,21 @@ For the group's games, where a few captains pick teams:
   also survive a restart.
 - **Captains are listed in `config.yaml`** (`teams.captains`). A captain who isn't leading a team
   today can be grabbed like anyone else.
+- **The caught have something to do.** Someone who isn't on a team can hide with `/躲`: the bot picks
+  one of the places in the file and tells nobody. A captain can't grab them, only look in one place
+  with `/找 地点`, three times a day; whoever hides there joins their team. `/队伍` shows who is
+  hiding, never where.
+- **Things happen while the group chats.** When a team member says something, an event from the
+  file may befall them, and when their captain speaks, one of the captain's members: they slip
+  away, their status changes, or the bot just says a line. Each event has its own chance, a group
+  gets one every 10 minutes at most, and a member two a day.
+- **The game has a memory.** `/档案` shows how often someone was caught and by whom, how many they
+  grabbed, which statuses befell them, and their hide-and-seek record. Counts only, kept across
+  game days; three of them earn badges.
 - **Everything about the game is one YAML file,** [`prompts/teams.yaml`](prompts/teams.yaml):
   - the statuses a member can have
   - every captain action: its command, who may use it, who it applies to, and what the bot says
+  - the hiding places, and the events with their chances and lines
   - team size and reset time
 
   Adding a status such as 受伤 or an action such as /复活 takes a few lines and no code. An
@@ -260,7 +272,8 @@ modules/
                         fortune.py draws the fortunes, store.py keeps data/fun.db
   info/                 Epic, Steam, Minecraft
   fun/teams/            the team game: rules.py reads prompts/teams.yaml, roster.py keeps
-                        today's teams (data/teams.json), module.py runs the commands
+                        today's teams and who is hiding (data/teams.json), history.py each member's
+                        counts across days (data/teams.db), module.py runs the commands
   manager/              the group manager
     classifier.py       is this message 有效发言?
     rules.py            the 25/30-day rule as pure functions
@@ -356,8 +369,9 @@ The tests cover:
     and the default reproduces the original text
   - partial styles fall back to 小莲, and broken lines are caught
   - per-group styles come from `config.yaml` only
-- the team game: game nights with grabs, actions, referees, the daily reset and restarts, plus
-  every mistake `prompts/teams.yaml` can contain
+- the team game: game nights with grabs, actions, referees, the daily reset and restarts,
+  hide-and-seek, events with a set of dice, records, plus every mistake `prompts/teams.yaml` can
+  contain
 - AI chat, against a fake DeepSeek: the shared labelled thread, memory notes and deletion, the
   rolling summary, retention, and deletion racing a summary in flight
 - what members give her and an admin accepts (taught phrases, stickers), nicknames, and 海龟汤 with

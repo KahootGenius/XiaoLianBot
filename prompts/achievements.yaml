@@ -39,6 +39,9 @@
 #     opinion   在几次 /征集意见 里提过意见（每次征集只算一次，撤回也不会重复算）
 #     sleep     /晚安 后睡了 7 到 9 小时再 /早安 的次数
 #     soup      第一个猜中 /海龟汤 汤底的次数
+#     caught    组队游戏里被抓进队的次数（被 /找 找到也算）
+#     grabbed   组队游戏里把人抓进队的人次
+#     slipped   躲猫猫躲到当天清空都没被找到的次数
 #
 # 新加的成就会在成员下一次有效发言时检查；条件早就满足的人会在那时解锁。
 # 一个群每小时最多祝贺 3 次（config.yaml 里 manager 下的 achievements.max_per_hour），一下子加很多也不会刷屏；
@@ -235,6 +238,27 @@
   desc: 猜中 5 碗海龟汤的汤底
   counter: soup
   at_least: 5
+
+- code: caught_10
+  icon: 🎯
+  name: 抢手
+  desc: 在组队游戏里被抓进队 10 次
+  counter: caught
+  at_least: 10
+
+- code: grabbed_30
+  icon: 🪤
+  name: 手到擒来
+  desc: 在组队游戏里抓了 30 人次
+  counter: grabbed
+  at_least: 30
+
+- code: slipped_3
+  icon: 🙈
+  name: 躲猫猫高手
+  desc: 躲猫猫躲到当天清空都没被找到，累计 3 次
+  counter: slipped
+  at_least: 3
 
 - code: comeback
   icon: 🌈

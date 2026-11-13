@@ -165,7 +165,7 @@ The sections of `小莲.yaml`:
 | `social` | `/今日运势` (its title, and the lists it draws levels, 宜, 忌 and comments from), birthdays, polls, 征集意见 (`social.opinion`), `/翻牌子`, and 海龟汤 (`social.soup`: what she says to 是, 不是 and 无关 is under `answers`, a few variants each) |
 | `common.buttons_hint` | The little message that carries the buttons when they can't go in the reply itself: with `buttons_inline: false`, or for an hour after QQ refused that |
 | Keys ending in `button`, `again` or `refresh`; `manager.batch.button_…` and `ask_…` | Button labels, such as `games.blackjack.again` (再来一局); the removal list's buttons and the questions QQ asks before 「确认移出」 and 「已移出」 |
-| `games.teams` | The team game: `/队伍`, the 【组队游戏】 part of `/帮助`, and every refusal ("不在你的队伍里"…) |
+| `games.teams` | The team game: `/队伍`, the 【组队游戏】 part of `/帮助` (`help`, then `help_hide`, `help_events` and `help_record`), and every refusal ("不在你的队伍里"…). Hide-and-seek is under `hide` and `seek`, and `/档案` under `record` |
 | `games`, `info`, `ai` | Dice, blackjack, 发癫, sleep, the reply when games go too fast (`games.too_fast`); Epic, Steam, Minecraft; AI chat errors |
 | `ai.memory`, `ai.pet_name` | `/我的记忆` and `/忘记`; `/外号` |
 | `ai.teach`, `ai.submit` | `/教她` and `/她学会的`; `/投稿表情` and `/她的表情`. Both have the admins' buttons (`keep_button`, `drop_button`) and the question QQ asks before keeping one (`ask_keep`) |
@@ -248,6 +248,9 @@ The counters are:
 | `opinion` | 征集意见 they gave an opinion in, once each, even after a 撤回 |
 | `sleep` | Nights of 7 to 9 hours between `/晚安` and `/早安` |
 | `soup` | 海龟汤 they were the one to solve |
+| `caught` | Times they were caught in the team game, by `/抓` or by being found |
+| `grabbed` | People they caught in the team game |
+| `slipped` | Game days they stayed hidden until the reset |
 
 Three ready-made examples are commented out at the bottom of the file. Things to know:
 - **A mistake stops the bot at startup** and names the bad badge.
@@ -263,7 +266,8 @@ Three ready-made examples are commented out at the bottom of the file. Things to
 - **Lunar festivals need their dates added.** The shipped 新春 and 中秋 badges list 2027–2030; the
   Hong Kong Observatory's conversion tables give later years.
 - **Counters start from zero when they're added.** `weekend`, `long` and `days`, and later
-  `opener`, `birthday`, `vote`, `opinion`, `sleep` and `soup`, have no history from before.
+  `opener`, `birthday`, `vote`, `opinion`, `sleep`, `soup`, `caught`, `grabbed` and `slipped`, have
+  no history from before.
 
 ### With code: a new kind of counter
 
@@ -367,6 +371,83 @@ The existing `/复活` sets 存活, so it also heals the injured.
 - `names`: what the server log and these error messages call the game, its captains and its teams.
   The defaults are `{game: 组队游戏, captain: 队长, team: 队伍}`. What the group sees comes from the
   style file.
+- `commands`: the built-in commands' words: `teams` (队伍), `disband` (解散队伍), `clear` (清空队伍),
+  `hide` (躲), `seek` (找) and `record` (档案). Leave one out to keep its default.
+
+### Hide-and-seek
+
+Someone who isn't on a team sends `/躲` and is hidden in one of the places you list. The bot picks
+the place and tells nobody, the hider included: a command sent in a group is seen by everyone, so a
+place they chose couldn't be a secret.
+
+```yaml
+hide:
+  spots: [柜子里, 窗帘后, 床底下, 书架后, 阳台上, 桌子底下]   # 3 to 25, each up to 8 characters, no spaces
+  searches: 3      # places each captain can look in a game day
+  times: 3         # times each member can hide in a game day
+```
+
+- **A hidden member can't be grabbed.** `/抓` says so and points to `/找`.
+- **A captain looks in one place:** `/找 地点`, or a tap on one of the buttons under `/找`. Everyone
+  hiding there joins their team, as if grabbed. A full team leaves the rest where they are, unseen.
+  A search with nobody hiding at all costs nothing.
+- **Coming out:** `/躲 出来`, being found, or the daily reset. Whoever is still hidden at the reset
+  has slipped through the day, which goes in their record and counts toward a badge.
+- **Who knows what:** `/队伍` lists who is hiding, never where. The places are only in
+  `data/teams.json`, until the reset.
+- **More places make hiding easier.** With 6 places and 3 searches, one captain finds a given hider
+  half the time. `spots: []`, or no `hide` section, switches it off.
+
+### Events
+
+While the group chats, something from your list may befall a team member:
+
+```yaml
+event_gap: 10      # minutes between two events in a group
+event_daily: 2     # events one member can meet in a game day; 0 = no limit
+events:
+  - name: 溜走
+    chance: 2                   # percent, each time a team member says something
+    effect: kick                # they drop out of the team
+    say: "🏃 趁 {captain} 不注意，{members} 悄悄溜出了队伍，现在自由啦！"
+  - name: 点名
+    speaker: 队长                # when a captain speaks: it falls on one of their members
+    chance: 2
+    say: "📣 {captain} 一开口，{members} 立刻站得笔直。"
+  - name: 意外
+    only: [存活]                 # only members with these statuses meet it
+    chance: 1
+    set: 死亡
+    say: "💥 {members} 被香蕉皮滑了一跤，阵亡了……"
+```
+
+- **What triggers one:** any message that isn't a command, from someone on a team today, or from
+  a captain leading one for the `speaker: 队长` events. The bot answers that message with the
+  event's `say`. In a group where it only receives @-messages, only those count.
+- **Chances add up.** A message meets at most one event: with events of 2 and 1 percent, 3 messages
+  in 100 meet one. `chance` can be a fraction, such as `0.5`.
+- **What it does:** `effect: kick`, `effect: roll` with `from`, `set: 状态`, or nothing at all: an
+  event with only `say` is pure colour. A `set` event skips anyone who already has that status.
+- **`say` can use** `{members}`, `{captain}`, `{status}` and `{name}`, and can be a list to pick
+  from.
+- **The log names the event, not the member.** `events: []` switches them off.
+
+### Records
+
+`/档案` shows what has happened to someone across game days, and `/档案 @某人` someone else's: how
+often they were caught and who caught them most, how many they grabbed and whom most, how often
+each status befell them, their hide-and-seek record, and how many events they met. There's nothing
+to set up.
+
+- **Counts only,** in `data/teams.db`: no dates, and nothing anyone said. Each count that names
+  another member keeps that member's nickname from the last time, so the record reads right in a
+  group the manager doesn't track.
+- **Three of them count toward badges:** `caught`, `grabbed` and `slipped` in
+  `prompts/achievements.yaml` (抢手, 手到擒来, 躲猫猫高手).
+- **Deleting:** `/删除数据` removes someone's record and their part in other members' records. So
+  does 180 days after the bot knows they've left; until then it's kept in case they come back.
+- **Its lines** are under `games.teams.record` in the style; a line shows only when its count
+  isn't zero.
 
 ### With code: a new kind of effect
 
