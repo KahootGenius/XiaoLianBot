@@ -91,6 +91,8 @@ help:
     /生日 月-日 登记生日  /本月生日 这个月谁过生日
     /投票 问题 选项1 选项2…  /投 A  /结束投票
     /征集意见 看看在征集什么  /意见 内容 提意见
+  # 海龟汤开着（有题库、开了 AI 聊天）时，这一句接在【互动】那一段的最后
+  soup: "/海龟汤 开一碗推理题  /问 是非题  /猜 你的答案"
   sleep: |-
     【作息】
     /晚安 记录入睡  /早安 查看睡眠时长
@@ -99,6 +101,10 @@ help:
     /服务器QA <问题> 服务器问答
     直接@我聊天即可
     /我的记忆 我记得的关于你的事  /忘记 序号 删掉一条
+  # 下面三句各是一项功能，开着的才接在【AI】那一段的最后：起外号、教她说法（默认都开着）、投稿表情（默认关着）
+  pet_names: "/外号 让我给你起个外号"
+  teach: "/教她 词：意思 教我一个群里的说法  /她学会的 看我学了什么"
+  member_stickers: "/投稿表情 发图时用，给我投稿表情包  /她的表情 看群友投的表情"
   footer: 提示：所有指令需@我使用
   # /帮助 最后的管理员部分，开了群管理才有。普通群友看到 admin 这一句（空着就是什么都不提）；
   # 管理员看到 admin@admin 这一句，{admin_help} 是 /管理帮助 的全部内容。
@@ -130,6 +136,9 @@ manager:
     /立即检查 马上执行一次每日检查
     /小报 预览本周小报
     /征集意见 主题 发起意见征集 · /结束征集 列出大家的意见
+    /记下 编号 · /不记 编号 群友教我的说法记不记（/她学会的 里有编号）
+    /收下 编号 · /不收 编号 群友投稿的表情收不收（/她的表情 里有编号；开了投稿表情才有）
+    /海龟汤 结束 揭晓汤底，结束这一碗
     /艾特测试 测试 @ 的显示效果
     /看图测试 发图或回复一张图时用，看 QQ 发来的图能不能读取
     /删除数据 @某人或完整昵称 按本人要求删除其全部记录
@@ -216,6 +225,7 @@ manager:
   # /我的状态
   status:
     title: "📋 {member} 的活跃卡片"
+    pet_name: "外号：{nickname}"         # 她用 /外号 给这位群友起的外号，有才显示
     last_valid: "最近有效发言：{date}（{ago}）{snippet}"
     today: 今天
     days_ago: "{days} 天前"
@@ -595,10 +605,103 @@ ai:
     impression: "💭 {name}对你的印象：{text}（/忘记 印象 可以删掉）"
     forgot_impression: "好，对你的印象删掉了，重新认识一下吧～"
     no_impression: "{name}对你还没有什么特别的印象哦。"
+    pet_name: "🏷️ {name}给你起的外号：{nickname}（/外号 不要 可以删掉）"
     forget_button: 忘记一条
     forget_impression_button: 忘记印象
   # /重置对话（管理员）
   reset: "好的，本群和{name}的聊天记录、总结都清空了，从头开始～（群友记忆还在，各自可以用 /忘记 删除）"
+
+  # /外号：她照着记得的事和这位群友在群里的习惯起一个外号。/我的状态 里会显示，聊天时她偶尔这样叫
+  pet_name:
+    disabled: 起外号的功能没有开启哦。
+    given: "{member}，以后就叫你「{nickname}」啦。{why}"
+    mine: "你的外号是「{nickname}」。想换一个：/外号 换 · 不想要了：/外号 不要"
+    too_soon: "{name}对你还不够了解，起不出外号。多聊聊，或者在群里多冒冒泡再来～"
+    daily: "今天已经给你起过 {max} 个啦，先叫着这个吧，明天再换～"
+    failed: 一时想不出合适的外号，过会儿再来试试～
+    dropped: "好，「{nickname}」这个外号不叫了。"
+    none: "你还没有外号哦。想要一个的话：/外号"
+    again_button: 换一个
+    drop_button: 不要了
+
+  # /投稿表情：群友给她投稿表情包（config.yaml 的 ai_chat.member_stickers 打开才有）。先看图里有没有真人，
+  # 再照图起标签，管理员点头（/收下）之后她就会在这个群里用。/她的表情 列出来
+  submit:
+    disabled: 投稿表情的功能没有开启哦。
+    usage: "给{name}投稿一个表情：发图时 @我 /投稿表情，或者回复一张图时 @我 /投稿表情。\n后面可以写上标签，例如：/投稿表情 无语\n每张不超过 {mb}MB，png、jpg 或 gif，不能有真人。"
+    bad_label: "标签写 1 到 {max} 个字就好，不要带方括号和冒号。"
+    daily: "今天你已经投了 {max} 张啦，明天再来～"
+    group_daily: "今天群里投稿的太多啦，{name}看不过来了，明天再来～"
+    full: "群友投稿的表情已经有 {max} 张，放不下了。先请管理员用 /不收 编号 删掉几张吧。"
+    queue_full: "等管理员点头的已经有 {max} 张了，先请管理员处理一下吧。"
+    fetch_failed: "这张图{name}没拿到：{why}"
+    bad_format: 这种格式用不了哦，要 png、jpg 或 gif。
+    too_big: "这张图太大了，要不超过 {mb}MB 的。"
+    known: 这张图已经投过啦。
+    # 这张图不能收的原因：可能有真人、内容不合适、带着个人信息、别的
+    refused:
+      people: 图里好像有真人，真人的照片不能收哦。
+      explicit: 这张图内容不合适，不能收哦。
+      personal: 这张图里带着个人信息，不能收哦。
+      other: 这张图不能收哦，换一张试试。
+    failed: 这张图一时没看明白，过会儿再投一次试试～
+    learned: "收下啦！#{id} [{label}]：{note}"
+    waiting: "收到 {member} 投稿的 #{id} [{label}]：{note}。等管理员点头，{name}就会用。"
+    keep_button: "收下 #{id}"
+    drop_button: "不收 #{id}"
+    ask_keep: "让{name}用 #{id} 这张表情吗？"       # 点「收下」时 QQ 先问的这一句，最多 40 个字
+    kept: "好，#{id} [{label}] 收下了，是 {member} 投的。"
+    dropped: "好，#{id} [{label}] 不收了。"
+    not_found: "没有 #{id} 这一张哦，编号见 /她的表情"
+    decide_usage: "用法：/收下 编号 或 /不收 编号（编号见 /她的表情）"
+    delete_usage: "用法：/投稿表情 删除 编号（编号见 /她的表情）。自己投的自己能删，别人投的要管理员来。"
+    not_yours: 这张不是你投的哦，要管理员才能删。
+    deleted: "好，#{id} [{label}] 删掉了。"
+    list_title: "🎨 群友投稿给{name}的表情（{count} 张）"
+    list_row: "#{id} [{label}]：{note}（{member}）"
+    list_more: "下一页：/她的表情 {page}"
+    list_waiting: "⏳ 等管理员点头的（{count} 张）："
+    list_empty: "还没有群友投稿的表情。投一张：发图时 @我 /投稿表情"
+    list_button: 看看她的表情
+    offer_button: 我也要投稿
+
+  # /教她：群友教她这个群里的说法，管理员点头（/记下）之后，聊到这些词时她就懂。/她学会的 列出来
+  teach:
+    disabled: 教我说法的功能没有开启哦。
+    usage: "教{name}一个群里的说法：/教她 词：意思\n词最多 {max_keys} 个，用顿号隔开；意思不超过 {max_text} 个字。例如：/教她 卷王、卷狗：群里最用功的人\n现在{name}会 {count} 条。"
+    bad_shape: "要写成「词：意思」哦，例如：/教她 卷王：群里最用功的人"
+    bad_keys: "词最多 {max_keys} 个，每个 {min_key} 到 {max_key} 个字。太短的词句句都会碰上，{name}会一直想起它。"
+    bad_text: "意思写 {min_text} 到 {max_text} 个字就好，太长{name}记不住。"
+    daily: "今天你已经教了 {max} 条啦，明天再来～"
+    full: "{name}已经学了 {max} 条，学不动了。先请管理员用 /不记 编号 删掉几条吧。"
+    queue_full: "等管理员点头的已经有 {max} 条了，先请管理员处理一下吧。"
+    known: "这一条{name}已经会啦。"
+    # 这一条不能收的原因：像在下命令、带个人信息、在说某个人的坏话、内容不合适、别的
+    refused:
+      instruction: 这条不像是在解释词语，更像是在给我下命令，不能收哦。
+      personal: 这条带着个人信息，不能收哦。
+      insult: 这条像是在说某个人的坏话，不能收哦。
+      explicit: 这条内容不合适，不能收哦。
+      other: 这条不能收哦，换一个说法试试。
+    learned: "学会了！#{id} {keys}：{text}"
+    waiting: "收到 {member} 教的 #{id}「{keys}：{text}」。等管理员点头，{name}就记住。"
+    keep_button: "记下 #{id}"
+    drop_button: "不记 #{id}"
+    ask_keep: "让{name}记住 #{id} 吗？"          # 点「记下」时 QQ 先问的这一句，最多 40 个字
+    kept: "好，#{id}「{keys}：{text}」记住了，是 {member} 教的。"
+    dropped: "好，#{id}「{keys}」不记了。"
+    not_found: "没有 #{id} 这一条哦，编号见 /她学会的"
+    decide_usage: "用法：/记下 编号 或 /不记 编号（编号见 /她学会的）"
+    delete_usage: "用法：/教她 删除 编号（编号见 /她学会的）。自己教的自己能删，别人教的要管理员来。"
+    not_yours: 这条不是你教的哦，要管理员才能删。
+    deleted: "好，#{id}「{keys}」忘掉了。"
+    list_title: "📖 群友教{name}的说法（{count} 条）"
+    list_row: "#{id} {keys}：{text}（{member}）"
+    list_more: "下一页：/她学会的 {page}"
+    list_waiting: "⏳ 等管理员点头的（{count} 条）："
+    list_empty: "{name}还没学会什么群里的说法。教她：/教她 词：意思"
+    list_button: 看看她学了什么
+    offer_button: 我也要教
   # /看图测试（管理员）：QQ 发来的图是什么样、能不能下载。图只在内存里放一下，不保存，也不发给 DeepSeek
   picture_test:
     usage: "用法：发图时 @我 /看图测试，或者回复一张图时 @我 /看图测试。大表情不能带文字，回复它就行。"
@@ -697,6 +800,59 @@ social:
     button: 我要提意见
 
   # /翻牌子：开玩笑的抽签，从本周活跃的群友里按发言多少加权抽一位，每人每天一次（管理员不限次数）
+  # /海龟汤：她主持的情境推理。题目在 prompts/soups.yaml；群友 /问 是非题、/猜 汤底，是与不是由 AI 对照汤底来判断，
+  # 群里看到的是下面这些话
+  soup:
+    disabled: 海龟汤没有开启哦。
+    no_ai: 海龟汤要开了 AI 聊天才能玩哦。
+    started: |-
+      🍲 海龟汤开锅：{title}（{starter} 点的）
+      {surface}
+      问是非题：@我 /问 你的问题，我只回答「是」「不是」「无关」。
+      觉得知道真相了：@我 /猜 你的答案
+    status: |-
+      🍲 正在喝的海龟汤：{title}
+      {surface}
+      已经问了 {asked} 个问题，给过 {hints} 条提示。
+    clues: 最近问出来的：
+    clue: "· {question} → {answer}"
+    short:                            # 上面每条线索后面的简短回答
+      positive: 是
+      negative: 不是
+      partly: 是也不是
+    none: "现在没有在喝的海龟汤。开一碗：@我 /海龟汤"
+    expired: "上一碗「{title}」放了一天没人喝完，凉了。汤底是：{truth}"
+    ask_usage: "问一个能用「是」或「不是」回答的问题，例如：/问 他认识那个人吗"
+    guess_usage: "把你猜的真相说出来，例如：/猜 因为他其实是……"
+    too_long: "太长啦，{max} 个字以内说完吧。"
+    enough: "这一碗已经问了 {max} 个问题啦，直接 /猜 吧。实在猜不出，点汤的人或管理员可以 /海龟汤 结束"
+    too_fast: "问得太快啦，让{name}喘口气，过一会儿再来～"
+    failed: "{name}一时没想明白，过会儿再说一次～"
+    invalid: 这个我答不了。问一个能用「是」或「不是」回答的问题吧，想直接说答案就用 /猜
+    asked: "🥄 {member} 问：{question}\n{answer}"
+    answers:                          # 她对一个是非题的回答，每次随机挑一句
+      positive: [是。, 是的。, 对。]
+      negative: [不是。, 不对。]
+      unrelated: [无关。, 这个和真相没有关系。]
+      partly: [是也不是。, 只说对了一部分。]
+    key: （问到点子上了！）            # 问中了关键点时，接在回答后面
+    wrong: "🥄 {member} 猜：{guess}\n不对哦，再想想。"
+    close: "🥄 {member} 猜：{guess}\n接近了！不过还没说全。"
+    solved: |-
+      🎉 {member} 喝到汤底了！
+      汤底：{truth}
+      这一碗一共问了 {asked} 个问题。
+    hint: "💡 提示 {n}/{total}：{hint}"
+    hint_later: "先多问几个问题吧，再问 {more} 个就给提示。"
+    no_more_hints: 提示已经给完啦，剩下的靠你们了。
+    no_hints: 这一碗没有提示，靠你们自己了。
+    ended: "🍲 「{title}」不喝了。汤底是：{truth}"
+    not_yours: 只有点这碗汤的人或管理员能结束哦。
+    ask_button: 我要提问
+    guess_button: 我来猜
+    hint_button: 要个提示
+    again_button: 再来一碗
+
   flip:
     result:
       - "📜 {member} 翻开了牌子……今晚是 {target}！"

@@ -144,7 +144,9 @@ Delete `xiaolian-move.tgz` on your computer too: it contains your keys.
 
 `data/` holds:
 - the activity history (`manager.db`)
-- AI chat's conversation and members' memories (`chat.db`)
+- AI chat's conversation, members' memories, and what they taught her (`chat.db`)
+- birthdays, polls, 征集意见 and 海龟汤 (`fun.db`)
+- stickers members sent in (`member_stickers/`), if you switched that on
 - today's teams (`teams.json`)
 
 Without it, the bot starts counting everyone from zero.

@@ -30,9 +30,11 @@ voice message (modules/ai/voice.py).
 """
 import asyncio
 import functools
+import hashlib
 import os
 import re
 import time
+from typing import NamedTuple
 from urllib.parse import quote
 from datetime import datetime
 import pytz
@@ -76,6 +78,16 @@ PROMPT_FIELDS = {
     "length_medium": set(),
     "length_long": set(),
     "lore": {"lore"},
+    "taught_rules": set(),
+    "taught_title": set(),
+    "teach_check": {"keys", "text"},
+    "sticker_draft": set(),
+    "pet_name": {"member", "known", "impression", "habits", "before", "who"},
+    "pet_name_who": {"who"},
+    "pet_name_habits": {"valid", "night", "morning", "best", "badges"},
+    "pet_name_before": {"before"},
+    "pet_name_rules": set(),
+    "pet_name_title": {"member", "nickname"},
     "stickers": {"stickers", "max"},
     "voice": {"max_chars"},
     "special_people": {"people"},
@@ -97,6 +109,9 @@ PROMPT_FIELDS = {
     "today_birthdays": {"members"},
     "today_poll": {"question", "options"},
     "today_opinions": {"topic", "count"},
+    "today_soup": {"surface"},
+    "soup_question": {"surface", "truth", "points", "said"},
+    "soup_guess": {"surface", "truth", "points", "said"},
     "recent_actions": {"actions"},
     "her_day": {"events"},
     "summary_prefix": set(),
@@ -125,9 +140,24 @@ PROMPT_FIELDS = {
     "consolidation": {"member", "facts", "notes", "max_text", "max_facts"},
 }
 # Commands this module answers before chatting. Listed so team-game actions can't take them.
-COMMANDS = ("/我的记忆", "/忘记", "/重置对话", "/看图测试", "/服务器QA")
+COMMANDS = ("/我的记忆", "/忘记", "/重置对话", "/看图测试", "/服务器QA", "/教她", "/她学会的", "/记下", "/不记",
+            "/外号", "/投稿表情", "/表情投稿", "/她的表情", "/收下", "/不收")
 FORGET_ALL_WORDS = ("全部", "所有", "all")
 FORGET_IMPRESSION_WORDS = ("印象",)
+DELETE_WORDS = ("删除", "取消", "清除", "忘掉")
+TEACH_PER_DAY = 3           # things one member can teach her a day (/教她); admins as many as they like
+TAUGHT_MAX = 100            # what one group can have taught her in all...
+TAUGHT_WAITING = 20         # ...and how many more can be waiting for an admin
+SUBMITS_PER_DAY = 3         # stickers one member can send in a day (/投稿表情); admins as many as they like
+GROUP_SUBMITS_PER_DAY = 20  # and a whole group, admins included: each one costs two looks at a picture
+MEMBER_STICKERS_MAX = 20    # the stickers one group's members can have given her in all: QQ's image
+MEMBER_STICKERS_WAITING = 10    # library holds 100 a bot. And how many more can be waiting for an admin
+OFFER_WAIT_DAYS = 14        # what has waited for an admin this long is dropped
+LIST_PAGE = 15              # entries on a page of /她学会的 or /她的表情
+MAX_MESSAGE_LENGTH = 900    # a longer list goes out as several messages
+PET_NAMES_PER_DAY = 3       # nicknames she'll think up for one member a day (/外号)
+PET_NAME_AGAIN_WORDS = ("换", "换一个", "换个", "再来", "再来一个")
+PET_NAME_DROP_WORDS = ("不要", "不要了") + DELETE_WORDS
 CONSOLIDATE_HOUR = 4        # Beijing time: when the night's consolidation runs, like sleep
 NOTES_LEFT_DAYS = 2         # recent notes this old are consolidated whenever housekeeping runs
 HEARD_TEXT = 300            # characters kept of each message that didn't @ the bot (hear_all)
@@ -139,6 +169,21 @@ FORTUNE_COMMENT_LIMIT = 120  # characters; the prompt asks for 60
 DEFAULT_TEMPERATURE = 1.0   # chat replies when dynamic_temperature is off or its judgement fails
 WEEKDAYS = "一二三四五六日"
 DAY = 86400
+
+
+class Offered(NamedTuple):
+    """Something members offer her that an admin accepts first: what they teach her (/教她), the
+    stickers they send in (/投稿表情). Both are listed, kept, dropped and taken back the same way."""
+    table: str      # where ChatStore keeps them
+    lines: str      # where the style has their lines
+    offer: str      # the command members offer one with; "<offer> 删除 编号" takes one's own back
+    listing: str    # the command that lists them
+    keep: str       # the admins' two commands, each with a number
+    drop: str
+
+
+TAUGHT = Offered("taught", "ai.teach", "/教她", "/她学会的", "/记下", "/不记")
+STICKERS = Offered("member_stickers", "ai.submit", "/投稿表情", "/她的表情", "/收下", "/不收")
 
 
 def load_chat_prompts(path=CHAT_PROMPTS_FILE):
@@ -184,7 +229,7 @@ class AIChatModule:
     def __init__(self, gateway, config=None, store=None, client=None, is_admin=None, clock=None,
                  prompts_path=CHAT_PROMPTS_FILE, nickname_of=None, stickers_dir=None,
                  library_path=stickers.LIBRARY_FILE, speaker=None, searcher=None, fetch_picture=None,
-                 gallery_dir=None):
+                 gallery_dir=None, member_stickers_dir=None):
         self.gw = gateway
         self.config = load_config() if config is None else config
         deepseek = self.config.get("deepseek") or {}
@@ -211,6 +256,14 @@ class AIChatModule:
         self.opinion_summary = bool(chat.get("opinion_summary", True))
         # 今日运势 reading: off unless asked for, as it sends members' own messages that didn't @ her.
         self.fortune = bool(chat.get("fortune", False))
+        # /教她: members teach her what words mean in their group; an admin accepts each one.
+        self.teach = bool(chat.get("teach", True))
+        # /外号: she gives a member a nickname from what she remembers of them and how they take part.
+        self.pet_names = bool(chat.get("pet_names", True))
+        # Set by main.py: (group, member) -> what the group manager's record says of how they take
+        # part, as ManagerModule.habits returns it, or None.
+        self.habits_of = None
+        self.tries = {}             # (what, group, member) -> (day, how often they did it that day): daily limits
         self.game_state = bool(chat.get("game_state", True))
         # seekchat's 动态想象力: one cheap call before each reply picks its temperature and length.
         self.dynamic = bool(chat.get("dynamic_temperature", True))
@@ -231,8 +284,12 @@ class AIChatModule:
         self.stickers_inline = bool(chat.get("stickers_inline", True))
         self.sticker_size = int(chat.get("sticker_size", stickers.SIZE))
         self.inline_off_until = 0.0
+        # /投稿表情: members send her stickers for their own group. Off unless asked for, as their
+        # pictures go to DeepSeek to be looked at and are kept on this machine.
+        self.member_stickers = bool(chat.get("member_stickers", False))
+        self.member_stickers_dir = member_stickers_dir or stickers.MEMBER_DIR
         self.library = stickers.Library(gateway, {os.path.basename(s.path) for s in self.stickers.values()},
-                                        library_path) if self.stickers else None
+                                        library_path) if self.stickers or self.member_stickers else None
         # 她的一天: each day one cheap call plans a few small things in her day.
         self.her_day = bool(chat.get("her_day", True))
         self.planning = set()       # styles with a planning call out
@@ -311,9 +368,21 @@ class AIChatModule:
         self.qa_system_prompt = self._load_qa_prompt()
         self.prompts = load_chat_prompts(prompts_path)
         self.store = store or ChatStore(root_path("data", "chat.db"))
+        if self.library is not None and self.member_stickers:     # QQ's library keeps their images too
+            self.library.files |= {row["file"] for row in self.store.all_member_stickers()}
         self.fetch_picture = fetch_picture or vision.fetch
         self.commands = {"/我的记忆": self.cmd_my_memory, "/忘记": self.cmd_forget, "/重置对话": self.cmd_reset,
-                         "/看图测试": self.cmd_picture_test}
+                         "/看图测试": self.cmd_picture_test, "/外号": self.cmd_pet_name,
+                         "/教她": self.cmd_teach, "/投稿表情": self.cmd_submit, "/表情投稿": self.cmd_submit}
+        for offered in (TAUGHT, STICKERS):
+            self.commands.update({offered.listing: functools.partial(self.cmd_offered, offered),
+                                  offered.keep: functools.partial(self.cmd_keep, offered),
+                                  offered.drop: functools.partial(self.cmd_drop, offered)})
+
+    @property
+    def features(self):
+        """The things members can do with her that can be switched off, and are on: /帮助 lists them."""
+        return [name for name in ("pet_names", "teach", "member_stickers") if self.enabled and getattr(self, name)]
 
     def _load_qa_prompt(self):
         """Load the server-QA system prompt from its dedicated prompt file."""
@@ -365,6 +434,26 @@ class AIChatModule:
             await self.gw.send(message.group_openid, text, reply_to=message.id, buttons=buttons)
         except Exception as e:
             _log.error(f"[AIChat] 回复失败: {e}")
+
+    async def _reply_list(self, message, lines, buttons=None):
+        """A list that may be long: as many messages as it takes, the buttons under the last."""
+        chunks = [""]
+        for line in lines:
+            if chunks[-1] and len(chunks[-1]) + len(line) + 1 > MAX_MESSAGE_LENGTH:
+                chunks.append(line)
+            else:
+                chunks[-1] = f"{chunks[-1]}\n{line}" if chunks[-1] else line
+        for i, chunk in enumerate(chunks):
+            await self._reply(message, chunk, buttons=buttons if i == len(chunks) - 1 else None)
+
+    def _tried(self, what, group, member):
+        """How often today a member has done something they can only do so often a day. Kept in
+        memory: a restart gives everyone a fresh day, which costs little."""
+        day, count = self.tries.get((what, group, member), (None, 0))
+        return count if day == self.clock().date().isoformat() else 0
+
+    def _try(self, what, group, member):
+        self.tries[(what, group, member)] = (self.clock().date().isoformat(), self._tried(what, group, member) + 1)
 
     def _spawn(self, coroutine):
         """Run follow-up work (memory notes, summaries) without holding up the reply."""
@@ -448,6 +537,8 @@ class AIChatModule:
             if today.get("opinions"):
                 topic, count = today["opinions"]
                 lines.append(render(self.prompts["today_opinions"], topic=topic, count=count))
+            if today.get("soup"):
+                lines.append(render(self.prompts["today_soup"], surface=today["soup"]))
         actions = context.recent_actions(window)
         if actions:
             lines.append(render(self.prompts["recent_actions"], actions="".join(f"「{a}」" for a in actions)))
@@ -525,7 +616,10 @@ class AIChatModule:
         the whole list goes along, or she swaps one of its phrases for another."""
         style = current()
         alone = sight.strangers
+        hers = self._stickers_in(group)
         lore = None if alone else context.lore_for(style.lookup("lore"), window)
+        # What members taught her is theirs, not the style's: it rides with the evidence, as data.
+        taught = context.taught_for(self.store.taught(group), window) if self.teach and not alone else None
         # The parts that never change for a style come first, so DeepSeek's prefix cache can reuse them.
         instructions = [style.system_prompt, *self._samples(style),
                         render(self.prompts["group_rules"], member=member_name),
@@ -533,12 +627,13 @@ class AIChatModule:
                         render(self.prompts["reply_shape"]),
                         render(self.prompts["declining"]),
                         length and render(self.prompts[context.LENGTHS[length]]),
-                        self.stickers and render(self.prompts["stickers"], stickers=stickers.listing(self.stickers),
-                                                 max=stickers.MAX_PER_REPLY),
+                        hers and render(self.prompts["stickers"], stickers=stickers.listing(hers),
+                                        max=stickers.MAX_PER_REPLY),
                         self._can_speak(group) and render(self.prompts["voice"], max_chars=voice.MAX_CHARS),
                         not alone and self._special_people(group, member, member_name, window),
                         t("talking_to"),
                         lore and render(self.prompts["lore"], lore="\n".join(f"- {text}" for text in lore)),
+                        taught and render(self.prompts["taught_rules"]),
                         self._her_day() and render(self.prompts["day_rules"]),
                         found and render(self.prompts["search_rules"]),
                         sight.pictures and render(self.prompts["vision_rules"]),
@@ -548,6 +643,8 @@ class AIChatModule:
                         redo and render(self.prompts["rewrite"], draft=redo[0], phrase=redo[1],
                                         phrases=join(f"「{phrase}」" for phrase in self._never_say(style)))]
         evidence = [self._today(group, window, alone)]
+        if taught:
+            evidence.append("\n".join([render(self.prompts["taught_title"]), *(f"- {line}" for line in taught)]))
         summary = None if alone else self.store.summary(group)
         if summary:
             evidence.append(f"{render(self.prompts['summary_prefix'])}\n{summary['summary']}")
@@ -566,6 +663,10 @@ class AIChatModule:
             if facts or views:
                 instructions.append(render(self.prompts["memory_rules"]))
                 evidence += [facts, views]
+        called = self.pet_name_for(group, member)
+        if called:
+            instructions.append(render(self.prompts["pet_name_rules"]))
+            evidence.append(render(self.prompts["pet_name_title"], member=member_name, nickname=called))
         if found:
             evidence.append(render(self.prompts["web_results"], query=found[0], results=found[1]))
         return context.compose(instructions, evidence, render(self.prompts["evidence_policy"]),
@@ -742,6 +843,18 @@ class AIChatModule:
             self._spawn(self.observe(group, member, name, said, mark or reply))
         self._spawn(self.maybe_summarize(group))
 
+    def _stickers_in(self, group):
+        """{label: Sticker} of what she can send in a group: her own, then the ones its members sent
+        in and an admin accepted (/投稿表情). Her own keep their labels."""
+        if not self.member_stickers:
+            return self.stickers
+        hers = dict(self.stickers)
+        for row in self.store.member_stickers(group):
+            path = os.path.join(self.member_stickers_dir, row["file"])
+            if row["label"] not in hers and os.path.isfile(path):
+                hers[row["label"]] = stickers.Sticker(row["label"], row["note"], path)
+        return hers
+
     def _notes(self, group, member):
         """A member's memories as they're numbered everywhere: long-term facts, then recent notes."""
         return list(self.store.memories(group, member)) + list(self.store.episodes(group, member))
@@ -778,10 +891,11 @@ class AIChatModule:
     async def _send_text(self, message, reply):
         """Send a reply, with any [表情:标签] in it as that sticker: inside the reply when QQ takes
         that, otherwise right under the text. Returns the reply as it went out, for the transcript."""
-        clean, labels = stickers.extract(reply, self.stickers) if self.stickers else (reply, [])
+        hers = self._stickers_in(message.group_openid)
+        clean, labels = stickers.extract(reply, hers) if hers else (reply, [])
         if labels and self.stickers_inline and time.monotonic() >= self.inline_off_until:
             try:
-                await self._send_inline(message, clean, labels)
+                await self._send_inline(message, clean, [hers[label] for label in labels])
                 return "\n".join([clean] + [f"[表情:{label}]" for label in labels]).strip()
             except Exception as e:
                 self.inline_off_until = time.monotonic() + INLINE_RETRY_SECONDS
@@ -790,8 +904,9 @@ class AIChatModule:
             await self._reply(message, clean)
         sent = []
         for label in labels:
-            sticker = self.stickers[label]
-            url = f"{self.stickers_url.rstrip('/')}/{quote(os.path.basename(sticker.path))}" if self.stickers_url else None
+            sticker = hers[label]
+            hosted = self.stickers_url and self.stickers.get(label) is sticker     # only her own are kept there
+            url = f"{self.stickers_url.rstrip('/')}/{quote(os.path.basename(sticker.path))}" if hosted else None
             try:
                 await self.gw.send_image(message.group_openid, sticker.path, reply_to=message.id, url=url)
                 sent.append(label)
@@ -803,12 +918,11 @@ class AIChatModule:
                 await self._reply(message, clean)
         return "\n".join([clean] + [f"[表情:{label}]" for label in sent]).strip()
 
-    async def _send_inline(self, message, text, labels):
+    async def _send_inline(self, message, text, chosen):
         """The reply and its stickers as one markdown message, each sticker sticker_size px."""
         body = stickers.as_markdown(text)
         parts = [body] if body else []
-        for label in labels:
-            sticker = self.stickers[label]
+        for sticker in chosen:
             link = await self.library.link(sticker)
             parts.append(stickers.markdown_image(link, *stickers.display_size(sticker.path, self.sticker_size)))
         await self.gw.send_markdown(message.group_openid, "\n\n".join(parts), reply_to=message.id)
@@ -997,6 +1111,15 @@ class AIChatModule:
         text = stickers.extract(voice.as_text(text.strip()), {})[0]
         return text[:OPINION_SUMMARY_LIMIT] or None
 
+    async def host_soup(self, surface, truth, points, said, guess=False):
+        """The verdict of 海龟汤's host on a member's question, or on their guess, as DeepSeek wrote
+        it: modules/fun/soup.py reads it, and nobody sees it. One cheap call with the puzzle
+        and what they said, and nothing else: no persona, no chat. Raises when the call fails."""
+        prompt = render(self.prompts["soup_guess" if guess else "soup_question"], surface=surface, truth=truth,
+                        points="\n".join(f"- {point}" for point in points), said=said)
+        return await self._complete(self.client, self.helper_model, [{"role": "user", "content": prompt}],
+                                    temperature=0)
+
     async def read_fortune(self, member, level, good, bad, said):
         """Her comment on someone's 今日运势 in light of their own latest messages, or None.
 
@@ -1131,8 +1254,8 @@ class AIChatModule:
             return
         group, member = message.group_openid, message.member_openid
         facts, recent = self.store.memories(group, member), self.store.episodes(group, member)
-        seen = self._impression(group, member)
-        if not facts and not recent and not seen:
+        seen, called = self._impression(group, member), self.pet_name_for(group, member)
+        if not facts and not recent and not seen and not called:
             await self._reply(message, t("ai.memory.empty"))
             return
         lines = [t("ai.memory.title", member=message.nickname or t("common.someone"), count=len(facts) + len(recent))]
@@ -1142,6 +1265,8 @@ class AIChatModule:
             lines += [t("ai.memory.row", n=i, text=row["text"]) for i, row in enumerate(recent, len(facts) + 1)]
         if seen:
             lines.append(t("ai.memory.impression", text=seen))
+        if called:
+            lines.append(t("ai.memory.pet_name", nickname=called))
         lines.append(t("ai.memory.footer"))
         buttons = [(t("ai.memory.forget_button"), "/忘记 ")] if facts or recent else []    # typed in, for the number
         if seen:
@@ -1173,6 +1298,343 @@ class AIChatModule:
         for n in sorted(set(numbers)):
             self.store.delete_memory(rows[n - 1]["id"])
         await self._reply(message, t("ai.memory.forgot", n=join([str(n) for n in sorted(set(numbers))])))
+
+    # ---- the nickname she gives someone
+
+    def pet_name_for(self, group, member):
+        """The nickname she gave a member (/外号), or None: for her replies to them, and their /我的状态."""
+        row = self.store.pet_name(group, member) if self.enabled and self.pet_names and member else None
+        return row["text"] if row else None
+
+    async def cmd_pet_name(self, message, args):
+        """/外号: she gives the member a nickname, from what she remembers of them and how they take
+        part. /外号 换 asks for another and /外号 不要 for none. It shows on their /我的状态, and she
+        uses it now and then."""
+        group, member = message.group_openid, message.member_openid
+        name = message.nickname or t("common.someone")
+        if not self.pet_names:
+            await self._reply(message, t("ai.pet_name.disabled"))
+            return
+        row = self.store.pet_name(group, member)
+        if args in PET_NAME_DROP_WORDS:
+            if row:
+                self.store.delete_memory(row["id"])
+            await self._reply(message, t("ai.pet_name.dropped", nickname=row["text"]) if row else t("ai.pet_name.none"))
+            return
+        buttons = [[(t("ai.pet_name.again_button"), "/外号 换"), (t("ai.pet_name.drop_button"), "/外号 不要")]]
+        if row and args not in PET_NAME_AGAIN_WORDS:
+            await self._reply(message, t("ai.pet_name.mine", nickname=row["text"]), buttons=buttons)
+            return
+        if self._tried("pet_name", group, member) >= PET_NAMES_PER_DAY:
+            await self._reply(message, t("ai.pet_name.daily", max=PET_NAMES_PER_DAY))
+            return
+        known = [m["text"] for m in self._notes(group, member)] if self.memory_on else []
+        seen = self._impression(group, member) if self.memory_on else None
+        habits = self.habits_of(group, member) if self.habits_of else None
+        if not known and not seen and not (habits and habits["badges"]):
+            await self._reply(message, t("ai.pet_name.too_soon"))
+            return
+        self._try("pet_name", group, member)
+        named = await self._name_someone(name, known, seen, habits, row["text"] if row else None)
+        if named is None:
+            await self._reply(message, t("ai.pet_name.failed"))
+            return
+        self.store.set_pet_name(group, member, named[0], self._now())
+        await self._reply(message, t("ai.pet_name.given", member=name, nickname=named[0], why=named[1]),
+                          buttons=buttons)
+
+    async def _name_someone(self, member, known, seen, habits, before):
+        """(nickname, her line on why) for a member, from one call with her persona and what she knows
+        of them, which is all that goes to DeepSeek. None if it fails or the answer can't be used."""
+        who = t("talking_to")
+        persona = "\n\n".join(filter(None, [current().system_prompt, who]))
+        if habits:
+            habits = render(self.prompts["pet_name_habits"], valid=habits["valid"], night=habits["night"],
+                            morning=habits["morning"], best=habits["best"],
+                            badges=join(habits["badges"]) or "（还没有）")
+        # Who they are is said twice: after her persona alone she named captains like everyone else 4 times in 12.
+        prompt = render(self.prompts["pet_name"], member=member, known=memory.numbered(known, "（还没有）"),
+                        impression=seen or "（还没有）", habits=habits or "（不清楚）",
+                        before=render(self.prompts["pet_name_before"], before=before) if before else "",
+                        who=render(self.prompts["pet_name_who"], who=who) if who else "")
+        try:
+            raw = await self._complete(self.client, self.helper_model, [
+                {"role": "system", "content": persona},
+                {"role": "user", "content": prompt},
+            ])
+        except Exception as e:
+            _log.warning(f"[AIChat] 外号没起成: {str(e)[:120]}")
+            return None
+        named = context.parse_pet_name(raw)
+        return named and (named[0], stickers.extract(voice.as_text(named[1]), {})[0])
+
+    # ---- what members offer her, which an admin accepts: what they teach her, the stickers they send in
+
+    def _offering(self, offered):
+        """Whether members can offer her this at all."""
+        return self.teach if offered is TAUGHT else self.member_stickers
+
+    @staticmethod
+    def _room(offered):
+        """(how many of these a group can have, how many more can be waiting for an admin)."""
+        return (TAUGHT_MAX, TAUGHT_WAITING) if offered is TAUGHT else (MEMBER_STICKERS_MAX, MEMBER_STICKERS_WAITING)
+
+    @staticmethod
+    def _offered_fields(row):
+        """What a line about one of them fills in: its number, its own words, and who offered it."""
+        fields = {key: row[key] for key in ("id", "keys", "text", "label", "note") if key in row.keys()}
+        return dict(fields, member=row["nickname"] or t("common.someone"))
+
+    @staticmethod
+    def _decide_buttons(offered, rows):
+        """A row under each one that waits for an admin: keep it (QQ asks first), or don't."""
+        return [[(t(f"{offered.lines}.keep_button", id=row["id"]), f"{offered.keep} {row['id']}",
+                  t(f"{offered.lines}.ask_keep", id=row["id"])),
+                 (t(f"{offered.lines}.drop_button", id=row["id"]), f"{offered.drop} {row['id']}")] for row in rows[:5]]
+
+    def _remove_offered(self, offered, row):
+        self.store.delete_offering(offered.table, row["id"])
+        if offered is STICKERS:
+            self._drop_sticker_file(row["file"])
+
+    def _drop_sticker_file(self, file):
+        """A sticker a member sent in is gone: so is its picture. QQ's library lets go of its copy the
+        next time it's full."""
+        stickers.drop_file(self.member_stickers_dir, file)
+        if self.library is not None:
+            self.library.files.discard(file)
+
+    async def _may_offer(self, message, offered, what, per_day):
+        """Whether this member can offer her one more now: whether they're an admin, who offer as many
+        as they like and needn't wait; or None once they've been told why not."""
+        group, member = message.group_openid, message.member_openid
+        admin = self.is_admin(group, member, message.role)
+        most, waiting = self._room(offered)
+        if not admin and self._tried(what, group, member) >= per_day:
+            await self._reply(message, t(f"{offered.lines}.daily", max=per_day))
+        elif len(self.store.offered(offered.table, group)) >= most:
+            await self._reply(message, t(f"{offered.lines}.full", max=most))
+        elif not admin and len(self.store.offered(offered.table, group, accepted=False)) >= waiting:
+            await self._reply(message, t(f"{offered.lines}.queue_full", max=waiting))
+        else:
+            return admin
+        return None
+
+    async def _offer(self, message, offered, entry, admin):
+        """Tell the group what became of what a member just offered: kept at once when an admin offered
+        it, otherwise waiting, with the admins' buttons under it."""
+        row = self.store.offering(offered.table, message.group_openid, entry)
+        if admin:
+            await self._reply(message, t(f"{offered.lines}.learned", **self._offered_fields(row)))
+        else:
+            await self._reply(message, t(f"{offered.lines}.waiting", **self._offered_fields(row)),
+                              buttons=self._decide_buttons(offered, [row]))
+
+    async def _take_back(self, message, offered, args):
+        """<the offer command> 删除 编号: whoever offered it, or an admin, takes one back."""
+        group = message.group_openid
+        number = re.search(r"\d+", args)
+        if not number:
+            await self._reply(message, t(f"{offered.lines}.delete_usage"))
+            return
+        row = self.store.offering(offered.table, group, int(number.group(0)))
+        if row is None:
+            await self._reply(message, t(f"{offered.lines}.not_found", id=number.group(0)))
+        elif row["member_openid"] != message.member_openid and not self.is_admin(group, message.member_openid,
+                                                                                message.role):
+            await self._reply(message, t(f"{offered.lines}.not_yours"))
+        else:
+            self._remove_offered(offered, row)
+            await self._reply(message, t(f"{offered.lines}.deleted", **self._offered_fields(row)))
+
+    async def cmd_offered(self, offered, message, args):
+        """/她学会的 or /她的表情, with a page number if wanted: what this group's members have given
+        her, the latest first, and what still waits for an admin."""
+        group = message.group_openid
+        if not self._offering(offered):
+            await self._reply(message, t(f"{offered.lines}.disabled"))
+            return
+        kept = self.store.offered(offered.table, group)[::-1]
+        waiting = self.store.offered(offered.table, group, accepted=False)
+        more = [(t(f"{offered.lines}.offer_button"), f"{offered.offer} ")]      # typed in, for them to finish
+        if not kept and not waiting:
+            await self._reply(message, t(f"{offered.lines}.list_empty"), buttons=[more])
+            return
+        pages = max(1, -(-len(kept) // LIST_PAGE))
+        number = re.search(r"\d+", args)
+        page = min(pages, max(1, int(number.group(0)))) if number else 1
+        lines = [t(f"{offered.lines}.list_title", count=len(kept))]
+        lines += [t(f"{offered.lines}.list_row", **self._offered_fields(row))
+                  for row in kept[(page - 1) * LIST_PAGE:page * LIST_PAGE]]
+        if page < pages:
+            lines.append(t(f"{offered.lines}.list_more", page=page + 1))
+        if waiting and page == 1:
+            lines.append(t(f"{offered.lines}.list_waiting", count=len(waiting)))
+            lines += [t(f"{offered.lines}.list_row", **self._offered_fields(row)) for row in waiting]
+        admin = self.is_admin(group, message.member_openid, message.role)
+        await self._reply_list(message, lines,
+                               buttons=self._decide_buttons(offered, waiting) if admin and waiting else [more])
+
+    async def _decided(self, offered, message, args):
+        """The one an admin's keep or drop command is about, or None once they've been told why not.
+        With no number it's the one that's waiting, when there is just one."""
+        group = message.group_openid
+        if not self._offering(offered) or not self.is_admin(group, message.member_openid, message.role):
+            await self._reply(message, t("common.not_admin" if self._offering(offered) else f"{offered.lines}.disabled"))
+            return None
+        number = re.search(r"\d+", args)
+        waiting = self.store.offered(offered.table, group, accepted=False)
+        if not number and len(waiting) != 1:
+            await self._reply(message, t(f"{offered.lines}.decide_usage"))
+            return None
+        row = self.store.offering(offered.table, group, int(number.group(0))) if number else waiting[0]
+        if row is None:
+            await self._reply(message, t(f"{offered.lines}.not_found", id=number.group(0)))
+        return row
+
+    async def cmd_keep(self, offered, message, args):
+        """/记下 编号 or /收下 编号 (admins): she keeps what a member offered."""
+        row = await self._decided(offered, message, args)
+        if row is None:
+            return
+        most = self._room(offered)[0]
+        if not row["accepted"] and len(self.store.offered(offered.table, message.group_openid)) >= most:
+            await self._reply(message, t(f"{offered.lines}.full", max=most))
+            return
+        self.store.accept_offering(offered.table, row["id"])
+        await self._reply(message, t(f"{offered.lines}.kept", **self._offered_fields(row)))
+
+    async def cmd_drop(self, offered, message, args):
+        """/不记 编号 or /不收 编号 (admins): she doesn't keep it, or lets go of one she had kept."""
+        row = await self._decided(offered, message, args)
+        if row is not None:
+            self._remove_offered(offered, row)
+            await self._reply(message, t(f"{offered.lines}.dropped", **self._offered_fields(row)))
+
+    async def cmd_teach(self, message, args):
+        """/教她 词：意思: what a word means in this group, for her to know when it comes up. It waits for
+        an admin's /记下 unless an admin wrote it. /教她 删除 编号 takes back one's own."""
+        group, member = message.group_openid, message.member_openid
+        if not self.teach:
+            await self._reply(message, t("ai.teach.disabled"))
+            return
+        words = args.split()
+        if words and words[0] in DELETE_WORDS:
+            await self._take_back(message, TAUGHT, " ".join(words[1:]))
+            return
+        known, waiting = self.store.taught(group), self.store.taught(group, accepted=False)
+        limits = dict(max_keys=context.TEACH_KEYS, min_key=context.TEACH_KEY[0], max_key=context.TEACH_KEY[1],
+                      min_text=context.TEACH_TEXT[0], max_text=context.TEACH_TEXT[1])
+        if not args:
+            await self._reply(message, t("ai.teach.usage", count=len(known), **limits),
+                              buttons=[[(t("ai.teach.list_button"), TAUGHT.listing)]])
+            return
+        try:
+            keys, meaning = context.parse_teaching(args)
+        except ValueError as e:
+            await self._reply(message, t(f"ai.teach.bad_{e}", **limits))
+            return
+        if memory.looks_sensitive(args):
+            await self._reply(message, t("ai.teach.refused.personal"))
+            return
+        if any(set(row["keys"].split("、")) == set(keys) and row["text"] == meaning for row in known + waiting):
+            await self._reply(message, t("ai.teach.known"))
+            return
+        admin = await self._may_offer(message, TAUGHT, "teach", TEACH_PER_DAY)
+        if admin is None:
+            return
+        self._try("teach", group, member)
+        why = await self._teach_refusal(keys, meaning)
+        if why:
+            await self._reply(message, t(f"ai.teach.refused.{why}"))
+            return
+        entry = self.store.add_taught(group, member, message.nickname, keys, meaning, self._now(), accepted=admin)
+        _log.info(f"[AIChat] 有人教了她一条群里的说法（#{entry}），{'管理员教的，已经记下' if admin else '等管理员点头'}")
+        await self._offer(message, TAUGHT, entry, admin)
+
+    async def _teach_refusal(self, keys, meaning):
+        """Why something a member wants to teach her can't be kept, or None. One cheap call that sees
+        only those words. If it fails, the admin who accepts it is the check."""
+        prompt = render(self.prompts["teach_check"], keys="、".join(keys), text=meaning)
+        try:
+            raw = await self._complete(self.client, self.helper_model, [{"role": "user", "content": prompt}],
+                                       temperature=0)
+        except Exception as e:
+            _log.warning(f"[AIChat] 群友教的这一条没查成，留给管理员看: {str(e)[:120]}")
+            return None
+        return context.teach_refusal(raw)
+
+    async def cmd_submit(self, message, args):
+        """/投稿表情 [标签], sent with a picture or while quoting one: a sticker for her to use in this
+        group. It's looked at twice, for real people and for what it's good for, and then waits for an
+        admin's /收下 unless an admin sent it. /投稿表情 删除 编号 takes back one's own."""
+        group, member = message.group_openid, message.member_openid
+        if not self.member_stickers:
+            await self._reply(message, t("ai.submit.disabled"))
+            return
+        words = args.split()
+        if words and words[0] in DELETE_WORDS:
+            await self._take_back(message, STICKERS, " ".join(words[1:]))
+            return
+        megabytes = stickers.SUBMIT_BYTES // (1024 * 1024)
+        if not message.images:
+            await self._reply(message, t("ai.submit.usage", mb=megabytes),
+                              buttons=[[(t("ai.submit.list_button"), STICKERS.listing)]])
+            return
+        wanted = stickers.clean_label(args) if args else None
+        if args and wanted is None:
+            await self._reply(message, t("ai.submit.bad_label", max=stickers.SUBMIT_LABEL))
+            return
+        admin = await self._may_offer(message, STICKERS, "sticker", SUBMITS_PER_DAY)
+        if admin is None:
+            return
+        if self.store.posts_since(group, "sticker", self._midnight()) >= GROUP_SUBMITS_PER_DAY:
+            await self._reply(message, t("ai.submit.group_daily"))
+            return
+        try:
+            data, kind = await self.fetch_picture(message.images[0][0].get("url"))
+        except vision.PictureError as e:
+            await self._reply(message, t("ai.submit.fetch_failed", why=t(f"ai.picture_test.why.{e.reason}", detail=e.detail)))
+            return
+        digest = hashlib.sha1(data).hexdigest()
+        taken = self.store.member_stickers(group) + self.store.member_stickers(group, accepted=False)
+        if kind not in stickers.SUBMIT_FORMATS:
+            await self._reply(message, t("ai.submit.bad_format"))
+        elif len(data) > stickers.SUBMIT_BYTES:
+            await self._reply(message, t("ai.submit.too_big", mb=megabytes))
+        elif any(row["digest"] == digest for row in taken):
+            await self._reply(message, t("ai.submit.known"))
+        else:
+            self._try("sticker", group, member)
+            self.store.add_post(group, "sticker", self._now())
+            drafted = await self._look_at_sticker(vision.data_url(data, kind))
+            if not isinstance(drafted, tuple):
+                await self._reply(message, t(f"ai.submit.refused.{drafted}" if drafted else "ai.submit.failed"))
+                return
+            label = stickers.unique_label(wanted or drafted[0], {*self.stickers, *(row["label"] for row in taken)})
+            entry = self.store.add_member_sticker(group, member, message.nickname, label, drafted[1], digest,
+                                                  self._now(), accepted=admin)
+            file = stickers.keep_file(self.member_stickers_dir, entry, data, kind)
+            self.store.set_member_sticker_file(entry, file)
+            if self.library is not None:
+                self.library.files.add(file)
+            _log.info(f"[Stickers] 有人投稿了一张表情（#{entry}），{'管理员投的，已经收下' if admin else '等管理员点头'}")
+            await self._offer(message, STICKERS, entry, admin)
+
+    async def _look_at_sticker(self, picture):
+        """What two calls that get only the picture say of a sticker a member sent in: (label, when
+        to use it); or why it can't be used, "people" among the reasons; or None when it couldn't be
+        looked at. Real people, or not being sure there are none, turns it down."""
+        if not await self.no_people_in([picture]):
+            return "people"
+        try:
+            raw = await self._complete(self.client, self.vision_model, [
+                {"role": "user", "content": context.with_pictures(render(self.prompts["sticker_draft"]), [picture])}],
+                temperature=0)
+        except Exception as e:
+            _log.warning(f"[Stickers] 投稿的表情没看成: {str(e)[:200]}")
+            return None
+        return stickers.parse_draft(raw)
 
     async def cmd_reset(self, message, args):
         """/重置对话 (admins): start the group's conversation over. Members' memories stay."""
@@ -1240,20 +1702,32 @@ class AIChatModule:
 
     def forget_member(self, group, member):
         if self.enabled:
+            for row in self.store.offerings_by(STICKERS.table, group, member):
+                self._drop_sticker_file(row["file"])
             self.store.forget_member(group, member)
             self._deleted(group)
 
     def forget_memories(self, group, member):
         """Someone's memories and impression, when they've been gone long enough. Unlike a deletion on
-        request this keeps the group's summary, which the group still needs and has long moved on."""
+        request this keeps the group's summary, which the group still needs and has long moved on, and
+        what they taught her and the stickers they sent in, which stay the group's without their name."""
         if self.enabled:
             self.store.clear_memories(group, member)
+            for offered in (TAUGHT, STICKERS):
+                for row in self.store.offerings_by(offered.table, group, member):
+                    if not row["accepted"]:
+                        self._remove_offered(offered, row)
+                self.store.disown_offerings(offered.table, group, member)
 
     def forget_group(self, group):
         if self.enabled:
+            for accepted in (True, False):
+                for row in self.store.member_stickers(group, accepted):
+                    self._drop_sticker_file(row["file"])
             self.store.forget_group(group)
             for waiting in (self.heard_since, self.heard, self.heard_saved, self.topic_wait):
                 waiting.pop(group, None)
+            self.tries = {key: tries for key, tries in self.tries.items() if key[1] != group}
             self._deleted(group)
 
     async def housekeeping(self):
@@ -1265,6 +1739,9 @@ class AIChatModule:
             if last_old is not None:
                 await self.maybe_summarize(group, up_to_id=last_old)
         self.store.prune(cutoff)
+        for offered in (TAUGHT, STICKERS):      # nobody accepted these: they go
+            for row in self.store.stale_offerings(offered.table, self._now() - OFFER_WAIT_DAYS * DAY):
+                self._remove_offered(offered, row)
         if not self.memory_on:
             return
         # The night's consolidation, like sleep; notes left over from a missed night go too.

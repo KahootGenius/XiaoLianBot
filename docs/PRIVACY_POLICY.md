@@ -36,7 +36,7 @@
      - 每位成员**最近一次有效发言的前 30 个字**，仅用于成员通过 `/我的状态` 查看自己的记录（群管理员可在配置中关闭）。
 
 4. **群管理记录**（仅开启群管理的群）
-   有效发言计数与连续天数、成就、请假记录（起止时间和成员自己填写的原因）、豁免名单、提醒与移出记录。成就还会用到几项次数：参加过几次投票和意见征集、`/晚安` 后睡够 7–9 小时再 `/早安` 的次数，以及生日当天是否来过群里（只记次数）。
+   有效发言计数与连续天数、成就、请假记录（起止时间和成员自己填写的原因）、豁免名单、提醒与移出记录。成就还会用到几项次数：参加过几次投票和意见征集、`/晚安` 后睡够 7–9 小时再 `/早安` 的次数、猜中过几次海龟汤，以及生日当天是否来过群里（只记次数）。
    如果 QQ 平台向本机器人开放了群成员列表接口，还会读取成员列表中的昵称、角色（群主/管理员/成员）和入群时间，用于统计从未发言的成员。
 
 5. **组队游戏记录**（仅在管理员开启组队游戏后）
@@ -49,12 +49,16 @@
    - 每个群的对话和记忆分开保存，在一个群里说的话不会出现在另一个群。
    - 若运营者开启「AI 看全部聊天」（仅在开启群管理的群里有效）：群里**所有**的文字消息（含发言人的昵称，不含指令）也会作为 AI 对话记录保存，和上面的对话记录一样保留 7 天、并入群聊总结，用于让它了解群里在聊什么。
    - 若运营者为某些群开启「主动开话题」：在这些群里只记录**最后一条消息的时间**（不含内容和发言人），用于判断群里是否已经安静了一段时间。
+   - 成员用 `/外号` 让本机器人给自己起的**外号**（每人一个，不超过 8 个字）：根据该成员的长期记忆、印象，以及（在开启群管理的群里）TA 的发言统计和成就起的，会显示在该成员的 `/我的状态` 里，也用于之后的聊天。
+   - 成员用 `/教她` 教给本机器人的**群里的说法**：词语、它的意思（不超过 60 字），以及教的成员的成员标识和昵称。管理员确认后，聊到这些词语时会用到；`/她学会的` 会公开列出每条说法和教的人的昵称。不收带有手机号、账号等信息的说法。
+   - 若运营者开启「投稿表情」：成员用 `/投稿表情` **主动投稿**的图片，照图起的标签和说明，以及投稿成员的成员标识和昵称。图片保存在本机器人的服务器上；管理员确认后，本机器人会在**投稿的那个群**里发送它；`/她的表情` 会公开列出标签和投稿人的昵称。有真人的图片不收。
 
 7. **互动功能**
    - 成员**自己登记**的生日（只有月和日），用于当天祝福和 `/本月生日`。
    - 投票的问题、选项，以及每位投票者的成员标识、昵称和所选的选项；投票结果会公开显示投票者的昵称。
    - 意见征集的主题，以及每条意见的内容、提意见的成员的成员标识和昵称；征集结束时会公开列出每条意见和提意见的人的昵称。另外记下每位成员参加过哪些意见征集（只有征集编号和成员标识），撤回意见后也保留，这样每次征集只计入成就一次。
    - `/翻牌子` 当天翻到了谁，用于每人每天只能翻一次。
+   - 海龟汤（情境推理游戏）：开题和猜中的成员的成员标识与昵称；每个问题、每次猜测的内容，提问成员的成员标识与昵称，以及得到的回答，用于向后来的人显示已经问出了什么；另外记下每个群玩过哪些题目（不含任何成员信息），避免重复出题。
 
 8. **运行日志**
    服务器运行日志中会记录成员标识（member_openid）与指令调用记录，用于故障排查。
@@ -78,6 +82,10 @@
 **AI 对话功能（含 `/服务器QA`）：** 当用户使用该功能时，以下内容将被传输至 **DeepSeek**（api.deepseek.com）以生成回复：用户发送的**消息内容**；该群最近与机器人的对话（含发言人的昵称）和群聊总结；参与对话的成员的长期记忆和本机器人对他们的印象；若运营者开启「AI 看全部聊天」，还包括群里最近的全部聊天（含昵称），群聊总结也会包括这些聊天；运营者在配置中为个别成员写的身份说明（例如“机器人的作者”），连同该成员当前的昵称；当天组队游戏的队伍名单（昵称和游戏状态）、当天过生日的成员的昵称、正在进行的投票（问题、选项和票数，不含投票人），以及正在进行的意见征集（主题和已收到的条数）。每次回复前，机器人会把这条消息和它上一条回复发给 DeepSeek，判断回复的风格和长短；每次回复后，还会把这一轮对话发给 DeepSeek（最多两次），用于整理和核对发言人的长期记忆和印象；每天整理记忆时，会把这位成员最近的片段和现有的长期记忆发给 DeepSeek 归纳。每周小报（统计数字和上榜成员的昵称）也会发给 DeepSeek，生成一两句点评。意见征集结束时，若收到 3 条以上意见，会把征集的主题和全部意见（不含提意见的人）发给 DeepSeek，生成一段总结。若运营者开启「今日运势解读」，成员使用 `/今日运势` 时，会把抽到的运势、该成员的昵称和**该成员自己**最近的最多 10 条消息（不含其他任何成员的消息）发给 DeepSeek，写一两句点评。在开启「主动开话题」的群里，群里安静一段时间后，机器人会把该群最近与它的对话和群聊总结发给 DeepSeek，由它主动说一句话。传输内容**不包含**成员标识或群组标识（member_openid、group_openid）。`/服务器QA` 只传输问题本身。请勿通过 AI 对话功能发送敏感或私密信息。DeepSeek 的数据处理方式适用其自身隐私政策。
 
 > 若部署时未配置 DeepSeek 密钥，AI 对话与 `/服务器QA` 功能将自动停用，届时不存在任何第三方数据传输。
+
+**起外号、教她、海龟汤：** 成员使用 `/外号` 时，会把该成员的昵称、长期记忆、本机器人对 TA 的印象，以及（在开启群管理的群里）TA 的发言统计和成就名称发给 **DeepSeek**，生成一个外号；起好的外号之后会随该成员与本机器人的对话一起发送。成员使用 `/教她` 时，会把这条说法（词语和意思，不含昵称）发给 DeepSeek，判断是否适合保存；管理员确认后的说法，在聊到相关词语时会随对话一起发送（不含是谁教的）。玩海龟汤时，每个问题和每次猜测的内容（不含昵称）会连同题目和答案发给 DeepSeek，由它判断「是」「不是」「无关」或是否猜中；进行中的海龟汤的题面（不含答案）会随对话一起发送。
+
+**投稿表情：** 若运营者开启这项功能，成员用 `/投稿表情` 投稿的图片会发送至 **DeepSeek** 两次：一次只带图片，询问图里有没有真人（有真人、或无法确定的不收）；一次用于判断内容是否合适，并给它起标签。两次都不包含昵称、成员标识和群里的任何聊天。管理员确认后的表情，在本机器人第一次发送时会上传到 **QQ 开放平台**的图片素材库。
 
 **联网搜索：** 消息需要最新信息时（例如天气、汇率、新闻、最新版本），本机器人会根据这条消息写一个搜索词，发送至 **DeepSeek** 的搜索服务（api.deepseek.com）。搜索词不包含昵称或成员标识；查到的网页内容只用于这一条回复。运营者可以关闭这项功能。
 
@@ -103,16 +111,20 @@
 - **长期记忆**：每人最多 8 条，最弱的一条先被删除；很久没再提起的会自动忘掉（一般几周到几个月，越重要、被提起越多的保留越久）；也可由成员用 `/忘记` 删除、管理员按要求删除；成员离开群聊满 180 天，或本机器人被移出该群时，一并删除。
 - **最近的片段**：每天凌晨整理成长期记忆后即删除，一般不超过 2 天。
 - **印象**：每人一句，新的替换旧的；保留到成员用 `/忘记 印象` 或 `/忘记 全部` 删除、管理员按要求删除、成员离开群聊满 180 天，或本机器人被移出该群为止。
+- **外号**：每人一个，新的替换旧的；保留到成员用 `/外号 不要` 或 `/忘记 全部` 删除、管理员按要求删除、成员离开群聊满 180 天，或本机器人被移出该群为止。
+- **`/教她` 教的说法**：保留到教的成员自己（`/教她 删除 编号`）或管理员删除为止；管理员 **14 天**内没有确认的自动删除；管理员按要求删除某位成员的数据时，TA 教的说法一并删除。成员离开群聊满 180 天后，管理员确认过的说法继续保留，但**不再保留是谁教的**。
+- **投稿的表情**（仅在运营者开启时）：图片和它的标签保留到投稿的成员自己（`/投稿表情 删除 编号`）或管理员删除为止；管理员 **14 天**内没有确认的自动删除；管理员按要求删除某位成员的数据时，TA 投稿的表情连同图片一并删除。成员离开群聊满 180 天后，管理员确认过的表情继续保留，但**不再保留是谁投稿的**。每次投稿的时间保留 **7 天**，用于每个群每天的次数限制。
 - **AI 看全部聊天**（仅在运营者开启时）：群里的聊天和上面的 AI 对话记录一样，保存 **7 天**后自动删除。
 - **主动开话题**（仅在运营者开启的群）：每个群只保留最后一条消息的时间，新的替换旧的；本机器人被移出该群时删除。
 - **生日**：保留到成员自己用 `/生日 删除` 删除、管理员按要求删除、成员离开群聊满 180 天，或本机器人被移出该群为止。
 - **投票**：结束 **30 天**后连同投票记录一起删除；进行中的投票 7 天后自动结束。
 - **意见征集**：结束 **30 天**后连同全部意见和参加记录一起删除；没人结束的征集 30 天后自动关闭。
 - **`/翻牌子` 的记录**：2 天后删除。
+- **海龟汤**：一碗结束 **7 天**后，连同其中的问题和猜测一起删除；没人猜中的 **24 小时**后自动结束。管理员按要求删除某位成员的数据时，TA 的问题和猜测一并删除。每个群玩过哪些题目（不含成员信息）保留到本机器人被移出该群为止。
 - **今日运势解读**（仅在运营者开启时）：每位成员最近的消息只暂存在服务器内存中，每人最多 20 条，每条最多保留约 **1 天**，不写入硬盘，机器人重启即清除；指令和只有表情、数字或标点的消息不会发送；点评只保留当天。管理员按要求删除数据、本机器人被移出该群时一并清除。
 - **联网搜索**：不保存搜索词和查到的内容，只记下每次搜索的时间，用于每个群每天的次数限制，**7 天**后删除。
 - **看图**：图片和图片链接都不保存：图片下载到服务器内存，用完就丢弃，不写入硬盘，聊天记录里只留一个「[图片]」记号。机器人对图片的回复和其他回复一样保存。只记下每次看图的时间，用于每个群每天的次数限制，**7 天**后删除。
-- **本机器人被移出某个群时**：立即删除该群的全部群管理数据、队伍名单、AI 对话记录、群聊总结、长期记忆、生日、投票和意见征集。
+- **本机器人被移出某个群时**：立即删除该群的全部群管理数据、队伍名单、AI 对话记录、群聊总结、长期记忆、外号、教的说法、投稿的表情（含图片）、生日、投票、意见征集和海龟汤。
 - 群组绑定、订阅状态、游戏状态、睡眠记录**仅保存在服务器内存中**，机器人重启后即全部清除；睡眠记录在记录后 **24 小时**自动删除。
 - 运行日志保留期不超过 **30 天**，到期自动删除。
 - **服务终止时**，我们将在 **24 小时内**删除全部用户数据，包括运行日志。
@@ -131,7 +143,8 @@
 
 - `@小莲 /我的状态` —— 查看本机器人记录的自己的活跃情况；
 - `@小莲 /请假`、`/销假` —— 因考试、工作、健康等原因暂停计时；
-- `@小莲 /我的记忆` —— 查看本机器人记下的关于自己的长期记忆和对自己的印象；`/忘记 序号`、`/忘记 印象` 或 `/忘记 全部` 删除；
+- `@小莲 /我的记忆` —— 查看本机器人记下的关于自己的长期记忆、对自己的印象和给自己起的外号；`/忘记 序号`、`/忘记 印象` 或 `/忘记 全部` 删除；
+- `@小莲 /外号 不要` —— 删除本机器人给自己起的外号；`/教她 删除 编号`、`/投稿表情 删除 编号` —— 删除自己教的说法、自己投稿的表情（编号见 `/她学会的`、`/她的表情`）；
 - `/mc解绑`、`epicTD` / `steamTD` —— 解除服务器绑定、取消推送订阅；
 - 将机器人移出群聊 —— 停止该群的一切数据处理，并删除该群的全部群管理数据、队伍名单和 AI 对话数据。
 
@@ -178,9 +191,17 @@ splits managed and unmanaged groups.
   - with `ai_chat.hear_all` on, in managed groups: every text message in the group (not commands),
     with nicknames, kept like the messages above
   - in groups listed under `ai_chat.topics`: the time of the last message there, nothing else
+  - the nickname she gave a member who asked for one with `/外号` (`ai_chat.pet_names`): one each,
+    8 characters at most
+  - what members teach her with `/教她` (`ai_chat.teach`): the words, what they mean, and who
+    taught it
+  - with `ai_chat.member_stickers` on: the pictures members send in with `/投稿表情`, as files in
+    `data/member_stickers/`, each with its label, the line on when to use it, and who sent it
 - For the social features (`data/fun.db`): birthdays members register, polls with who voted for
   what, 征集意见 with each opinion and who wrote it, which 征集 each member joined (kept after a
-  撤回, so each counts toward a badge once), and whom each member drew in `/翻牌子` today.
+  撤回, so each counts toward a badge once), and whom each member drew in `/翻牌子` today. For
+  海龟汤: who opened and who solved each one, every question and guess with who sent it and the
+  answer it got, and which puzzles each group has had (nothing about members in that).
 - Runtime logs.
 
 **Explicitly not collected:** QQ numbers, phone numbers, passwords, ID documents, location,
@@ -224,6 +245,20 @@ her comment. In groups under
 and its summary are sent so she can speak up. Her day is planned from the persona alone. No openids are sent. `/服务器QA` sends only the question. The classifier runs locally, so nothing from the
 manager leaves the server except QQ API calls.
 
+The newer commands each send DeepSeek only what they need:
+- `/外号`: that member's nickname, memories and impression, and in a managed group a few of their
+  counts, their longest streak and the names of their badges. The nickname she gives then rides
+  along with her replies to that member, and nobody else's.
+- `/教她`: the words and their meaning, without who wrote them, for a check that it explains a
+  word and isn't an order, personal details, an insult or unfit content. What an admin accepted
+  rides along with a reply when one of its words came up in the last few turns, again without who
+  taught it, and never beside a picture with real people in it.
+- `/投稿表情` (`ai_chat.member_stickers`): the picture, twice, each time with a fixed question and
+  nothing of the group: whether real people are in it, and whether it's fit to use and what to
+  label it. An accepted sticker goes to QQ's image library the first time she sends it.
+- 海龟汤: each question and guess, without who sent it, with the puzzle and its truth, for the
+  host's verdict. Her chat is told the open puzzle's 汤面, never its truth.
+
 **Retention, and where each is enforced:**
 
 | Data | Kept for | Enforced by |
@@ -237,6 +272,10 @@ manager leaves the server except QQ API calls.
 | AI chat memories | until they fade (weeks to months, longer when important or mentioned again), `/忘记`, `/删除数据`, 180 days after they leave, or the bot leaves; 8 per member, weakest dropped | `ai_chat.memories_per_member`, `AIChatModule.fade`, `modules/ai/memory.py` |
 | Recent notes, before consolidation | until the night's consolidation, usually under 2 days | `AIChatModule.consolidate`, `NOTES_LEFT_DAYS` |
 | AI chat impressions | one per member, replaced when it changes; until `/忘记 印象`, `/忘记 全部`, `/删除数据`, 180 days after they leave, or the bot leaves | `ChatStore.set_impression` |
+| The nickname she gave a member (`/外号`) | one per member, replaced by the next; until `/外号 不要`, `/忘记 全部`, `/删除数据`, 180 days after they leave, or the bot leaves | `ChatStore.set_pet_name`, kept with the memories |
+| What members taught her (`/教她`) | until whoever taught it or an admin deletes it, `/删除数据`, or the bot leaves; one no admin accepts goes after 14 days. 180 days after its teacher has left, an accepted one stays without their name | `OFFER_WAIT_DAYS`, `AIChatModule.housekeeping`, `forget_memories`, `ChatStore.disown_offerings` |
+| Stickers members sent in (`ai_chat.member_stickers`), files included | the same as what they taught her | the same, and `stickers.drop_file` |
+| When a sticker was sent in | 7 days, like AI chat turns: the group's daily limit counts them | `ChatStore.prune` |
 | Group chat that didn't @ the bot (`ai_chat.hear_all`) | 7 days, like AI chat turns, after being folded into the summary | `ai_chat.keep_days`, `AIChatModule.housekeeping` |
 | Last message time in a topic group (`ai_chat.topics`) | one per group, replaced by the next; until the bot leaves | `ChatStore.set_heard`, `forget_group` |
 | Her day, and when she spoke up, sent a voice message, searched or looked at a picture | 7 days, like AI chat turns | `ChatStore.prune` |
@@ -245,9 +284,11 @@ manager leaves the server except QQ API calls.
 | Polls and votes | 30 days after closing; open polls close after 7 days | `POLL_KEEP_DAYS`, `POLL_DAYS` in `modules/fun/social/module.py` |
 | 征集意见, their opinions and who joined them | 30 days after ending; one nobody ends closes after 30 days | `OPINION_KEEP_DAYS`, `OPINION_DAYS` |
 | `/翻牌子` marks | 2 days | `SocialModule._prune` |
+| 海龟汤, with their questions and guesses | 7 days after ending; one nobody solves closes after 24 hours | `SOUP_KEEP_DAYS`, `SOUP_HOURS` in `modules/fun/social/module.py` |
+| Which puzzles a group has had | until the bot leaves; nothing about members | `FunStore.soup_played`, `forget_group` |
 | A member's latest messages, for `/今日运势` (`ai_chat.fortune`) | in memory only, never on disk: at most 20 each, each for about a day; gone on restart, `/删除数据` or when the bot leaves. Commands and messages of only emoji, numbers or punctuation aren't sent. Her comment stays for that day | `RECENT_KEPT`, `RECENT_SECONDS` in `modules/fun/social/module.py` |
 | A group's data after the bot is removed | deleted immediately (manager data, rosters, AI chat) | `on_group_del_robot` in `main.py` |
-| Deletion on request | when an admin runs it (also takes them off every team; deletes their AI chat turns and memories, the group's summary, their birthday, votes, opinions and the 征集 they joined, and their ID on removal lists and in what they did as an admin) | `/删除数据` with an @, or the whole nickname for someone who has left |
+| Deletion on request | when an admin runs it (also takes them off every team; deletes their AI chat turns, memories and nickname, what they taught her and the stickers they sent in, the group's summary, their birthday, votes, opinions and the 征集 they joined, their questions and guesses in 海龟汤, and their ID on removal lists and in what they did as an admin) | `/删除数据` with an @, or the whole nickname for someone who has left |
 | botpy logs | 7 rotated files (< 30 days) | botpy's own `TimedRotatingFileHandler` |
 
 ### Before you submit, check these
@@ -271,3 +312,9 @@ manager leaves the server except QQ API calls.
 9. **Pictures:** the 看图 paragraph is worded for groups where it's on, so it reads correctly either
    way. Before listing a group in `ai_chat.vision.groups`, tell its members: pictures they @ the bot
    with go to DeepSeek.
+10. **Stickers from members:** the 投稿表情 sentences are worded for when it's on. With
+    `ai_chat.member_stickers: false` (the default) they don't apply. Before switching it on, tell
+    the group: a picture they send in goes to DeepSeek and is kept on the server until it's deleted.
+11. **Nicknames, taught phrases and 海龟汤:** these are on by default once there's a DeepSeek key.
+    If you switch one off (`ai_chat.pet_names`, `ai_chat.teach`, `social.soup`), delete its
+    sentences from sections 一, 三, 四 and 七.

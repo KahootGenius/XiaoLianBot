@@ -7,7 +7,8 @@ ai_chat.keep_days (7 by default). The rolling summary and members' memories
 stay until they are reset or deleted. Her own day, and when she spoke up or
 sent a voice message, are kept as long as raw turns; in groups where she may
 start topics, so is the time of the last message there, and nothing else
-about it. See docs/PRIVACY_POLICY.md.
+about it. What members teach her with /教她, and the stickers they send in with
+/投稿表情, stay until someone deletes them. See docs/PRIVACY_POLICY.md.
 """
 import os
 import sqlite3
@@ -37,7 +38,8 @@ CREATE TABLE IF NOT EXISTS memories (
     member_openid TEXT NOT NULL,
     text TEXT NOT NULL,
     created_at INTEGER NOT NULL,
-    kind TEXT NOT NULL DEFAULT 'fact',   -- fact: long-term; episode: a recent note; impression: the bot's view
+    kind TEXT NOT NULL DEFAULT 'fact',   -- fact: long-term; episode: a recent note; impression: the bot's view;
+                                         -- pet_name: the nickname she gave them (/外号)
     importance INTEGER NOT NULL DEFAULT 6,   -- 1-10, scored when it was noted (modules/ai/memory.py)
     reinforced INTEGER NOT NULL DEFAULT 0,   -- times the topic came up again
     reinforced_at INTEGER                    -- when it last did; NULL: never, count from created_at
@@ -60,7 +62,33 @@ CREATE TABLE IF NOT EXISTS heard (
     group_openid TEXT PRIMARY KEY,
     ts INTEGER NOT NULL              -- when a member last said anything there; only the time
 );
+CREATE TABLE IF NOT EXISTS taught (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_openid TEXT NOT NULL,
+    member_openid TEXT NOT NULL,     -- who taught it (/教她); '' once they've been gone long enough
+    nickname TEXT,
+    keys TEXT NOT NULL,              -- the keywords, joined with 、
+    text TEXT NOT NULL,              -- what they mean in this group
+    accepted INTEGER NOT NULL DEFAULT 0,     -- 0: still waiting for an admin
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_taught_group ON taught (group_openid, accepted, id);
+CREATE TABLE IF NOT EXISTS member_stickers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_openid TEXT NOT NULL,
+    member_openid TEXT NOT NULL,     -- who sent it in (/投稿表情); '' once they've been gone long enough
+    nickname TEXT,
+    label TEXT NOT NULL,             -- what she writes to send it: [表情:标签]
+    note TEXT NOT NULL,              -- when to use it, drafted from the picture
+    digest TEXT NOT NULL,            -- the picture's sha1, so the same one isn't sent in twice
+    file TEXT NOT NULL DEFAULT '',   -- its name in data/member_stickers/
+    accepted INTEGER NOT NULL DEFAULT 0,     -- 0: still waiting for an admin
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_member_stickers_group ON member_stickers (group_openid, accepted, id);
 """
+# The tables of what members offer her, which wait for an admin to accept them.
+OFFERED = ("taught", "member_stickers")
 
 
 class ChatStore:
@@ -187,6 +215,18 @@ class ChatStore:
         self._write("INSERT INTO memories (group_openid, member_openid, text, created_at, kind) "
                     "VALUES (?, ?, ?, ?, 'impression')", group, member, text, ts)
 
+    def pet_name(self, group, member):
+        """The nickname she gave a member (/外号), or None."""
+        return self._one("SELECT * FROM memories WHERE group_openid = ? AND member_openid = ? "
+                         "AND kind = 'pet_name'", group, member)
+
+    def set_pet_name(self, group, member, text, ts):
+        """One nickname per member: the new one replaces the old."""
+        self._write("DELETE FROM memories WHERE group_openid = ? AND member_openid = ? AND kind = 'pet_name'",
+                    group, member)
+        self._write("INSERT INTO memories (group_openid, member_openid, text, created_at, kind) "
+                    "VALUES (?, ?, ?, ?, 'pet_name')", group, member, text, ts)
+
     def add_memory(self, group, member, text, ts, kind="fact", importance=6):
         self._write("INSERT INTO memories (group_openid, member_openid, text, created_at, kind, importance) "
                     "VALUES (?, ?, ?, ?, ?, ?)", group, member, text, ts, kind, importance)
@@ -205,7 +245,7 @@ class ChatStore:
         self._write("UPDATE memories SET text = ? WHERE id = ?", text, memory_id)
 
     def clear_memories(self, group, member):
-        """Every memory of one member, their impression included."""
+        """Every memory of one member, their impression and the nickname she gave them included."""
         return self._write("DELETE FROM memories WHERE group_openid = ? AND member_openid = ?",
                            group, member).rowcount
 
@@ -238,15 +278,75 @@ class ChatStore:
         self._write("INSERT INTO heard (group_openid, ts) VALUES (?, ?) "
                     "ON CONFLICT(group_openid) DO UPDATE SET ts = excluded.ts", group, ts)
 
+    # ---- what members offer her, which an admin accepts: what they teach her, the stickers they send in
+
+    def add_taught(self, group, member, nickname, keys, text, ts, accepted=False):
+        return self._write("INSERT INTO taught (group_openid, member_openid, nickname, keys, text, accepted, created_at) "
+                           "VALUES (?, ?, ?, ?, ?, ?, ?)", group, member, nickname, "、".join(keys), text,
+                           int(accepted), ts).lastrowid
+
+    def add_member_sticker(self, group, member, nickname, label, note, digest, ts, accepted=False):
+        return self._write("INSERT INTO member_stickers (group_openid, member_openid, nickname, label, note, digest, "
+                           "accepted, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", group, member, nickname, label,
+                           note, digest, int(accepted), ts).lastrowid
+
+    def set_member_sticker_file(self, entry_id, file):
+        self._write("UPDATE member_stickers SET file = ? WHERE id = ?", file, entry_id)
+
+    def taught(self, group, accepted=True):
+        """What members taught her in this group, oldest first: what an admin accepted, or what's waiting."""
+        return self.offered("taught", group, accepted)
+
+    def member_stickers(self, group, accepted=True):
+        """The stickers members sent in to this group, oldest first: accepted, or waiting."""
+        return self.offered("member_stickers", group, accepted)
+
+    def all_member_stickers(self):
+        return self._all("SELECT * FROM member_stickers ORDER BY id")
+
+    def offered(self, table, group, accepted=True):
+        return self._all(f"SELECT * FROM {self._offered(table)} WHERE group_openid = ? AND accepted = ? ORDER BY id",
+                         group, int(accepted))
+
+    @staticmethod
+    def _offered(table):
+        if table not in OFFERED:
+            raise ValueError(table)
+        return table
+
+    def offering(self, table, group, entry_id):
+        return self._one(f"SELECT * FROM {self._offered(table)} WHERE group_openid = ? AND id = ?", group, entry_id)
+
+    def accept_offering(self, table, entry_id):
+        self._write(f"UPDATE {self._offered(table)} SET accepted = 1 WHERE id = ?", entry_id)
+
+    def delete_offering(self, table, entry_id):
+        self._write(f"DELETE FROM {self._offered(table)} WHERE id = ?", entry_id)
+
+    def offerings_by(self, table, group, member):
+        return self._all(f"SELECT * FROM {self._offered(table)} WHERE group_openid = ? AND member_openid = ? ORDER BY id",
+                         group, member)
+
+    def stale_offerings(self, table, before_ts):
+        """What has waited for an admin since before `before_ts`: nobody wanted it."""
+        return self._all(f"SELECT * FROM {self._offered(table)} WHERE accepted = 0 AND created_at < ?", before_ts)
+
+    def disown_offerings(self, table, group, member):
+        """Someone long gone: what an admin accepted from them stays the group's, without their name."""
+        self._write(f"UPDATE {self._offered(table)} SET member_openid = '', nickname = NULL "
+                    "WHERE group_openid = ? AND member_openid = ? AND accepted = 1", group, member)
+
     # ---- deletion on request
 
     def forget_member(self, group, member):
-        """Everything about one member: their memories, their messages, and the group's summary,
-        which may retell what they said."""
+        """Everything about one member: their memories, their messages, what they taught her and the
+        stickers they sent in, and the group's summary, which may retell what they said."""
         self.clear_memories(group, member)
         self._write("DELETE FROM turns WHERE group_openid = ? AND member_openid = ?", group, member)
+        for table in OFFERED:
+            self._write(f"DELETE FROM {table} WHERE group_openid = ? AND member_openid = ?", group, member)
         self._write("DELETE FROM summaries WHERE group_openid = ?", group)
 
     def forget_group(self, group):
-        for table in ("turns", "summaries", "memories", "posts", "heard"):
+        for table in ("turns", "summaries", "memories", "posts", "heard", *OFFERED):
             self._write(f"DELETE FROM {table} WHERE group_openid = ?", group)

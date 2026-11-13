@@ -26,9 +26,9 @@ COMEBACK_DAYS = 20
 OPENER_HOUR = 5
 
 # What badges in achievements.yaml can count. Each valid message adds to the first ten;
-# other features count the rest: a birthday, a poll voted in, a 征集 joined, a night's sleep.
+# other features count the rest: a birthday, a poll voted in, a 征集 joined, a night's sleep, a 海龟汤 solved.
 COUNTERS = ("valid", "question", "reply", "share", "night", "morning", "weekend", "long", "days", "opener",
-            "birthday", "vote", "opinion", "sleep")
+            "birthday", "vote", "opinion", "sleep", "soup")
 LONG_MESSAGE_UNITS = 50
 # What a badge can have versions of for particular people, written name@captains as in a style.
 VERSIONED = ("name", "desc")

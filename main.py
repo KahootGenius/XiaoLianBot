@@ -60,7 +60,10 @@ class MyClient(botpy.Client):
                                            nickname_of=self.manager_module.known_nickname)
         if self.ai_chat_module.enabled:
             self.manager_module.digest_commenter = self.ai_chat_module.comment_on_digest
-        # Birthdays, votes, 征集 and a good night's sleep count toward the manager's badges.
+            # /外号: she draws on the manager's record of someone, and their /我的状态 shows what she calls them.
+            self.ai_chat_module.habits_of = self.manager_module.habits
+            self.manager_module.pet_name_reader = self.ai_chat_module.pet_name_for
+        # Birthdays, votes, 征集, a 海龟汤 solved and a good night's sleep count toward the manager's badges.
         self.social_module = SocialModule(self.gateway, is_admin=self.manager_module.is_admin,
                                           activity=self.manager_module.active_members, config=config,
                                           nickname_of=self.manager_module.current_nickname,
@@ -69,6 +72,7 @@ class MyClient(botpy.Client):
         self.sleep_module.count = self.manager_module.count
         if self.ai_chat_module.enabled:
             self.social_module.opinion_summarizer = self.ai_chat_module.summarize_opinions
+            self.social_module.soup_host = self.ai_chat_module.host_soup       # /海龟汤 needs a host
             if self.ai_chat_module.fortune:
                 self.social_module.fortune_reader = self.ai_chat_module.read_fortune
         reserved = (HelpModule.TRIGGERS + CASTORICE_COMMANDS + ai_chat.COMMANDS + social.COMMANDS
@@ -89,9 +93,10 @@ class MyClient(botpy.Client):
         self.dashboard = None
         if self.manager_module.enabled and dashboard_config.get("enabled", True):
             self.dashboard = Dashboard.from_config(self.manager_module, dashboard_config)
+        playing = ["soup"] if self.social_module.soups and self.social_module.soup_host else []
         self.help_module = HelpModule(self.api, ai_enabled=self.ai_chat_module.enabled,
                                       manager_enabled=self.manager_module.enabled, teams=self.teams_module,
-                                      gateway=self.gateway)
+                                      gateway=self.gateway, extras=self.ai_chat_module.features + playing)
         self._answered = OrderedDict()
         self._started = False
 

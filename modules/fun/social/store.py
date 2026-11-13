@@ -1,6 +1,7 @@
 """SQLite persistence for the social features (data/fun.db): birthdays, polls,
-征集意见 with their opinions and who joined them, and once-a-day marks (birthday
-wishes, 翻牌子). See docs/PRIVACY_POLICY.md for how long each is kept.
+征集意见 with their opinions and who joined them, once-a-day marks (birthday
+wishes, 翻牌子), and 海龟汤 with its questions and guesses. See
+docs/PRIVACY_POLICY.md for how long each is kept.
 """
 import json
 import os
@@ -67,6 +68,37 @@ CREATE TABLE IF NOT EXISTS daily (
     day TEXT NOT NULL,               -- the Beijing date it happened, e.g. 2026-10-25
     value TEXT,                      -- flip: who was drawn
     PRIMARY KEY (group_openid, member_openid, kind)
+);
+CREATE TABLE IF NOT EXISTS soups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_openid TEXT NOT NULL,
+    puzzle TEXT NOT NULL,            -- its code in prompts/soups.yaml
+    starter TEXT NOT NULL,           -- member_openid
+    starter_name TEXT,
+    created_at INTEGER NOT NULL,
+    closed_at INTEGER,
+    solver TEXT,                     -- member_openid of whoever worked it out; NULL: nobody did
+    solver_name TEXT,
+    hints INTEGER NOT NULL DEFAULT 0     -- how many of its hints have been given
+);
+CREATE INDEX IF NOT EXISTS idx_soups_group ON soups (group_openid, closed_at);
+CREATE TABLE IF NOT EXISTS soup_turns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    soup_id INTEGER NOT NULL,
+    member_openid TEXT NOT NULL,
+    nickname TEXT,
+    kind TEXT NOT NULL,              -- ask | guess
+    text TEXT NOT NULL,
+    answer TEXT NOT NULL,            -- ask: positive, negative, unrelated, partly; guess: right, close, wrong
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_soup_turns_soup ON soup_turns (soup_id);
+-- The puzzles each group has had, so its next one is new to it. Nothing about who played.
+CREATE TABLE IF NOT EXISTS soup_played (
+    group_openid TEXT NOT NULL,
+    puzzle TEXT NOT NULL,
+    played_at INTEGER NOT NULL,
+    PRIMARY KEY (group_openid, puzzle)
 );
 """
 
@@ -182,6 +214,43 @@ class FunStore:
         return self._write("INSERT OR IGNORE INTO joined (call_id, member_openid) VALUES (?, ?)",
                            call_id, member).rowcount == 1
 
+    # ---- 海龟汤
+
+    def open_soup(self, group):
+        return self._one("SELECT * FROM soups WHERE group_openid = ? AND closed_at IS NULL ORDER BY id DESC LIMIT 1",
+                         group)
+
+    def start_soup(self, group, puzzle, starter, starter_name, ts):
+        """Opens a soup and notes that the group has now had this puzzle."""
+        self._write("INSERT OR REPLACE INTO soup_played (group_openid, puzzle, played_at) VALUES (?, ?, ?)",
+                    group, puzzle, ts)
+        return self._write("INSERT INTO soups (group_openid, puzzle, starter, starter_name, created_at) "
+                           "VALUES (?, ?, ?, ?, ?)", group, puzzle, starter, starter_name, ts).lastrowid
+
+    def close_soup(self, soup_id, ts, solver=None, solver_name=None):
+        """Closes it, with whoever worked it out. False if it had already closed: two right guesses
+        at once, and only the first counts."""
+        return self._write("UPDATE soups SET closed_at = ?, solver = ?, solver_name = ? WHERE id = ? "
+                           "AND closed_at IS NULL", ts, solver, solver_name, soup_id).rowcount == 1
+
+    def soup_played(self, group):
+        """The codes of the puzzles this group has had, oldest first."""
+        return [r["puzzle"] for r in self._all("SELECT puzzle FROM soup_played WHERE group_openid = ? "
+                                               "ORDER BY played_at, rowid", group)]
+
+    def reset_soup_played(self, group):
+        self._write("DELETE FROM soup_played WHERE group_openid = ?", group)
+
+    def add_soup_turn(self, soup_id, member, nickname, kind, text, answer, ts):
+        self._write("INSERT INTO soup_turns (soup_id, member_openid, nickname, kind, text, answer, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)", soup_id, member, nickname, kind, text, answer, ts)
+
+    def soup_turns(self, soup_id, kind="ask"):
+        return self._all("SELECT * FROM soup_turns WHERE soup_id = ? AND kind = ? ORDER BY id", soup_id, kind)
+
+    def add_soup_hint(self, soup_id):
+        self._write("UPDATE soups SET hints = hints + 1 WHERE id = ?", soup_id)
+
     # ---- once a day
 
     def daily(self, group, member, kind):
@@ -197,10 +266,23 @@ class FunStore:
 
     # ---- retention and deletion
 
-    def prune(self, before_day, closed_before_ts, calls_closed_before_ts):
-        """Once-a-day marks from earlier days, polls closed long ago with their votes, and
-        征集意见 closed long ago with their opinions and who joined them."""
+    def close_stale(self, now_ts, poll_seconds, call_seconds, soup_seconds, soup_grace=0):
+        """Whatever ran out of time while nobody was looking closes as of when its time was up, so it
+        is deleted on schedule. Until someone uses its command again it would otherwise stay open,
+        and so stay for good. A 海龟汤 is left `soup_grace` longer first."""
+        for table, seconds, grace in (("polls", poll_seconds, 0), ("opinion_calls", call_seconds, 0),
+                                      ("soups", soup_seconds, soup_grace)):
+            self._write(f"UPDATE {table} SET closed_at = created_at + ? WHERE closed_at IS NULL AND created_at <= ?",
+                        seconds, now_ts - seconds - grace)
+
+    def prune(self, before_day, closed_before_ts, calls_closed_before_ts, soups_closed_before_ts=0):
+        """Once-a-day marks from earlier days, polls closed long ago with their votes, 征集意见
+        closed long ago with their opinions and who joined them, and 海龟汤 that ended a while
+        ago with their questions and guesses."""
         self._write("DELETE FROM daily WHERE day < ?", before_day)
+        self._write("DELETE FROM soup_turns WHERE soup_id IN (SELECT id FROM soups WHERE closed_at < ?)",
+                    soups_closed_before_ts)
+        self._write("DELETE FROM soups WHERE closed_at < ?", soups_closed_before_ts)
         old = [r["id"] for r in self._all("SELECT id FROM polls WHERE closed_at < ?", closed_before_ts)]
         for poll_id in old:
             self._write("DELETE FROM votes WHERE poll_id = ?", poll_id)
@@ -212,8 +294,8 @@ class FunStore:
             self._write("DELETE FROM opinion_calls WHERE id = ?", call_id)
 
     def forget_member(self, group, member):
-        """Their birthday, votes, opinions and marks. Polls and 征集意见 they started stay,
-        without their name."""
+        """Their birthday, votes, opinions, marks, and what they asked and guessed in 海龟汤. Polls,
+        征集意见 and 海龟汤 they started or solved stay, without their name."""
         self.delete_birthday(group, member)
         self._write("DELETE FROM daily WHERE group_openid = ? AND member_openid = ?", group, member)
         self._write("DELETE FROM votes WHERE member_openid = ? AND poll_id IN "
@@ -226,10 +308,17 @@ class FunStore:
                     "(SELECT id FROM opinion_calls WHERE group_openid = ?)", member, group)
         self._write("UPDATE opinion_calls SET creator = '', creator_name = NULL WHERE group_openid = ? AND creator = ?",
                     group, member)
+        self._write("DELETE FROM soup_turns WHERE member_openid = ? AND soup_id IN "
+                    "(SELECT id FROM soups WHERE group_openid = ?)", member, group)
+        self._write("UPDATE soups SET starter = '', starter_name = NULL WHERE group_openid = ? AND starter = ?",
+                    group, member)
+        self._write("UPDATE soups SET solver = '', solver_name = NULL WHERE group_openid = ? AND solver = ?",
+                    group, member)
 
     def forget_group(self, group):
+        self._write("DELETE FROM soup_turns WHERE soup_id IN (SELECT id FROM soups WHERE group_openid = ?)", group)
         self._write("DELETE FROM votes WHERE poll_id IN (SELECT id FROM polls WHERE group_openid = ?)", group)
         self._write("DELETE FROM opinions WHERE call_id IN (SELECT id FROM opinion_calls WHERE group_openid = ?)", group)
         self._write("DELETE FROM joined WHERE call_id IN (SELECT id FROM opinion_calls WHERE group_openid = ?)", group)
-        for table in ("polls", "opinion_calls", "birthdays", "daily"):
+        for table in ("polls", "opinion_calls", "birthdays", "daily", "soups", "soup_played"):
             self._write(f"DELETE FROM {table} WHERE group_openid = ?", group)

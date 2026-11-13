@@ -22,7 +22,14 @@ LENGTHS = {"短": "length_short", "中": "length_medium", "长": "length_long"}
 FRESHNESS = {"今天": 1, "这周": 7, "最近": 90}
 SEARCH_WORDS = 80   # characters; the API takes 128 with its operators
 LORE_TURNS = 4      # lore keywords are looked for in the last few turns...
-LORE_LIMIT = 3      # ...and at most this many entries ride along
+LORE_LIMIT = 3      # ...and at most this many entries ride along,
+TAUGHT_LIMIT = 3    # with at most this many of the things members taught her (/教她)
+TEACH_KEYS = 3      # what a member teaches her has at most this many keywords,
+TEACH_KEY = (2, 12)  # each this long: one character would come up in nearly every message,
+TEACH_TEXT = (2, 60)  # and a meaning this long
+TEACH_REFUSALS = ("instruction", "personal", "insult", "explicit", "other")     # why the check turns one down
+PET_NAME = 8        # characters in a nickname she gives someone (/外号); the prompt asks for 2 to 6...
+PET_NAME_WHY = 60   # ...and in her line on why; the prompt asks for 30
 CAREFUL_TURNS = 10  # of the chat are kept when real people are in a picture
 DAY_EVENTS = 4      # her day: at most this many things happen in it (the prompt asks for three)...
 DAY_TEXT = 40       # ...each at most this many characters
@@ -174,6 +181,49 @@ def lore_for(entries, window):
     """The lore whose keywords come up in the last few turns, in the style file's order."""
     recent = "\n".join(turn["content"] for turn in window[-LORE_TURNS:])
     return [text for keys, text in parse_lore(entries) if any(key in recent for key in keys)][:LORE_LIMIT]
+
+
+def parse_teaching(text):
+    """(keywords, meaning) from what a member teaches her, written "词、词：意思" like a style's lore.
+    Raises ValueError naming what's wrong: "shape", "keys" (too many, or one too short or long) or
+    "text" (the meaning's length)."""
+    parsed = parse_lore([" ".join(str(text).split())])
+    if not parsed:
+        raise ValueError("shape")
+    keys, meaning = list(dict.fromkeys(parsed[0][0])), parsed[0][1]
+    if len(keys) > TEACH_KEYS or not all(TEACH_KEY[0] <= len(key) <= TEACH_KEY[1] for key in keys):
+        raise ValueError("keys")
+    if not TEACH_TEXT[0] <= len(meaning) <= TEACH_TEXT[1]:
+        raise ValueError("text")
+    return keys, meaning
+
+
+def teach_refusal(raw):
+    """Why the check on something a member teaches her turns it down, one of TEACH_REFUSALS, or
+    None: it passed, or the answer can't be read, and then an admin still has to accept it."""
+    verdict = first_json(raw)
+    if verdict.get("ok") is not False:
+        return None
+    why = str(verdict.get("why") or "").strip()
+    return why if why in TEACH_REFUSALS else "other"
+
+
+def parse_pet_name(raw):
+    """(nickname, her line on why) from her answer when she names someone (/外号), or None when it
+    can't be used: no name, too long a one, or one with more than ordinary characters in it."""
+    data = first_json(raw)
+    name = re.sub(r"\s+", "", str(data.get("nickname") or "")).strip("「」『』“”‘’\"'《》")
+    if not name or len(name) > PET_NAME or re.search(r"[\[\]【】<>@/\\{}（）()：:]", name):
+        return None
+    return name, " ".join(str(data.get("why") or "").split())[:PET_NAME_WHY]
+
+
+def taught_for(rows, window):
+    """What members taught her whose keywords come up in the last few turns, as "词、词：意思", the
+    latest taught first. `rows` are the accepted ones, oldest first."""
+    recent = "\n".join(turn["content"] for turn in window[-LORE_TURNS:])
+    found = [row for row in reversed(rows) if any(key in recent for key in row["keys"].split("、"))]
+    return [f"{row['keys']}：{row['text']}" for row in found[:TAUGHT_LIMIT]]
 
 
 def compose(instructions, evidence, policy, title):

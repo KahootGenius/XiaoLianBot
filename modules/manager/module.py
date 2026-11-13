@@ -138,6 +138,7 @@ class ManagerModule:
         self.gone_hooks = []       # f(group, member), called when someone leaves, such as team rosters
         self.expired_hooks = []    # f(group, member), called when DEPARTED_RETENTION_DAYS after that is up
         self.digest_commenter = None   # async f(digest text) -> a closing comment or None (AI chat)
+        self.pet_name_reader = None    # f(group, member) -> the nickname she gave them, or None (AI chat's /外号)
         if self.styles.configured:
             for problem in achievements.audience_problems({ADMIN, *self.styles.audiences}):
                 _log.warning(f"[Manager] {problem}")
@@ -193,6 +194,20 @@ class ManagerModule:
         if row is None or row["status"] != "active":
             return None
         return row["nickname"] or ""
+
+    def habits(self, group, member):
+        """What a member's record says about how they take part, for her nickname for them (/外号):
+        a few counts, their longest streak, and the names of their badges as they read for them.
+        None for a group this doesn't manage, or someone it has never seen."""
+        row = self.store.member(group, member) if self.manages(group) else None
+        if row is None:
+            return None
+        counters = self.store.counters(group, member)
+        audiences = self.audiences_of(group, member)
+        badges = [achievements.BY_CODE[earned["code"]].as_for(audiences).name
+                  for earned in self.store.achievements(group, member) if earned["code"] in achievements.BY_CODE]
+        return {"valid": counters.get("valid", 0), "night": counters.get("night", 0),
+                "morning": counters.get("morning", 0), "best": row["best_streak"] or 0, "badges": badges}
 
     def has_left(self, group, member):
         """Whether this group's records say someone is gone. People it doesn't track haven't left."""
@@ -549,6 +564,9 @@ class ManagerModule:
         badges = self.store.achievements(group, member)
 
         lines = [t("manager.status.title", member=self._name(row))]
+        called = self.pet_name_reader(group, member) if self.pet_name_reader else None
+        if called:
+            lines.append(t("manager.status.pet_name", nickname=called))
         if row["last_valid_at"]:
             ago = rules.day_diff(row["last_valid_at"], now, self.tz)
             when = t("manager.status.today") if ago == 0 else t("manager.status.days_ago", days=ago)

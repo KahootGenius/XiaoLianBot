@@ -68,6 +68,20 @@ class DefaultStyleTest(unittest.TestCase):
                     "提示：所有指令需@我使用")
         self.assertEqual(HelpModule(None, ai_enabled=True, manager_enabled=True)._build_help_text(), expected)
 
+    def test_what_can_be_switched_off_is_listed_only_while_its_on(self):
+        everything = HelpModule(None, extras=["soup", "pet_names", "teach", "member_stickers"])
+        text = everything._build_help_text()
+        self.assertIn("/征集意见 看看在征集什么  /意见 内容 提意见\n/海龟汤 开一碗推理题  /问 是非题  /猜 你的答案\n\n【作息】", text)
+        self.assertIn("/忘记 序号 删掉一条\n/外号 让我给你起个外号\n/教她 词：意思 教我一个群里的说法  /她学会的 看我学了什么\n"
+                      "/投稿表情 发图时用，给我投稿表情包  /她的表情 看群友投的表情\n\n提示", text)
+        self.assertEqual(everything.buttons()[1][-1], ("海龟汤", "/海龟汤"))
+        some = HelpModule(None, extras=["teach"])
+        self.assertIn("/忘记 序号 删掉一条\n/教她 词：意思", some._build_help_text())
+        for word in ("/海龟汤", "/外号", "/投稿表情"):
+            self.assertNotIn(word, some._build_help_text())
+        self.assertNotIn(("海龟汤", "/海龟汤"), some.buttons()[1])
+        self.assertNotIn("/教她", HelpModule(None, ai_enabled=False, extras=["teach", "soup"])._build_help_text())
+
     def test_admins_see_the_admin_commands_in_help(self):
         help = HelpModule(None, ai_enabled=True, manager_enabled=True)
         member = help._build_help_text()

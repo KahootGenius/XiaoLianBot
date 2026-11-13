@@ -88,6 +88,9 @@ Admins can use every action except `/抓` on any team.
 | `/意见 内容`, `/意见 撤回` | "Opinion": add one (up to 3 each), or take back my latest |
 | `/结束征集` | "End the call": lists every opinion, then her summary (its starter or an admin; also `/结束征集意见`) |
 | `/翻牌子` | "Flip a name tag": a joke draw among this week's active members, once a day (admins: as often as they like) | Teams clear daily at 05:00 Beijing time.
+| `/海龟汤`, `/海龟汤 提示`, `/海龟汤 结束` | "Turtle soup", a lateral-thinking puzzle she hosts: open one or show the open one; its next hint (also `线索`); give up and hear the truth (whoever opened it or an admin; also `放弃`, `揭晓`, `答案`, `汤底`) |
+| `/问 是非题` | "Ask" a yes-or-no question about the open puzzle (also `/提问`); she answers 是, 不是, 无关 or 是也不是 |
+| `/猜 真相` | "Guess" the truth; covering its key points solves it |
 
 ### Inherited from Castorice
 
@@ -114,6 +117,13 @@ Admins can use every action except `/抓` on any team.
 | `/我的记忆` | "My memories": what the bot has noted about me in this group | `ai/ai_chat.py` |
 | `/忘记 <序号…>`, `/忘记 印象`, `/忘记 全部` | "Forget": delete some or all of my memories, or the bot's impression of me | `ai/ai_chat.py` |
 | `/重置对话` | "Reset the conversation" (admins): clear this group's chat context and summary | `ai/ai_chat.py` |
+| `/外号`, `/外号 换`, `/外号 不要` | "Nickname": she names me, or shows the name I have; another one; none | `ai/ai_chat.py` |
+| `/教她 词：意思`, `/教她 删除 编号` | "Teach her" what words mean in this group, for an admin to accept; take back my own | `ai/ai_chat.py` |
+| `/她学会的 [页码]` | "What she has learned": the list, and what waits for an admin | `ai/ai_chat.py` |
+| `/记下 编号`, `/不记 编号` | "Keep it" / "Don't" (admins): accept or drop something a member taught her | `ai/ai_chat.py` |
+| `/投稿表情 [标签]`, `/投稿表情 删除 编号` | "Send in a sticker" with a picture or quoting one, for an admin to accept (also `/表情投稿`); take back my own. Needs `ai_chat.member_stickers` | `ai/ai_chat.py` |
+| `/她的表情 [页码]` | "Her stickers": the ones this group's members sent in, and what waits for an admin | `ai/ai_chat.py` |
+| `/收下 编号`, `/不收 编号` | "Take it" / "Don't" (admins): accept or drop a sticker a member sent in | `ai/ai_chat.py` |
 | `/看图测试` | "Picture test" (admins): sent with a picture, or quoting one, shows what QQ sends and whether it can be fetched. The picture isn't kept or sent anywhere | `ai/ai_chat.py` |
 | `/deepseek` | Post a fixed image | `ai/deepseek.py` |
 

@@ -71,8 +71,8 @@ def show(store, names, word, out):
     print(f"{'#':>5}  group     {_pad('member', width)}  saved  imp  memory", file=out)
     for r in rows:
         saved = datetime.fromtimestamp(r["created_at"], TZ).strftime("%m-%d")
-        mark = {"impression": "[impression] ", "episode": "[recent] "}.get(r["kind"], "")
-        importance = "-" if r["kind"] == "impression" else r["importance"]
+        mark = {"impression": "[impression] ", "episode": "[recent] ", "pet_name": "[nickname] "}.get(r["kind"], "")
+        importance = "-" if r["kind"] in ("impression", "pet_name") else r["importance"]
         print(f"{r['id']:>5}  {r['group_openid'][:8]}  {_pad(who[r['id']], width)}  {saved}  {importance:>3}  "
               f"{mark}{r['text']}", file=out)
     print(f"{len(rows)} memories. Delete: delete NUMBER...   Rewrite: edit NUMBER NEW TEXT", file=out)

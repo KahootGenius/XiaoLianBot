@@ -28,6 +28,7 @@ from dataclasses import dataclass
 import yaml
 from botpy import logging
 from core.config import LOCAL_DIR, root_path, use_local
+from modules.ai.memory import first_json
 from modules.manager.openapi import as_markdown    # her words as markdown, as replies with buttons go
 
 
@@ -44,6 +45,14 @@ SIZE = 160                      # how big a sticker shows inside a reply: its lo
 LIBRARY_FILE = root_path("data", "stickers.json")
 LIBRARY_FULL = 40035007         # QQ's image library holds 100 images per bot
 LIBRARY_TTL = 90 * 86400        # and keeps each one this long after it was last sent
+# Stickers members send in with /投稿表情 (ai_chat.member_stickers): kept on this machine, outside
+# local/, as m<number>.<ext>, and used only in the group they were sent in to.
+MEMBER_DIR = root_path("data", "member_stickers")
+SUBMIT_BYTES = 2 * 1024 * 1024  # one is this big at most,
+SUBMIT_FORMATS = {"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif"}   # in a format QQ takes,
+SUBMIT_LABEL = 8                # with a label this long
+SUBMIT_NOTE = 30                # and a line this long on when to use it; the prompt asks for 20
+SUBMIT_REFUSALS = ("explicit", "personal", "other")     # why the look at one turns it down
 
 # Tolerant like seekchat's: the model drifts into [表情包:X], [发送了表情包:X] and 【表情：X】,
 # so every variant counts. Each opener pairs with its own closer, and nothing crosses a line.
@@ -104,6 +113,50 @@ def load(directory=None):
         else:
             stickers[label] = Sticker(label, str(entry.get("desc") or "").strip(), path)
     return stickers, problems
+
+
+def clean_label(text, limit=SUBMIT_LABEL):
+    """A label for a sticker a member sent in, as they or the draft wrote it, or None if it can't be one."""
+    label = re.sub(r"\s+", "", str(text or ""))
+    return label if label and len(label) <= limit and not re.search(r"[\[\]【】:：]", label) else None
+
+
+def unique_label(label, taken, limit=MAX_LABEL):
+    """`label`, or it with a number at the end when `taken` already has it."""
+    base, n = label, 2
+    while label in taken:
+        label, n = f"{base[:limit - len(str(n))]}{n}", n + 1
+    return label
+
+
+def parse_draft(raw):
+    """What the call that looks at a sticker a member sent in says: (label, when to use it); or why
+    it can't be used, one of SUBMIT_REFUSALS; or None when the answer can't be read."""
+    data = first_json(raw)
+    if data.get("ok") is False:
+        why = str(data.get("why") or "").strip()
+        return why if why in SUBMIT_REFUSALS else "other"
+    label = clean_label(data.get("label"))
+    note = " ".join(str(data.get("desc") or "").split())[:SUBMIT_NOTE]
+    return (label, note) if data.get("ok") is True and label and note else None
+
+
+def keep_file(directory, entry_id, data, kind):
+    """Write a sticker a member sent in to `directory`, named after its number. Returns the name."""
+    os.makedirs(directory, exist_ok=True)
+    name = f"m{entry_id}{SUBMIT_FORMATS[kind]}"
+    with open(os.path.join(directory, name), "wb") as f:
+        f.write(data)
+    return name
+
+
+def drop_file(directory, name):
+    """Delete a sticker a member sent in. One that's already gone is fine."""
+    if name:
+        try:
+            os.remove(os.path.join(directory, os.path.basename(name)))
+        except OSError:
+            pass
 
 
 def extract(text, known, limit=MAX_PER_REPLY):
@@ -290,9 +343,7 @@ def import_pack(source, directory=STICKER_DIR, out=sys.stdout):
         if not label or label == os.path.splitext(file)[0]:
             label = desc
         label = re.sub(r"[\[\]【】\n]", "", label)[:MAX_LABEL] or os.path.splitext(file)[0][:MAX_LABEL]
-        base, n = label, 2
-        while label in taken:
-            label, n = f"{base[:MAX_LABEL - len(str(n))]}{n}", n + 1
+        label = unique_label(label, taken)
         taken.add(label)
         with open(os.path.join(directory, file), "wb") as f:
             f.write(data)

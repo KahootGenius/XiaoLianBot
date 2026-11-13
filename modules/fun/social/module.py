@@ -1,4 +1,4 @@
-"""Social commands: 今日运势, birthdays, polls, 征集意见 and 翻牌子.
+"""Social commands: 今日运势, birthdays, polls, 征集意见, 翻牌子 and 海龟汤.
 
 - /今日运势: a fortune per member per day, worded entirely by the style file. With AI chat's
   fortune reading on, her comment on it takes in what the member has said lately.
@@ -14,6 +14,9 @@
   much they posted; once a day each, admins as often as they like. @ a few
   people to draw among them instead.
   config.yaml's social.flip.special gives particular members their own chances.
+- /海龟汤, /问 是非题, /猜 汤底: a lateral-thinking puzzle she hosts, one open per
+  group. The puzzles and the reading of her verdicts are in modules/fun/soup.py;
+  the verdicts themselves come from AI chat.
 
 Every line comes from the style files (social.*) via t().
 """
@@ -27,6 +30,7 @@ import pytz
 from botpy import logging
 from core.config import root_path
 from core.style import current, join, render, t
+from modules.fun import soup
 from modules.fun.social import fortune
 from modules.fun.social.store import FunStore
 from modules.manager.classifier import clean_text
@@ -51,9 +55,20 @@ RECENT_SECONDS = DAY        # for a day, which is all that's read; what's older 
 SWEEP_SECONDS = 3600
 RECENT_CHARS = 200          # characters kept of each
 READING_SECONDS = 12        # how long /今日运势 waits for her reading before using the style's comment
+SOUP_HOURS = 24             # a 海龟汤 nobody finishes closes by itself after this long
+SOUP_KEEP_DAYS = 7          # a finished one is deleted, with its questions and guesses, after this long
+SOUP_QUESTION = 60          # characters in a question...
+SOUP_GUESS = 150            # ...and in a guess
+SOUP_TURNS = 150            # questions one soup takes; after that it's guess or give up
+SOUP_PER_MINUTE = 6         # questions and guesses one member can send a minute: each is a call to DeepSeek
+SOUP_HINT_EVERY = 3         # questions the group has to ask for each hint
+SOUP_CLUES = 6              # answered questions /海龟汤 shows again
+SOUP_SECONDS = 20           # how long she waits for a verdict
+SOUP_HINT_WORDS = ("提示", "线索")
+SOUP_END_WORDS = ("结束", "放弃", "揭晓", "答案", "汤底")
 # What members type. Listed so team-game actions can't take them.
 COMMANDS = ("/今日运势", "/生日", "/本月生日", "/投票", "/结束投票", "/投", "/征集意见", "/意见征集", "/意见",
-            "/结束征集", "/结束征集意见", "/翻牌子")
+            "/结束征集", "/结束征集意见", "/翻牌子", "/海龟汤", "/问", "/提问", "/猜")
 DELETE_WORDS = ("删除", "取消", "清除")
 TAKE_BACK_WORDS = ("撤回",) + DELETE_WORDS
 
@@ -117,7 +132,7 @@ def _short(text, limit=30):
 
 class SocialModule:
     def __init__(self, gateway, store=None, clock=None, is_admin=None, activity=None, rng=None, config=None,
-                 nickname_of=None, count=None, has_left=None, find_nickname=None):
+                 nickname_of=None, count=None, has_left=None, find_nickname=None, soups=None):
         self.gw = gateway
         self.store = store or FunStore(root_path("data", "fun.db"))
         self.tz = pytz.timezone('Asia/Shanghai')
@@ -154,10 +169,22 @@ class SocialModule:
         self.recent = {}        # (group, member) -> deque of (timestamp, text), in memory only
         self.swept = 0          # when messages past RECENT_SECONDS were last let go
         self.readings = {}      # (group, member, date) -> her comment, so asking again gives the same one
+        # /海龟汤: {code: Puzzle} from prompts/soups.yaml; config.yaml's social.soup: false leaves it out.
+        if soups is None:
+            soups, problems = soup.load() if not isinstance(social, dict) or social.get("soup", True) else ({}, [])
+            for problem in problems:
+                _log.warning(f"[Social] 海龟汤的题库：{problem}")
+        self.soups = soups
+        # Set by main.py when AI chat is on: (汤面, 汤底, [关键点], what a member said, whether it's a
+        # guess) -> the host's verdict as DeepSeek wrote it, read by modules/fun/soup.py. No host, no game.
+        self.soup_host = None
+        self.soup_pace = {}     # (group, member) -> when their latest questions and guesses came
+        self.soup_told = set()  # those already told to slow down this time
         self.commands = {"/今日运势": self.cmd_fortune, "/生日": self.cmd_birthday, "/本月生日": self.cmd_month,
                          "/投票": self.cmd_poll, "/投": self.cmd_vote, "/结束投票": self.cmd_close,
                          "/征集意见": self.cmd_call, "/意见征集": self.cmd_call, "/意见": self.cmd_opinion,
-                         "/结束征集": self.cmd_end_call, "/结束征集意见": self.cmd_end_call, "/翻牌子": self.cmd_flip}
+                         "/结束征集": self.cmd_end_call, "/结束征集意见": self.cmd_end_call, "/翻牌子": self.cmd_flip,
+                         "/海龟汤": self.cmd_soup, "/问": self.cmd_ask, "/提问": self.cmd_ask, "/猜": self.cmd_guess}
         self.pruned = None
 
     # ------------------------------------------------------------------ helpers
@@ -212,8 +239,11 @@ class SocialModule:
         if self.pruned != today:
             self.pruned = today
             ts = int(now.timestamp())
+            # A 海龟汤 past its 24 hours gets a day more before it's closed here: until then the next
+            # question still finds it, and the group is told what its truth was.
+            self.store.close_stale(ts, POLL_DAYS * DAY, OPINION_DAYS * DAY, SOUP_HOURS * 3600, soup_grace=DAY)
             self.store.prune((now.date() - timedelta(days=2)).isoformat(), ts - POLL_KEEP_DAYS * DAY,
-                             ts - OPINION_KEEP_DAYS * DAY)
+                             ts - OPINION_KEEP_DAYS * DAY, ts - SOUP_KEEP_DAYS * DAY)
             self.readings = {key: text for key, text in self.readings.items() if key[2] == today}
             self._sweep(ts)
 
@@ -270,6 +300,9 @@ class SocialModule:
         opinion = re.fullmatch(r"/意见[:：]?(.+)", word)       # "/意见想玩狼人杀" without a space
         if opinion and word not in self.commands:
             word, args = "/意见", f"{opinion.group(1)} {args}".strip()
+        said = re.fullmatch(r"(/问|/提问|/猜)[:：]?(.+)", word)    # "/问他是光头吗" without a space
+        if said and word not in self.commands:
+            word, args = said.group(1), f"{said.group(2)} {args}".strip()
         handler = self.commands.get(word)
         if handler is None:
             return False
@@ -378,7 +411,12 @@ class SocialModule:
         call, opinions = self.store.open_call(group), None
         if call is not None and int(self._now().timestamp()) - call["created_at"] < OPINION_DAYS * DAY:
             opinions = (call["topic"], len(self.store.opinions(call["id"])))
-        return {"birthdays": birthdays, "poll": poll, "opinions": opinions}
+        # The open 海龟汤 as the players see it. Its truth stays here: she can't let slip what she isn't told.
+        cooking = self.store.open_soup(group)
+        puzzle = self.soups.get(cooking["puzzle"]) if cooking is not None else None
+        if puzzle is not None and int(self._now().timestamp()) - cooking["created_at"] >= SOUP_HOURS * 3600:
+            puzzle = None
+        return {"birthdays": birthdays, "poll": poll, "opinions": opinions, "soup": puzzle and puzzle.surface}
 
     # ------------------------------------------------------------------ polls
 
@@ -619,16 +657,190 @@ class SocialModule:
             names, weights = zip(*others)
         return self.rng.choices(names, weights=weights)[0]
 
+    # ------------------------------------------------------------------ 海龟汤
+
+    def _soup(self, group):
+        """(the group's open soup, its puzzle, None), or (None, None, a puzzle that just went cold).
+        A soup that has sat for SOUP_HOURS, or whose puzzle is no longer in the file, is closed as
+        nobody's; the first time that's noticed the group is told what its truth was."""
+        row = self.store.open_soup(group)
+        if row is None:
+            return None, None, None
+        puzzle = self.soups.get(row["puzzle"])
+        if puzzle is not None and int(self._now().timestamp()) - row["created_at"] < SOUP_HOURS * 3600:
+            return row, puzzle, None
+        self.store.close_soup(row["id"], row["created_at"] + SOUP_HOURS * 3600)
+        return None, None, puzzle
+
+    @staticmethod
+    def _cold(puzzle):
+        return [t("social.soup.expired", title=puzzle.title, truth=puzzle.truth)] if puzzle else []
+
+    @staticmethod
+    def _soup_buttons():
+        return [[(t("social.soup.ask_button"), "/问 "), (t("social.soup.guess_button"), "/猜 "),      # typed in
+                 (t("social.soup.hint_button"), "/海龟汤 提示")]]
+
+    async def cmd_soup(self, message, args):
+        """/海龟汤 opens a puzzle, or shows the one that's open. /海龟汤 提示 gives its next hint;
+        /海龟汤 结束, from whoever opened it or an admin, gives up and tells the truth."""
+        if not self.soups or self.soup_host is None:
+            await self._reply(message, t("social.soup.disabled" if not self.soups else "social.soup.no_ai"))
+            return
+        row, puzzle, cold = self._soup(message.group_openid)
+        word = args.split()[0] if args.split() else ""
+        if row is None and word in SOUP_HINT_WORDS + SOUP_END_WORDS:
+            await self._reply(message, "\n".join(self._cold(cold) + [t("social.soup.none")]))
+        elif word in SOUP_HINT_WORDS:
+            await self._soup_hint(message, row, puzzle)
+        elif word in SOUP_END_WORDS:
+            await self._soup_end(message, row, puzzle)
+        elif row is None:
+            await self._soup_start(message, self._cold(cold))
+        else:
+            await self._soup_status(message, row, puzzle)
+
+    async def _soup_start(self, message, lines):
+        """Open the group's next puzzle: one it hasn't had, until it has had them all."""
+        group = message.group_openid
+        played = self.store.soup_played(group)
+        puzzle = soup.pick(self.soups, played, self.rng)
+        if all(code in played for code in self.soups):      # it has had them all: from the top again
+            self.store.reset_soup_played(group)
+        self.store.start_soup(group, puzzle.code, message.member_openid, message.nickname,
+                              int(self._now().timestamp()))
+        lines.append(t("social.soup.started", title=puzzle.title, surface=puzzle.surface, starter=self._name(message)))
+        await self._reply(message, "\n".join(lines), buttons=self._soup_buttons())
+
+    async def _soup_status(self, message, row, puzzle):
+        asked = self.store.soup_turns(row["id"])
+        lines = [t("social.soup.status", title=puzzle.title, surface=puzzle.surface, asked=len(asked),
+                   hints=row["hints"])]
+        clues = [turn for turn in asked if turn["answer"] != "unrelated"][-SOUP_CLUES:]
+        if clues:
+            lines.append(t("social.soup.clues"))
+            lines += [t("social.soup.clue", question=turn["text"], answer=t(f"social.soup.short.{turn['answer']}"))
+                      for turn in clues]
+        await self._reply(message, "\n".join(lines), buttons=self._soup_buttons())
+
+    async def _soup_hint(self, message, row, puzzle):
+        """The puzzle's next hint, once the group has asked SOUP_HINT_EVERY more questions for it."""
+        asked, given = len(self.store.soup_turns(row["id"])), row["hints"]
+        if given >= len(puzzle.hints):
+            await self._reply(message, t("social.soup.no_more_hints" if puzzle.hints else "social.soup.no_hints"))
+        elif asked < (given + 1) * SOUP_HINT_EVERY:
+            await self._reply(message, t("social.soup.hint_later", more=(given + 1) * SOUP_HINT_EVERY - asked))
+        else:
+            self.store.add_soup_hint(row["id"])
+            await self._reply(message, t("social.soup.hint", n=given + 1, total=len(puzzle.hints),
+                                         hint=puzzle.hints[given]), buttons=self._soup_buttons())
+
+    async def _soup_end(self, message, row, puzzle):
+        """Give up: whoever opened it, or an admin; anyone, once whoever opened it is gone."""
+        if row["starter"] not in ("", message.member_openid) and not self.is_admin(
+                message.group_openid, message.member_openid, message.role):
+            await self._reply(message, t("social.soup.not_yours"))
+            return
+        self.store.close_soup(row["id"], int(self._now().timestamp()))
+        await self._reply(message, t("social.soup.ended", title=puzzle.title, truth=puzzle.truth),
+                          buttons=[[(t("social.soup.again_button"), "/海龟汤")]])
+
+    def _soup_too_fast(self, group, member):
+        """Whether this member is past SOUP_PER_MINUTE questions and guesses a minute, and whether
+        they still have to be told: once, then nothing, since answering each would flood too."""
+        key, now = (group, member), self._now().timestamp()
+        recent = self.soup_pace.setdefault(key, deque())
+        while recent and now - recent[0] >= 60:
+            recent.popleft()
+        if len(recent) < SOUP_PER_MINUTE:
+            recent.append(now)
+            self.soup_told.discard(key)
+            return False, False
+        tell = key not in self.soup_told
+        self.soup_told.add(key)
+        return True, tell
+
+    async def _soup_verdict(self, puzzle, said, guess):
+        """What the host makes of a question or a guess, as soup.parse_answer or parse_guess reads
+        it; None if she couldn't say."""
+        try:
+            raw = await asyncio.wait_for(self.soup_host(puzzle.surface, puzzle.truth, list(puzzle.points), said, guess),
+                                         SOUP_SECONDS)
+        except Exception as e:
+            _log.warning(f"[Social] 海龟汤的主持人没答上来: {type(e).__name__} {str(e)[:120]}")
+            return None
+        return soup.parse_guess(raw or "") if guess else soup.parse_answer(raw or "")
+
+    async def cmd_ask(self, message, args):
+        """/问 是非题: she answers 是, 不是, 无关 or 是也不是 from the open soup's truth."""
+        await self._soup_say(message, args, guess=False)
+
+    async def cmd_guess(self, message, args):
+        """/猜 真相: whoever covers the puzzle's key points first has solved it."""
+        await self._soup_say(message, args, guess=True)
+
+    async def _soup_say(self, message, args, guess):
+        group, member, name = message.group_openid, message.member_openid, self._name(message)
+        row, puzzle, cold = self._soup(group) if self.soups and self.soup_host is not None else (None, None, None)
+        if row is None:
+            await self._reply(message, "\n".join(self._cold(cold) + [t("social.soup.none")]))
+            return
+        said = " ".join(args.lstrip(":： ").split())
+        most = SOUP_GUESS if guess else SOUP_QUESTION
+        asked = len(self.store.soup_turns(row["id"]))
+        if not said:
+            await self._reply(message, t("social.soup.guess_usage" if guess else "social.soup.ask_usage"))
+            return
+        if len(said) > most:
+            await self._reply(message, t("social.soup.too_long", max=most))
+            return
+        if not guess and asked >= SOUP_TURNS:
+            await self._reply(message, t("social.soup.enough", max=SOUP_TURNS))
+            return
+        fast, tell = self._soup_too_fast(group, member)
+        if fast:
+            if tell:
+                await self._reply(message, t("social.soup.too_fast"))
+            return
+        verdict = await self._soup_verdict(puzzle, said, guess)
+        ts = int(self._now().timestamp())
+        still = self.store.open_soup(group)
+        if still is None or still["id"] != row["id"]:       # it ended while she was thinking
+            await self._reply(message, t("social.soup.none"))
+        elif verdict is None:
+            await self._reply(message, t("social.soup.failed"))
+        elif not guess:
+            answer, key = verdict
+            if answer == soup.INVALID:
+                await self._reply(message, t("social.soup.invalid"))
+                return
+            self.store.add_soup_turn(row["id"], member, message.nickname, "ask", said, answer, ts)
+            line = t("social.soup.asked", member=name, question=said, answer=t(f"social.soup.answers.{answer}"))
+            await self._reply(message, line + (t("social.soup.key") if key else ""), buttons=self._soup_buttons())
+        elif verdict != soup.RIGHT:
+            self.store.add_soup_turn(row["id"], member, message.nickname, "guess", said, verdict, ts)
+            await self._reply(message, t(f"social.soup.{verdict}", member=name, guess=said),
+                              buttons=self._soup_buttons())
+        elif not self.store.close_soup(row["id"], ts, member, message.nickname):
+            await self._reply(message, t("social.soup.none"))      # someone else got there first
+        else:
+            self.store.add_soup_turn(row["id"], member, message.nickname, "guess", said, verdict, ts)
+            lines = [t("social.soup.solved", member=name, title=puzzle.title, truth=puzzle.truth, asked=asked)]
+            lines += self.count(group, member, message.nickname, "soup")
+            await self._reply(message, "\n".join(lines), buttons=[[(t("social.soup.again_button"), "/海龟汤")]])
+
     # ------------------------------------------------------------------ housekeeping
 
     def forget_member(self, group, member):
         self.store.forget_member(group, member)
         self.recent.pop((group, member), None)
+        self.soup_pace.pop((group, member), None)
         self.readings = {key: text for key, text in self.readings.items() if key[:2] != (group, member)}
 
     def forget_group(self, group):
         self.store.forget_group(group)
         self.recent = {key: kept for key, kept in self.recent.items() if key[0] != group}
+        self.soup_pace = {key: kept for key, kept in self.soup_pace.items() if key[0] != group}
         self.readings = {key: text for key, text in self.readings.items() if key[0] != group}
 
 

@@ -11,13 +11,16 @@ class HelpModule:
 
     TRIGGERS = ("/帮助", "/菜单", "/help", "/指令")
 
-    def __init__(self, api_client, ai_enabled=True, manager_enabled=False, teams=None, gateway=None):
+    def __init__(self, api_client, ai_enabled=True, manager_enabled=False, teams=None, gateway=None, extras=()):
         self.api = api_client
         # Optional features are only advertised when actually usable.
         self.ai_enabled = ai_enabled
         self.manager_enabled = manager_enabled
         self.teams = teams
         self.gw = gateway       # replies through it can carry buttons
+        # The smaller things that can be switched off, each a line of its own in the style (help.<name>)
+        # under the section it belongs to: soup, pet_names, teach, member_stickers.
+        self.extras = tuple(extras)
 
     def buttons(self):
         """Quick-tap buttons under /帮助, for the features this bot has switched on."""
@@ -27,7 +30,13 @@ class HelpModule:
             word = self.teams.rules.commands["teams"]
             second.append((word, f"/{word}"))
         second += [("投票", "/投票"), ("翻牌子", "/翻牌子")]
+        if "soup" in self.extras:
+            second.append(("海龟汤", "/海龟汤"))
         return [first + [("今日运势", "/今日运势")], second]
+
+    def _with(self, key, *extras):
+        """A section of the help, with the lines of whichever of `extras` are switched on under it."""
+        return "\n".join(filter(None, [t(key)] + [t(f"help.{name}") for name in extras if name in self.extras]))
 
     def _build_help_text(self):
         sections = [t("help.title")]
@@ -36,9 +45,9 @@ class HelpModule:
         sections += [t("help.games"), t("help.minecraft"), t("help.fun")]
         if self.teams is not None and self.teams.enabled:
             sections.append(self.teams.help_block())
-        sections += [t("help.social"), t("help.sleep")]
+        sections += [self._with("help.social", "soup"), t("help.sleep")]
         if self.ai_enabled:
-            sections.append(t("help.ai"))
+            sections.append(self._with("help.ai", "pet_names", "teach", "member_stickers"))
         sections.append(t("help.footer"))
         if self.manager_enabled:
             # Empty for most people; the style's help.admin@admin gives admins the /管理帮助 list.

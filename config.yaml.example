@@ -60,6 +60,12 @@ secret: "YOUR_APP_SECRET"
 #   opinion_summary: true    # after /结束征集 lists the opinions, she sums them up (3 or more)
 #   fortune: false           # /今日运势: her comment takes in the member's own latest messages, which the
 #                            # bot then keeps in memory (at most 20, for a day). Read the privacy policy first.
+#   teach: true              # /教她 词：意思: members teach her what words mean in their group. An admin
+#                            # accepts each one (/记下); she then knows it when the word comes up
+#   pet_names: true          # /外号: she gives a member a nickname from what she remembers of them
+#   member_stickers: false   # /投稿表情: members send her stickers for their own group, and an admin
+#                            # accepts each one (/收下). Their pictures go to DeepSeek to be looked at
+#                            # and are kept in data/member_stickers/. Read the privacy policy first.
 #   game_state: true         # tell the bot today's teams, birthdays, open poll and 征集意见 (teams.yaml hide_from_ai)
 #   dynamic_temperature: true    # judge each reply's temperature and length first (one more cheap call)
 #   temperatures: {严谨: 0.6, 平衡: 1.0, 奔放: 1.15}   # the temperature for each judgement
@@ -109,6 +115,12 @@ secret: "YOUR_APP_SECRET"
 #   per_minute: 10
 
 # --- Optional: social features ---
+# /海龟汤: puzzles she hosts, from prompts/soups.yaml (or your own local/prompts/soups.yaml). Members
+# ask yes-or-no questions with /问 and guess with /猜; each one costs a cheap DeepSeek call, so it
+# needs the deepseek section above. On unless you write soup: false.
+# social:
+#   soup: true
+#
 # A member with their own /翻牌子 chances. Key: the flipper's member_openid (@机器人 /我的ID);
 # under it, the members they may draw and each one's chance in percent (60 or "60%").
 # What the chances leave over goes to the usual draw among the week's active members,

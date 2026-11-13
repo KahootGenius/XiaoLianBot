@@ -16,6 +16,7 @@ from modules.ai.store import ChatStore
 from modules.fun.blackjack import BlackjackModule
 from modules.fun.crazy_talk import CrazyTalkModule
 from modules.fun.dice import DiceModule
+from modules.fun import soup
 from modules.fun.social import SocialModule, fortune, module as social_module
 from modules.fun.social.module import parse_birthday, read_flip_special
 from modules.fun.social.store import FunStore
@@ -41,7 +42,7 @@ class Roll(random.Random):
 
 class SocialTestCase(unittest.IsolatedAsyncioTestCase):
     def make(self, activity=None, config=None, nickname_of=None, rng=None, count=None, has_left=None,
-             find_nickname=None):
+             find_nickname=None, soups=None):
         self.now = START
         self.gw = FakeGateway()
         self.store = FunStore(":memory:")
@@ -50,7 +51,7 @@ class SocialTestCase(unittest.IsolatedAsyncioTestCase):
                                    is_admin=lambda group, member, role=None: member == "ADMIN",
                                    activity=activity, rng=rng or random.Random(7), config=config,
                                    nickname_of=nickname_of, count=count, has_left=has_left,
-                                   find_nickname=find_nickname)
+                                   find_nickname=find_nickname, soups=soups)
         return self.social
 
     async def say(self, member, text, mentions=(), group=GROUP):
@@ -229,16 +230,35 @@ class BirthdayTest(SocialTestCase):
 class TodayForAITest(SocialTestCase):
     async def test_ai_chat_hears_of_todays_birthdays_and_the_open_poll(self):
         self.make()
-        self.assertEqual(self.social.today_for_ai(GROUP), {"birthdays": [], "poll": None, "opinions": None})
+        nothing = {"birthdays": [], "poll": None, "opinions": None, "soup": None}
+        self.assertEqual(self.social.today_for_ai(GROUP), nothing)
         await self.say("A", "/生日 11-1")                     # today
         await self.say("B", "/生日 11-2")
         await self.say("A", "/投票 周六几点开？ 19点 20点")
         await self.say("B", "/投 A")
         self.assertEqual(self.social.today_for_ai(GROUP),
                          {"birthdays": ["小明"], "poll": ("周六几点开？", [("A", "19点", 1), ("B", "20点", 0)]),
-                          "opinions": None})
+                          "opinions": None, "soup": None})
         self.now += timedelta(days=8)                         # the poll has run out of time
-        self.assertEqual(self.social.today_for_ai(GROUP), {"birthdays": [], "poll": None, "opinions": None})
+        self.assertEqual(self.social.today_for_ai(GROUP), nothing)
+
+    async def test_a_poll_or_a_call_nobody_comes_back_to_still_goes_on_schedule(self):
+        self.make()
+        await self.say("A", "/投票 周六几点开？ 19点 20点")
+        await self.say("B", "/投 A")
+        await self.say("ADMIN", "/征集意见 下个月玩什么？")
+        await self.say("A", "/意见 狼人杀")
+        count = lambda table: self.store.db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        self.now += timedelta(days=36)                        # the poll ran out after 7, plus the 30 it's kept
+        await self.say("A", "/今日运势")                       # nobody has used a poll command since
+        self.assertEqual((count("polls"), count("votes")), (1, 1))
+        self.now += timedelta(days=2)
+        await self.say("A", "/今日运势")
+        self.assertEqual((count("polls"), count("votes")), (0, 0))
+        self.assertEqual((count("opinion_calls"), count("opinions")), (1, 1))      # 30 open, then 30 kept
+        self.now += timedelta(days=23)
+        await self.say("A", "/今日运势")
+        self.assertEqual((count("opinion_calls"), count("opinions"), count("joined")), (0, 0, 0))
 
     async def test_and_of_the_open_call_for_opinions(self):
         self.make()
@@ -248,6 +268,394 @@ class TodayForAITest(SocialTestCase):
         self.now += timedelta(days=30)                        # nobody ended it: it closes by itself
         self.assertIsNone(self.social.today_for_ai(GROUP)["opinions"])
         self.assertIn("没有在征集意见", await self.say("A", "/征集意见"))
+
+
+class Host:
+    """Stands in for AI chat as 海龟汤's host: its verdicts come off a list, in order."""
+
+    def __init__(self):
+        self.heard, self.verdicts, self.hook = [], [], None
+
+    async def __call__(self, surface, truth, points, said, guess):
+        self.heard.append((said, guess))
+        self.puzzle = (surface, truth, points)
+        if self.hook:
+            self.hook()
+        verdict = self.verdicts.pop(0) if self.verdicts else (
+            '{"solved": false, "close": false}' if guess else '{"answer": "无关", "key": false}')
+        if isinstance(verdict, Exception):
+            raise verdict
+        return verdict
+
+
+BALD = soup.Puzzle("bald", "淋不湿的头发", "阿强淋了雨，头发却没湿。为什么？", "阿强是光头。", ("阿强没有头发",),
+                   ("和雨没关系。", "想想头发本身。"))
+BUS = soup.Puzzle("bus", "终点站", "车上还剩一个人，没人觉得不对。为什么？", "他是司机。", ("剩下的人是司机",))
+FISH = soup.Puzzle("fish", "三条鱼", "四个人钓了三条鱼。为什么？", "只有三个人。", ("只有三个人", "祖孙三代"))
+YES, NO = '{"answer": "是", "key": false}', '{"answer": "不是", "key": false}'
+RIGHT = '{"solved": true, "close": false}'
+UNRELATED = r"\n(无关。|这个和真相没有关系。)$"       # what she says when the host's verdict is 无关, which is Host's default
+
+
+class SoupTest(SocialTestCase):
+    """/海龟汤: she hosts a puzzle. Members ask yes-or-no questions and guess; what she answers comes
+    from a verdict the group never sees."""
+
+    def cook(self, *puzzles, **kwargs):
+        self.make(soups={puzzle.code: puzzle for puzzle in puzzles or (BALD,)}, **kwargs)
+        self.host = self.social.soup_host = Host()
+        return self.social
+
+    async def test_she_opens_one_and_shows_it_again(self):
+        self.cook()
+        self.assertEqual(await self.say("A", "/海龟汤"),
+                         "🍲 海龟汤开锅：淋不湿的头发（小明 点的）\n阿强淋了雨，头发却没湿。为什么？\n"
+                         "问是非题：@我 /问 你的问题，我只回答「是」「不是」「无关」。\n觉得知道真相了：@我 /猜 你的答案")
+        buttons = (GROUP, [[("我要提问", "/问 "), ("我来猜", "/猜 "), ("要个提示", "/海龟汤 提示")]])
+        self.assertEqual(self.gw.buttons[-1], buttons)
+        self.assertEqual(self.social.today_for_ai(GROUP)["soup"], "阿强淋了雨，头发却没湿。为什么？")
+        self.assertIsNone(self.social.today_for_ai("ELSEWHERE")["soup"])
+        self.host.verdicts = [YES, '{"answer": "无关", "key": false}', NO]
+        for question in ("他淋到雨了吗", "那天是周末吗", "他戴了帽子吗"):
+            await self.say("B", f"/问 {question}")
+        self.assertEqual(await self.say("B", "/海龟汤"),                    # one open at a time: this shows it
+                         "🍲 正在喝的海龟汤：淋不湿的头发\n阿强淋了雨，头发却没湿。为什么？\n已经问了 3 个问题，给过 0 条提示。\n"
+                         "最近问出来的：\n· 他淋到雨了吗 → 是\n· 他戴了帽子吗 → 不是")
+        self.assertEqual(self.gw.buttons[-1], buttons)
+        self.assertNotIn("光头", "".join(self.gw.texts(GROUP)))              # the truth stays with the host
+
+    async def test_she_answers_yes_or_no_from_the_verdict(self):
+        self.cook()
+        await self.say("A", "/海龟汤")
+        self.host.verdicts = ['{"answer": "是", "key": true}', '好的：{"answer": "「不是」", "key": true}',
+                              '{"answer": "无关"}', '{"answer": "是也不是", "key": false}', YES]
+        self.assertRegex(await self.say("B", "/问 他 是\n光头吗"), r"^🥄 小红 问：他 是 光头吗\n(是。|是的。|对。)（问到点子上了！）$")
+        self.assertEqual(self.host.puzzle, ("阿强淋了雨，头发却没湿。为什么？", "阿强是光头。", ["阿强没有头发"]))
+        self.assertRegex(await self.say("B", "/问他打伞了吗"), r"^🥄 小红 问：他打伞了吗\n(不是。|不对。)$")     # no space; a 不是 isn't key
+        self.assertRegex(await self.say("B", "/提问：今天星期几"), r"^🥄 小红 问：今天星期几\n(无关。|这个和真相没有关系。)$")
+        self.assertRegex(await self.say("A", "/问: 他的衣服和头发都湿了吗"), r"\n(是也不是。|只说对了一部分。)$")
+        self.assertRegex(await self.say("A", "/问 他出门了吗"), r"\n(是。|是的。|对。)$")
+        self.assertEqual(self.host.heard, [("他 是 光头吗", False), ("他打伞了吗", False), ("今天星期几", False),
+                                           ("他的衣服和头发都湿了吗", False), ("他出门了吗", False)])
+        turns = self.store.soup_turns(1)
+        self.assertEqual([(turn["member_openid"], turn["answer"]) for turn in turns],
+                         [("B", "positive"), ("B", "negative"), ("B", "unrelated"), ("A", "partly"), ("A", "positive")])
+
+    async def test_what_she_cant_answer_isnt_kept(self):
+        self.cook()
+        await self.say("A", "/海龟汤")
+        self.host.verdicts = ['{"answer": "不能回答", "key": false}', "我觉得是吧", '{"answer": "可能"}', RuntimeError("超时")]
+        self.assertEqual(await self.say("B", "/问 为什么他的头发没湿"),
+                         "这个我答不了。问一个能用「是」或「不是」回答的问题吧，想直接说答案就用 /猜")
+        for _ in range(3):
+            self.assertEqual(await self.say("B", "/问 他是光头吗"), "小莲一时没想明白，过会儿再说一次～")
+        self.assertEqual(self.store.soup_turns(1), [])
+        self.assertEqual(await self.say("B", "/问"), "问一个能用「是」或「不是」回答的问题，例如：/问 他认识那个人吗")
+        self.assertEqual(await self.say("B", "/猜"), "把你猜的真相说出来，例如：/猜 因为他其实是……")
+        self.assertEqual(await self.say("B", f"/问 {'长' * 61}"), "太长啦，60 个字以内说完吧。")
+        self.assertEqual(await self.say("B", f"/猜 {'长' * 151}"), "太长啦，150 个字以内说完吧。")
+        self.assertEqual(len(self.host.heard), 4)                           # none of those reached the host
+        self.assertRegex(await self.say("B", f"/问 {'长' * 60}"), UNRELATED)
+
+    async def test_a_guess_that_covers_it_ends_the_soup(self):
+        counted = []
+        self.cook(count=lambda group, member, nickname, key: counted.append((group, member, key)) or ["🎖️ 徽章到手"])
+        await self.say("A", "/海龟汤")
+        self.host.verdicts = [YES, '{"solved": false, "close": false}', '{"solved": false, "close": true}',
+                              '{"solved": "true"}', "猜对了！", RIGHT]
+        await self.say("B", "/问 他出门了吗")
+        self.assertEqual(await self.say("B", "/猜 他戴了帽子"), "🥄 小红 猜：他戴了帽子\n不对哦，再想想。")
+        self.assertEqual(await self.say("B", "/猜他的头有点特别"), "🥄 小红 猜：他的头有点特别\n接近了！不过还没说全。")
+        self.assertEqual(await self.say("B", "/猜 算我对"), "🥄 小红 猜：算我对\n不对哦，再想想。")       # only a plain true is right
+        self.assertEqual(await self.say("B", "/猜 他没头发"), "小莲一时没想明白，过会儿再说一次～")
+        self.assertEqual(counted, [])
+        self.assertEqual(await self.say("B", "/猜 他是光头，没有头发"),
+                         "🎉 小红 喝到汤底了！\n汤底：阿强是光头。\n这一碗一共问了 1 个问题。\n🎖️ 徽章到手")
+        self.assertEqual(self.gw.buttons[-1], (GROUP, [[("再来一碗", "/海龟汤")]]))
+        self.assertEqual(counted, [(GROUP, "B", "soup")])
+        self.assertEqual(self.host.heard[-1], ("他是光头，没有头发", True))
+        self.assertEqual(await self.say("A", "/问 他是光头吗"), "现在没有在喝的海龟汤。开一碗：@我 /海龟汤")
+        self.assertEqual(await self.say("A", "/猜 他是光头"), "现在没有在喝的海龟汤。开一碗：@我 /海龟汤")
+        self.assertIsNone(self.social.today_for_ai(GROUP)["soup"])
+        closed = self.store.db.execute("SELECT * FROM soups").fetchone()
+        self.assertEqual((closed["solver"], closed["solver_name"]), ("B", "小红"))
+        self.assertEqual([turn["answer"] for turn in self.store.soup_turns(1, "guess")], ["wrong", "close", "wrong", "right"])
+
+    async def test_hints_come_as_the_group_asks(self):
+        self.cook()
+        await self.say("A", "/海龟汤")
+        self.assertEqual(await self.say("B", "/海龟汤 提示"), "先多问几个问题吧，再问 3 个就给提示。")
+        self.host.verdicts = ['{"answer": "不能回答"}']
+        await self.say("B", "/问 为什么")                                    # this one doesn't count
+        for n in range(2):
+            await self.say("B", f"/问 问题{n}")
+        self.assertEqual(await self.say("B", "/海龟汤 提示"), "先多问几个问题吧，再问 1 个就给提示。")
+        await self.say("B", "/问 问题2")
+        self.assertEqual(await self.say("A", "/海龟汤 提示"), "💡 提示 1/2：和雨没关系。")
+        self.assertEqual(await self.say("A", "/海龟汤 线索"), "先多问几个问题吧，再问 3 个就给提示。")
+        self.now += timedelta(minutes=2)                                    # or B would be asking too fast
+        for n in range(3, 6):
+            await self.say("B", f"/问 问题{n}")
+        self.assertEqual(await self.say("A", "/海龟汤 提示"), "💡 提示 2/2：想想头发本身。")
+        self.assertEqual(await self.say("A", "/海龟汤 提示"), "提示已经给完啦，剩下的靠你们了。")
+        self.assertIn("已经问了 6 个问题，给过 2 条提示。", await self.say("A", "/海龟汤"))
+        self.cook(BUS)
+        await self.say("A", "/海龟汤")
+        self.assertEqual(await self.say("A", "/海龟汤 提示"), "这一碗没有提示，靠你们自己了。")
+
+    async def test_whoever_opened_it_or_an_admin_gives_up(self):
+        self.cook()
+        nothing = "现在没有在喝的海龟汤。开一碗：@我 /海龟汤"
+        self.assertEqual(await self.say("A", "/海龟汤 结束"), nothing)
+        self.assertEqual(await self.say("A", "/海龟汤 提示"), nothing)
+        await self.say("A", "/海龟汤")
+        self.assertEqual(await self.say("B", "/海龟汤 结束"), "只有点这碗汤的人或管理员能结束哦。")
+        self.assertEqual(await self.say("A", "/海龟汤 放弃"), "🍲 「淋不湿的头发」不喝了。汤底是：阿强是光头。")
+        self.assertEqual(self.gw.buttons[-1], (GROUP, [[("再来一碗", "/海龟汤")]]))
+        self.assertIsNone(self.store.open_soup(GROUP))
+        await self.say("A", "/海龟汤")
+        self.assertIn("汤底是：阿强是光头。", await self.say("ADMIN", "/海龟汤 揭晓"))
+        await self.say("A", "/海龟汤")
+        self.social.forget_member(GROUP, "A")                                # whoever opened it is gone:
+        self.assertIn("汤底是：阿强是光头。", await self.say("B", "/海龟汤 结束"))  # anyone may
+
+    async def test_one_left_a_day_goes_cold(self):
+        self.cook()
+        await self.say("A", "/海龟汤")
+        self.now += timedelta(hours=23, minutes=59)
+        self.assertRegex(await self.say("B", "/问 他出门了吗"), UNRELATED)
+        self.now += timedelta(minutes=1)
+        self.assertIsNone(self.social.today_for_ai(GROUP)["soup"])
+        cold = "上一碗「淋不湿的头发」放了一天没人喝完，凉了。汤底是：阿强是光头。\n"
+        self.assertEqual(await self.say("B", "/问 他是光头吗"), cold + "现在没有在喝的海龟汤。开一碗：@我 /海龟汤")
+        self.assertEqual(await self.say("B", "/问 他是光头吗"), "现在没有在喝的海龟汤。开一碗：@我 /海龟汤")     # said once
+        self.assertEqual(len(self.host.heard), 1)
+        await self.say("A", "/海龟汤")
+        self.now += timedelta(days=1)
+        self.assertTrue((await self.say("B", "/海龟汤")).startswith(cold + "🍲 海龟汤开锅：淋不湿的头发（小红 点的）"))
+        self.social.soups = {}                                              # its puzzle left the file
+        self.social.soups = {BUS.code: BUS}
+        self.assertTrue((await self.say("A", "/海龟汤")).startswith("🍲 海龟汤开锅：终点站"))
+
+    async def test_only_so_many_questions_and_not_too_fast(self):
+        self.cook()
+        await self.say("A", "/海龟汤")
+        for n in range(6):
+            self.assertRegex(await self.say("B", f"/问 问题{n}"), UNRELATED)
+        self.assertEqual(await self.say("B", "/问 问题6"), "问得太快啦，让小莲喘口气，过一会儿再来～")
+        self.assertEqual(await self.say("B", "/猜 他是光头"), "")              # told once, then nothing
+        self.assertRegex(await self.say("A", "/问 问题7"), UNRELATED)          # each member's own pace
+        self.assertEqual(len(self.host.heard), 7)
+        self.now += timedelta(seconds=61)
+        self.assertRegex(await self.say("B", "/问 问题8"), UNRELATED)
+        with mock.patch.object(social_module, "SOUP_TURNS", 8):
+            self.assertEqual(await self.say("A", "/问 问题9"),
+                             "这一碗已经问了 8 个问题啦，直接 /猜 吧。实在猜不出，点汤的人或管理员可以 /海龟汤 结束")
+            self.host.verdicts = [RIGHT]
+            self.assertIn("喝到汤底了", await self.say("A", "/猜 他是光头"))     # guessing still goes
+
+    async def test_a_group_gets_every_puzzle_before_one_comes_round_again(self):
+        self.cook(BALD, BUS, FISH)
+        seen = []
+        for _ in range(7):
+            opened = await self.say("A", "/海龟汤")
+            seen.append(self.store.open_soup(GROUP)["puzzle"])
+            self.assertIn("海龟汤开锅", opened)
+            await self.say("A", "/海龟汤 结束")
+        self.assertEqual(sorted(seen[:3]), ["bald", "bus", "fish"])
+        self.assertEqual(sorted(seen[3:6]), ["bald", "bus", "fish"])
+        self.assertTrue(all(first != second for first, second in zip(seen, seen[1:])))     # never the same twice running
+        await self.say("A", "/海龟汤", group="G2")                            # each group's own round
+        self.assertEqual(len(self.store.soup_played("G2")), 1)
+
+    async def test_it_ends_under_her_while_she_thinks(self):
+        self.cook()
+        await self.say("A", "/海龟汤")
+        nothing = "现在没有在喝的海龟汤。开一碗：@我 /海龟汤"
+        self.host.hook = lambda: self.store.close_soup(1, 5, "A", "小明")      # someone else just solved it
+        self.host.verdicts = [RIGHT]
+        self.assertEqual(await self.say("B", "/猜 他是光头"), nothing)
+        self.assertEqual(self.store.soup_turns(1, "guess"), [])
+        self.assertFalse(self.store.close_soup(1, 9, "B", "小红"))             # closing it again changes nothing
+        self.assertEqual(self.store.db.execute("SELECT solver FROM soups").fetchone()["solver"], "A")
+        await self.say("A", "/海龟汤")
+        self.host.hook = lambda: self.store.close_soup(2, 5)
+        self.host.verdicts = [YES]
+        self.assertEqual(await self.say("B", "/问 他是光头吗"), nothing)
+        self.assertEqual(self.store.soup_turns(2), [])
+
+    async def test_no_host_or_no_puzzles_no_game(self):
+        self.make(soups={BALD.code: BALD})
+        for command in ("/海龟汤", "/海龟汤 提示"):
+            self.assertEqual(await self.say("A", command), "海龟汤要开了 AI 聊天才能玩哦。")
+        self.assertEqual(await self.say("A", "/问 他是光头吗"), "现在没有在喝的海龟汤。开一碗：@我 /海龟汤")
+        self.cook()
+        self.social.soups = {}
+        self.assertEqual(await self.say("A", "/海龟汤"), "海龟汤没有开启哦。")
+        self.make(config={"social": {"soup": False}})
+        self.assertEqual(self.social.soups, {})
+        self.make()                                                         # the shipped puzzles
+        self.assertEqual(len(self.social.soups), 13)
+
+    async def test_what_is_kept_and_for_how_long(self):
+        self.cook()
+        await self.say("A", "/海龟汤")
+        self.host.verdicts = [YES, YES, RIGHT]
+        await self.say("A", "/问 他出门了吗")
+        await self.say("B", "/问 他淋雨了吗")
+        await self.say("B", "/猜 他是光头")
+        self.social.forget_member(GROUP, "B")                                # /删除数据
+        self.assertEqual([turn["member_openid"] for turn in self.store.soup_turns(1)], ["A"])
+        self.assertEqual(self.store.soup_turns(1, "guess"), [])
+        closed = self.store.db.execute("SELECT * FROM soups").fetchone()
+        self.assertEqual((closed["starter"], closed["solver"], closed["solver_name"]), ("A", "", None))
+        self.assertNotIn((GROUP, "B"), self.social.soup_pace)
+        self.now += timedelta(days=6, hours=23)
+        await self.say("A", "/今日运势")                                     # the day's first command tidies up
+        self.assertEqual(len(self.store.soup_turns(1)), 1)
+        self.now += timedelta(days=1)
+        await self.say("A", "/今日运势")
+        self.assertEqual(self.store.soup_turns(1), [])
+        self.assertEqual(self.store.db.execute("SELECT COUNT(*) FROM soups").fetchone()[0], 0)
+        self.assertEqual(self.store.soup_played(GROUP), ["bald"])           # which puzzles it has had stays
+        await self.say("A", "/海龟汤")                                        # one nobody ever comes back to
+        await self.say("A", "/问 他出门了吗")
+        self.now += timedelta(days=1, hours=23)
+        await self.say("A", "/今日运势")
+        self.assertIsNotNone(self.store.open_soup(GROUP))                   # for a day more, a question still finds it
+        self.now += timedelta(days=1)
+        await self.say("A", "/今日运势")
+        self.assertIsNone(self.store.open_soup(GROUP))                      # then it closes as of when its day was up,
+        closed = self.store.db.execute("SELECT * FROM soups").fetchone()
+        self.assertEqual(closed["closed_at"] - closed["created_at"], 86400)
+        self.now += timedelta(days=5)
+        await self.say("A", "/今日运势")
+        self.assertEqual(self.store.db.execute("SELECT COUNT(*) FROM soup_turns").fetchone()[0], 1)
+        self.now += timedelta(days=2)
+        await self.say("A", "/今日运势")
+        self.assertEqual(self.store.db.execute("SELECT COUNT(*) FROM soup_turns").fetchone()[0], 0)     # and goes on schedule
+        await self.say("A", "/海龟汤")
+        await self.say("A", "/问 他出门了吗")
+        self.social.forget_group(GROUP)
+        self.assertEqual((self.store.open_soup(GROUP), self.store.soup_played(GROUP), self.social.soup_pace), (None, [], {}))
+        self.assertEqual(self.store.db.execute("SELECT COUNT(*) FROM soup_turns").fetchone()[0], 0)
+
+
+class SoupPuzzlesTest(unittest.TestCase):
+    def write(self, text):
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder)
+        path = os.path.join(folder, "soups.yaml")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+        return path
+
+    def test_the_shipped_puzzles(self):
+        puzzles, problems = soup.load(root_path("prompts", "soups.yaml"))
+        self.assertEqual(problems, [])
+        self.assertEqual(len(puzzles), 13)
+        for puzzle in puzzles.values():
+            self.assertTrue(1 <= len(puzzle.points) <= 2 and puzzle.hints, puzzle.code)
+            self.assertTrue(puzzle.surface.endswith("为什么？"), puzzle.code)
+            self.assertNotIn("\n", puzzle.surface + puzzle.truth)
+
+    def test_a_broken_puzzle_is_named_and_left_out(self):
+        good = "- {code: ok, title: 好题, surface: '汤  面\n第二行', truth: 汤底, points: [' 关键 点 '], hints: [提示]}\n"
+        puzzles, problems = soup.load(self.write(good + """
+- {code: ok, title: 重复, surface: 面, truth: 底, points: [点]}
+- {code: 中文, title: 编号, surface: 面, truth: 底, points: [点]}
+- {code: nopoints, title: 没有关键点, surface: 面, truth: 底}
+- {code: many, title: 关键点太多, surface: 面, truth: 底, points: [一, 二, 三, 四, 五]}
+- {code: hints, title: 提示不是列表, surface: 面, truth: 底, points: [点], hints: 一句}
+- {code: notruth, title: 没有汤底, surface: 面, points: [点]}
+- 只有一句话
+"""))
+        self.assertEqual(puzzles, {"ok": soup.Puzzle("ok", "好题", "汤 面 第二行", "汤底", ("关键 点",), ("提示",))})
+        text = "\n".join(problems)
+        for phrase in ("第 2 题（ok）：code 和前面的重复了", "第 3 题（中文）：code 只能用英文", "第 4 题（nopoints）：points 要写 1 到 4 条",
+                       "第 5 题（many）：points 要写", "第 6 题（hints）：hints 要写成列表", "第 7 题：code、title、surface、truth 都要写",
+                       "第 8 题：code、title"):
+            self.assertIn(phrase, text)
+        self.assertEqual(len(problems), 7)
+        self.assertEqual(soup.load(self.write("code: 不是列表")), ({}, ["soups.yaml 要写成列表，每道题以「- code:」开头"]))
+        self.assertEqual(soup.load(self.write("- [")), ({}, mock.ANY))
+        self.assertEqual(soup.load(os.path.join(tempfile.gettempdir(), "no-such-soups.yaml")), ({}, []))
+        long = "- {code: long, title: 太长, surface: %s, truth: 底, points: [点]}" % ("长" * 401)
+        self.assertIn("surface 最多 400 个字", soup.load(self.write(long))[1][0])
+
+    def test_reading_the_hosts_verdicts(self):
+        self.assertEqual(soup.parse_answer('{"answer": "是", "key": true}'), ("positive", True))
+        self.assertEqual(soup.parse_answer('{"answer": "是", "key": "true"}'), ("positive", False))
+        self.assertEqual(soup.parse_answer('我想想：{"answer": " 不是。", "key": true}'), ("negative", False))
+        self.assertEqual(soup.parse_answer('{"answer": "无关"}'), ("unrelated", False))
+        self.assertEqual(soup.parse_answer('{"answer": "是也不是", "key": true}'), ("partly", False))
+        self.assertEqual(soup.parse_answer('{"answer": "不能回答"}'), (soup.INVALID, False))
+        for raw in ("", "是", '{"answer": "汤底是他是光头"}', '{"key": true}', '{"answer": null}'):
+            self.assertIsNone(soup.parse_answer(raw), raw)
+        self.assertEqual(soup.parse_guess(RIGHT), soup.RIGHT)
+        self.assertEqual(soup.parse_guess('{"solved": false, "close": true}'), soup.CLOSE)
+        self.assertEqual(soup.parse_guess('{"solved": false}'), soup.WRONG)
+        self.assertEqual(soup.parse_guess('{"solved": "true", "close": "true"}'), soup.WRONG)
+        self.assertEqual(soup.parse_guess('{"solved": 1, "close": false}'), soup.WRONG)
+        for raw in ("", "猜对了", '{"close": true}'):
+            self.assertIsNone(soup.parse_guess(raw), raw)
+
+    def test_which_puzzle_comes_next(self):
+        puzzles = {puzzle.code: puzzle for puzzle in (BALD, BUS, FISH)}
+        for _ in range(20):
+            self.assertIs(soup.pick(puzzles, ["bald", "fish"], random.Random()), BUS)
+            self.assertIsNot(soup.pick(puzzles, ["bald", "bus", "fish"], random.Random()), FISH)     # not the last one again
+        self.assertIs(soup.pick({"bald": BALD}, ["bald"], random.Random()), BALD)                    # unless it's all there is
+        self.assertIn(soup.pick(puzzles, [], random.Random()), puzzles.values())
+
+    def test_the_check_command(self):
+        import io
+        out = io.StringIO()
+        self.assertEqual(soup.main(out), 0)
+        self.assertIn("13 puzzles ready, 0 problems.", out.getvalue())
+
+
+class SoupHostTest(unittest.IsolatedAsyncioTestCase):
+    """AI chat as the host: one call that has the truth, and her chat, which never does."""
+
+    def setUp(self):
+        self.client, self.store = FakeDeepSeek(), ChatStore(":memory:")
+        self.addCleanup(self.store.db.close)
+        self.ai = AIChatModule(FakeGateway(), {}, store=self.store, client=self.client)
+
+    async def test_the_host_gets_the_puzzle_and_what_was_said_and_nothing_else(self):
+        self.client.answers["soup"] = [YES, RIGHT]
+        self.assertEqual(await self.ai.host_soup(BALD.surface, BALD.truth, ["阿强没有头发", "另一点"], "他是光头吗"), YES)
+        self.assertEqual(await self.ai.host_soup(BALD.surface, BALD.truth, ["阿强没有头发"], "他是光头", guess=True), RIGHT)
+        question, guess = self.client.requests("soup")
+        for request in (question, guess):
+            self.assertEqual((len(request["messages"]), request["model"], request["temperature"]), (1, "deepseek-flash", 0))
+            self.assertEqual(request["extra_body"], {"thinking": {"type": "disabled"}})
+            self.assertNotIn("小莲", request["messages"][0]["content"])       # no persona
+        text = question["messages"][0]["content"]
+        self.assertIn("汤面（玩家看得到）：阿强淋了雨，头发却没湿。为什么？\n汤底（只有你知道）：阿强是光头。\n"
+                      "关键点：\n- 阿强没有头发\n- 另一点\n", text)
+        self.assertIn("「他是光头吗」", text)
+        self.assertIn('只回 JSON：{"answer": "是", "key": false}', text)
+        self.assertIn("玩家在猜汤底", guess["messages"][0]["content"])
+        self.assertIn('只回 JSON：{"solved": false, "close": false}', guess["messages"][0]["content"])
+        self.client.answers["soup"] = [RuntimeError("余额不足")]
+        with self.assertRaises(RuntimeError):
+            await self.ai.host_soup(BALD.surface, BALD.truth, ["阿强没有头发"], "他是光头吗")
+
+    async def test_in_chat_she_knows_the_soup_but_not_its_truth(self):
+        social = SocialModule(FakeGateway(), store=FunStore(":memory:"), soups={BALD.code: BALD})
+        self.addCleanup(social.store.db.close)
+        social.soup_host = self.ai.host_soup
+        self.ai.social_today = social.today_for_ai
+        opening = FakeMessage(GROUP, "A", "小明", "/海龟汤", content="/海龟汤", mentions_bot=True)
+        await social.handle_social(opening)
+        chatting = FakeMessage(GROUP, "A", "小明", "汤底是什么", content="汤底是什么", mentions_bot=True)
+        await self.ai.handle_ai_chat(chatting)
+        await self.ai.settle()
+        request = "\n".join(str(message["content"]) for message in self.client.requests("chat")[-1]["messages"])
+        self.assertIn("群里正在玩海龟汤，汤面是：阿强淋了雨，头发却没湿。为什么？\n聊天时的你不知道汤底", request)
+        self.assertNotIn("光头", request)
 
 
 class PollTest(SocialTestCase):

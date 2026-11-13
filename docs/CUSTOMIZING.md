@@ -147,7 +147,7 @@ The sections of `小莲.yaml`:
 | Section | Lines for |
 |---|---|
 | `common` | The stand-in for a missing nickname, the separator between names (、), the date format, "admins only", the error message |
-| `help` | `/帮助`; `help.admin@admin` is the admins-only part at the end |
+| `help` | `/帮助`; `help.admin@admin` is the admins-only part at the end. `help.soup`, `help.pet_names`, `help.teach` and `help.member_stickers` are one line each for a feature that can be switched off, shown under 【互动】 or 【AI】 only while it's on |
 | `manager.help_block`, `manager.admin_help` | The group-management part of `/帮助`, and `/管理帮助` |
 | `manager.modes`, `manager.mode_hints` | What the three modes are called and how each is explained |
 | `manager.kinds` | Why a message did or didn't count, as shown by `/成员表`, `/成员` and the web table |
@@ -162,11 +162,13 @@ The sections of `小莲.yaml`:
 | `manager.table`, `manager.card`, `manager.states` | `/成员表`, `/成员`, and the status words |
 | `manager.batch`, `manager.daily` | Removal lists and their commands; the daily check's reports and safety stop |
 | `manager.digest` | The weekly digest |
-| `social` | `/今日运势` (its title, and the lists it draws levels, 宜, 忌 and comments from), birthdays, polls, 征集意见 (`social.opinion`), `/翻牌子` |
+| `social` | `/今日运势` (its title, and the lists it draws levels, 宜, 忌 and comments from), birthdays, polls, 征集意见 (`social.opinion`), `/翻牌子`, and 海龟汤 (`social.soup`: what she says to 是, 不是 and 无关 is under `answers`, a few variants each) |
 | `common.buttons_hint` | The little message that carries the buttons when they can't go in the reply itself: with `buttons_inline: false`, or for an hour after QQ refused that |
 | Keys ending in `button`, `again` or `refresh`; `manager.batch.button_…` and `ask_…` | Button labels, such as `games.blackjack.again` (再来一局); the removal list's buttons and the questions QQ asks before 「确认移出」 and 「已移出」 |
 | `games.teams` | The team game: `/队伍`, the 【组队游戏】 part of `/帮助`, and every refusal ("不在你的队伍里"…) |
 | `games`, `info`, `ai` | Dice, blackjack, 发癫, sleep, the reply when games go too fast (`games.too_fast`); Epic, Steam, Minecraft; AI chat errors |
+| `ai.memory`, `ai.pet_name` | `/我的记忆` and `/忘记`; `/外号` |
+| `ai.teach`, `ai.submit` | `/教她` and `/她学会的`; `/投稿表情` and `/她的表情`. Both have the admins' buttons (`keep_button`, `drop_button`) and the question QQ asks before keeping one (`ask_keep`) |
 
 ## What stays in the code
 
@@ -245,6 +247,7 @@ The counters are:
 | `vote` | Polls voted in; changing a vote doesn't count again |
 | `opinion` | 征集意见 they gave an opinion in, once each, even after a 撤回 |
 | `sleep` | Nights of 7 to 9 hours between `/晚安` and `/早安` |
+| `soup` | 海龟汤 they were the one to solve |
 
 Three ready-made examples are commented out at the bottom of the file. Things to know:
 - **A mistake stops the bot at startup** and names the bad badge.
@@ -260,7 +263,7 @@ Three ready-made examples are commented out at the bottom of the file. Things to
 - **Lunar festivals need their dates added.** The shipped 新春 and 中秋 badges list 2027–2030; the
   Hong Kong Observatory's conversion tables give later years.
 - **Counters start from zero when they're added.** `weekend`, `long` and `days`, and later
-  `opener`, `birthday`, `vote`, `opinion` and `sleep`, have no history from before.
+  `opener`, `birthday`, `vote`, `opinion`, `sleep` and `soup`, have no history from before.
 
 ### With code: a new kind of counter
 
@@ -377,6 +380,46 @@ For something beyond grab, kick and set, such as moving a member to another team
      `styles/小莲.yaml`.
    - `effect_kick` is the simplest one to copy.
 
+## 海龟汤 puzzles
+
+`/海龟汤` has her host a lateral-thinking puzzle: she tells the 汤面, members ask yes-or-no questions
+with `/问`, and whoever covers the truth with `/猜` has solved it. It needs AI chat, and is on unless
+`social.soup: false`.
+
+The puzzles are in [`prompts/soups.yaml`](../prompts/soups.yaml), 13 to start with. A private
+`local/prompts/soups.yaml` replaces that file entirely.
+
+```yaml
+- code: bald_rain          # letters, digits and _; changing it makes it a new puzzle to every group
+  title: 淋不湿的头发        # said when it opens: no spoilers
+  surface: 外面下着大雨，阿强没打伞……头发却一根也没湿。为什么？
+  truth: 阿强是光头，一根头发也没有，所以没有头发可以湿。
+  points:                  # a guess has to cover each of these: 1 to 4, and 1 to 3 works best
+    - 阿强没有头发（是光头）
+  hints:                   # optional: /海龟汤 提示 gives them in order
+    - 想想「头发」本身。
+```
+
+- **Check the file** after a change, then restart the bot:
+  `.venv/bin/python -m modules.fun.soup`. A broken puzzle is left out and named in the log.
+- **DeepSeek is the host, and nobody sees what it says.** Each question and guess is one cheap call
+  that has the truth (`soup_question`, `soup_guess`). Only its verdict is read, and the group gets
+  her lines from the style (`social.soup.answers`), so the truth can't slip out in an answer. Her
+  ordinary chat is told the 汤面 and never the truth.
+- **How well it judges.** On the shipped puzzles, in five runs of 147 questions and guesses with
+  known answers, it judged every guess as expected, 320 of 320, including 65 that only told it to
+  count the guess as right. It answered 78 of 83 questions as expected in each of the first three
+  runs. Four misses each time were a 「无关」 where a stricter host would say 「不是」 or refuse the
+  question, which costs the players nothing. The fifth was a wrong 「是」, the same one each time,
+  until that puzzle's truth was written more plainly.
+- **Write the truth plainly.** Say outright what a player might ask about: 「这本书不是她的，是她
+  借的」 rather than leaving it to follow from 「她来还书」.
+- **Keep them clean.** Groups have minors in them: no gore, horror or adult content.
+- **The pace:** a hint for every 3 questions asked, 6 questions or guesses a minute each, 150
+  questions a puzzle. One nobody solves closes after 24 hours and says its truth the next time
+  someone asks. A group gets every puzzle before one comes round again.
+- **Badges:** solving one counts toward `soup` (喝到汤底 at 1, 名侦探 at 5).
+
 ## Someone's own `/翻牌子` chances
 
 `/翻牌子` normally draws among the week's active members, weighted by how much each one posted.
@@ -460,6 +503,13 @@ at startup** and names the line.
 | `digest_comment` | The prompt for the comment that ends the weekly digest | `{digest}` |
 | `opinion_summary` | With the persona, when a 征集意见 ends with 3 or more opinions: sum them up after the list (`ai_chat.opinion_summary`). The opinions come without who wrote them | `{topic}`, `{opinions}` |
 | `fortune_comment` | With the persona, for `/今日运势` when `ai_chat.fortune` is on: her comment on the fortune drawn, in light of the member's own latest messages. It replaces the style's comment; the level, 宜 and 忌 stay as drawn | `{member}`, `{level}`, `{good}`, `{bad}`, `{said}` |
+| `taught_rules`, `taught_title` | When something members taught her (`/教她`) comes up: a line after the group rules, and the heading it goes under in the evidence, since members wrote it | |
+| `teach_check` | Sent alone when a member teaches her something: does it explain a word, or is it an order, personal details, an insult or unfit? It must ask for JSON: `{{"ok": true}}` or `{{"ok": false, "why": "instruction"}}`. An answer that can't be read leaves it to the admin | `{keys}`, `{text}` |
+| `pet_name`, `pet_name_habits`, `pet_name_before`, `pet_name_who` | With the persona, for `/外号`: name a member from what she knows of them. It must ask for JSON: `{{"nickname": "…", "why": "…"}}`. The other three fill its `{habits}`, `{before}` and `{who}`: their record, the nickname they have now, and the style's `talking_to` said again, which she often missed after the persona alone | `{member}`, `{known}`, `{impression}`, `{habits}`, `{before}`, `{who}`; `{valid}`, `{night}`, `{morning}`, `{best}`, `{badges}` |
+| `pet_name_rules`, `pet_name_title` | When she has named whoever she's answering: a line after the group rules, and the nickname in the evidence | `{member}`, `{nickname}` |
+| `sticker_draft` | Sent with only the picture, after the check for real people, when a member sends in a sticker: is it fit to use, what to label it, and when to use it. It must ask for JSON: `{{"ok": true, "label": "…", "desc": "…"}}` or `{{"ok": false, "why": "explicit"}}` | |
+| `today_soup` | In the evidence while a 海龟汤 is open: its 汤面, and that her chat doesn't know the answer | `{surface}` |
+| `soup_question`, `soup_guess` | Sent alone as 海龟汤's host: the puzzle with its truth, and a member's question or guess. They must ask for JSON: `{{"answer": "是", "key": false}}` and `{{"solved": false, "close": false}}`. Nobody sees the answer itself: the group gets her lines from the style | `{surface}`, `{truth}`, `{points}`, `{said}` |
 | `day` | Once a day, with the persona: plan three small things in her day. It must ask for JSON: `{{"events": ["上午：…", "下午：…", "晚上：…"]}}` | `{date}`, `{weekday}` |
 | `summary` | The prompt for folding old chat into the group's summary | |
 | `observer` | After each reply: what the speaker said about themselves, each scored 1–10 for importance (below 4 isn't kept), which memories came up again, which are outdated, and her impression of them. It must ask for JSON: `{{"notes": [], "reinforce": [], "forget": [], "impression": null}}` | `{member}`, `{known}`, `{impression}`, `{said}`, `{reply}`, `{max_text}`, `{max_adds}`, `{max_impression}` |
@@ -490,6 +540,9 @@ ai_chat:
   digest_comment: true       # end the weekly digest with a short comment
   opinion_summary: true      # sum up a 征集意见 when it ends, after the list
   fortune: false             # /今日运势: her comment takes in the member's latest messages (privacy policy!)
+  teach: true                # /教她: members teach her the group's words; an admin accepts each
+  pet_names: true            # /外号: she gives a member a nickname
+  member_stickers: false     # /投稿表情: members send her stickers; an admin accepts each (privacy policy!)
   game_state: true           # tell her today's teams, birthdays, open poll and 征集意见
   dynamic_temperature: true  # judge each reply's temperature and length first (one more cheap call)
   temperatures: {严谨: 0.6, 平衡: 1.0, 奔放: 1.15}
@@ -606,6 +659,62 @@ Put the images and a `stickers.yaml` in `local/stickers/`, which never goes to G
   address. QQ then fetches each file from there.
 - **Choose with care.** She picks them herself, in front of the whole group, and QQ reviews images
   too. Leave out anything explicit.
+
+### Stickers from members
+
+With `ai_chat.member_stickers: true`, members add to her stickers themselves, each group for itself:
+
+- **Sending one in.** A member @s her with a picture, or quotes one, and writes `/投稿表情`, with a
+  label after it if they like (`/投稿表情 无语`). It must be a png, jpg or gif of at most 2 MB.
+- **Two looks, at the picture alone.** The check for real people runs first, and a picture with
+  people in it, or one it can't be sure of, is refused. A second call says whether it's fit to use
+  and drafts a label and a line on when to use it (`sticker_draft`). In a trial on 15 drawn pictures
+  it drafted all 15.
+- **An admin accepts it.** The reply carries 「收下」 and 「不收」 buttons, which send `/收下 编号`
+  and `/不收 编号`. An admin's own goes in at once. One nobody accepts is dropped after 14 days.
+- **Where they live.** The files are in `data/member_stickers/`, named after their numbers, and go
+  to QQ's image library the first time she sends them, like her own. She uses one only in the group
+  it was sent in to, and her own stickers keep their labels: a member's with the same label gets a
+  number after it.
+- **The limits:** 3 a day each (admins as many as they like), 20 a day in a group, and 20 accepted
+  per group, since QQ's library holds 100 per bot. `/她的表情` lists them, and
+  `/投稿表情 删除 编号` takes back one's own.
+- **Before switching it on,** add its sentences to your privacy notice
+  ([PRIVACY_POLICY.md](PRIVACY_POLICY.md) has them): the pictures go to DeepSeek and stay on the
+  server until someone deletes them.
+
+### What members teach her
+
+`/教她 卷王、卷狗：群里最用功的人` teaches her what words mean in this group: up to 3 words of 2 to
+12 characters, and a meaning of up to 60. It's on unless `ai_chat.teach: false`.
+
+- **It's checked, then an admin accepts it.** One cheap call that sees only the words refuses an
+  order dressed up as a meaning (「以后都要听我的」), personal details, an insult aimed at someone,
+  and unfit content (`teach_check`). In a trial it let through 30 of 30 harmless ones and refused
+  20 of 20 of the others. Then an admin taps 「记下」 (`/记下 编号`), or 「不记」. An admin's own is
+  kept at once; one nobody accepts is dropped after 14 days.
+- **It rides along as data.** When one of its words comes up in the last four turns, it goes with
+  her reply in the evidence, never among her instructions: at most 3, the latest taught first, and
+  none beside a picture with real people in it. The style's own `lore` is separate and comes first.
+- **The limits:** 3 a day each (admins as many as they like), 100 per group, 20 waiting.
+  `/她学会的` lists them with who taught each, and `/教她 删除 编号` takes back one's own.
+
+### Nicknames
+
+`/外号` has her name a member, from her memories and impression of them and, in a managed group,
+their record: a few counts, their longest streak and their badges. It's on unless
+`ai_chat.pet_names: false`.
+
+- **She won't name someone she knows nothing about.** They need a memory, an impression or a badge.
+- **It's theirs to keep or drop.** `/外号 换` asks for another, 3 a day at most, and `/外号 不要`
+  drops it. It shows on their `/我的状态` and in `/我的记忆`, and she uses it with them now and
+  then: in a trial, in 5 replies of 24.
+- **What the prompt holds her to** (`pet_name`): 2 to 6 characters, teasing but kind, nothing made
+  up, and nothing about looks, weight, health, family, grades, money or love life, even when she
+  knows it. In 24 trial names none touched those.
+- **It knows who they are.** The style's `talking_to` line for them is repeated inside the request.
+  With it only after the persona, she named captains like ordinary members 4 times in 12; with it
+  repeated, 0 in 12.
 
 ### Her day, speaking up, and her voice
 

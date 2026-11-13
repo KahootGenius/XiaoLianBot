@@ -77,7 +77,7 @@ tunnels included.
 - `/我的状态`: activity card showing your last valid message, streak, weekly rank, achievements and
   days left.
 - `/排行`: the week's (or `/排行 月` the month's) leaderboard.
-- `/成就`: 30 badges, such as 七日之约, 开门红 (first to speak after 5 a.m.), 积极投票 and 好久不见.
+- `/成就`: 32 badges, such as 七日之约, 开门红 (first to speak after 5 a.m.), 积极投票 and 好久不见.
   Four stay hidden until someone earns them: a birthday and three holidays. The reply is short:
   what you've earned, your latest badge, how many are left, and the one you're closest to.
   `/成就 全部` lists every badge, with how many members have each. They're announced in the group,
@@ -129,11 +129,23 @@ seekchat (`Desktop/ai`):
   tone; `lore` entries ride along only when their keywords come up; a reply with a phrase from
   `never_say`, the model's own stock lines such as 「这话我不接」, is said again. Try changes first with
   `python -m modules.ai.rehearse`, which plays a scripted chat against the real DeepSeek.
+- **Members teach her the group's words.** `/教她 卷王：群里最用功的人` tells her what a word means
+  here. A cheap call refuses orders dressed up as meanings, personal details and insults; an admin
+  then accepts it with one tap, and from then on it rides along, as data, whenever the word comes up.
+  `/她学会的` lists what she knows. `ai_chat.teach: false` turns it off.
+- **She gives nicknames.** `/外号` has her name a member from what she remembers of them and how
+  they take part: 2 to 6 characters, teasing but kind, never about looks, health, family or grades.
+  It shows on their `/我的状态`, she uses it now and then, and `/外号 换` or `/外号 不要` changes or
+  drops it. `ai_chat.pet_names: false` turns it off.
 - **She sends stickers.** Put images and a `stickers.yaml` (label and when to use each) in the
   private `local/stickers/`. She writes 「[表情:标签]」 as in seekchat, and the sticker shows small
   inside her reply: one markdown message, with the image kept in QQ's image library. If QQ won't
   take that, it goes out as its own message under the text. `python -m modules.ai.stickers` checks
   the folder; `… import stickers.zip` brings in a seekchat pack.
+- **Members send her stickers (off by default).** With `ai_chat.member_stickers`, a member @s her
+  with a picture and `/投稿表情`. It's checked for real people, a second look drafts its label, and
+  an admin accepts it with one tap; she then uses it in that group. The picture goes to DeepSeek and
+  is kept on the server, so update the privacy notice first.
 - **She has a day of her own.** Each day one cheap call plans three small things in it (上午、下午、
   晚上) that fit her persona, as in seekchat. They ride along with every reply, so 「在干嘛」 gets the
   same answer all day, and she brings them up now and then. `ai_chat.her_day: false` turns it off.
@@ -205,6 +217,11 @@ For the group's games, where a few captains pick teams:
   posted; once a day each, while admins can flip as often as they like. @ a few people to draw
   among them instead. `social.flip.special` in `config.yaml` can give a member their own chances
   of drawing particular people.
+- **`/海龟汤`:** she hosts a lateral-thinking puzzle from [`prompts/soups.yaml`](prompts/soups.yaml).
+  Members ask yes-or-no questions with `/问` and guess with `/猜`; a cheap call that holds the truth
+  judges each one, and the group sees only her fixed lines, so the truth can't slip out. Hints come
+  as the group asks, a group gets every puzzle before one repeats, and solving one counts toward a
+  badge. It needs AI chat; `social.soup: false` turns it off.
 - **Speed limit for games:** one member can send 10 game commands a minute (`/21点`, `/摇骰子`,
   `/发癫`…), so nobody floods the group by tapping 再来一局. A normal round of 21点 never reaches it.
   `games.per_minute` in `config.yaml` changes the number.
@@ -216,7 +233,7 @@ For the group's games, where a few captains pick teams:
   digest's numbers.
 - **Buttons:** replies with an obvious next step offer tap-to-send buttons: `/帮助`, `/今日运势`,
   `/我的状态`, `/排行` and `/成就`, the team list, polls, 征集意见, 21点, dice, 发癫, `/翻牌子`, birthdays,
-  `/我的记忆` and `/mc状态`. Admins get them under `/管理帮助` and the removal lists, where QQ asks
+  `/我的记忆`, `/外号`, 海龟汤, what members teach her or send in, and `/mc状态`. Admins get them under `/管理帮助` and the removal lists, where QQ asks
   before 「确认移出」 or 「已移出」 goes through. The buttons sit at the bottom of the reply itself,
   which goes as QQ markdown; `buttons_inline: false` in `config.yaml` puts them in a small message
   of their own instead. If QQ refuses buttons, replies are plain text for six hours.
@@ -237,7 +254,10 @@ modules/
                         memory.py reads the memory notes and checks, store.py keeps data/chat.db,
                         memory_admin.py lists and edits memories, stickers.py reads the sticker
                         folder, rehearse.py tries a persona; /deepseek
-  fun/                  blackjack, dice, 发癫, sleep, the games speed limit
+  fun/                  blackjack, dice, 发癫, sleep, the games speed limit; soup.py reads 海龟汤's
+                        puzzles and its host's verdicts
+  fun/social/           今日运势, birthdays, polls, 征集意见, 翻牌子 and 海龟汤: module.py runs the commands,
+                        fortune.py draws the fortunes, store.py keeps data/fun.db
   info/                 Epic, Steam, Minecraft
   fun/teams/            the team game: rules.py reads prompts/teams.yaml, roster.py keeps
                         today's teams (data/teams.json), module.py runs the commands
@@ -254,6 +274,7 @@ styles/小莲.yaml         every line the bot says (the complete default style)
 styles/_示例.yaml        an example to start a new style from
 prompts/achievements.yaml  the badges: add or change them without code
 prompts/teams.yaml      the team game: statuses and captain actions, without code
+prompts/soups.yaml      海龟汤's puzzles: add or change them without code
 prompts/chat.yaml       AI chat's rules around the persona: group chat, summary, memory notes
 prompts/rehearsal.yaml  a scripted group chat for python -m modules.ai.rehearse
 assets/quotes/          发癫 quote data
@@ -339,6 +360,8 @@ The tests cover:
   every mistake `prompts/teams.yaml` can contain
 - AI chat, against a fake DeepSeek: the shared labelled thread, memory notes and deletion, the
   rolling summary, retention, and deletion racing a summary in flight
+- what members give her and an admin accepts (taught phrases, stickers), nicknames, and 海龟汤 with
+  a fake host: every limit, who may do what, and what is kept for how long
 - botpy event parsing
 - full simulated months in each mode, with and without API access
 
@@ -357,6 +380,7 @@ The tests cover:
 - **adding achievements:** most new badges are a few lines in `prompts/achievements.yaml`
 - **changing the team game:** new statuses and captain actions in `prompts/teams.yaml`
 - **changing how AI chat remembers:** `prompts/chat.yaml` and the `ai_chat` settings
+- **writing 海龟汤 puzzles:** `prompts/soups.yaml`, and how to write a truth the host judges well
 
 ## Privacy
 

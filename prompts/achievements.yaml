@@ -38,6 +38,7 @@
 #     vote      参加过几次 /投票（改票不重复算）
 #     opinion   在几次 /征集意见 里提过意见（每次征集只算一次，撤回也不会重复算）
 #     sleep     /晚安 后睡了 7 到 9 小时再 /早安 的次数
+#     soup      第一个猜中 /海龟汤 汤底的次数
 #
 # 新加的成就会在成员下一次有效发言时检查；条件早就满足的人会在那时解锁。
 # 一个群每小时最多祝贺 3 次（config.yaml 里 manager 下的 achievements.max_per_hour），一下子加很多也不会刷屏；
@@ -220,6 +221,20 @@
   desc: 在 3 次意见征集里提过意见
   counter: opinion
   at_least: 3
+
+- code: soup_1
+  icon: 🍲
+  name: 喝到汤底
+  desc: 第一个猜中一碗海龟汤的汤底
+  counter: soup
+  at_least: 1
+
+- code: soup_5
+  icon: 🕵️
+  name: 名侦探
+  desc: 猜中 5 碗海龟汤的汤底
+  counter: soup
+  at_least: 5
 
 - code: comeback
   icon: 🌈

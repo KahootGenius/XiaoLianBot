@@ -156,6 +156,25 @@ class NicknameAnywhereTest(ManagerTestCase):
         self.assertIsNone(self.mgr.nickname_anywhere("C"))
 
 
+class PetNameOnTheCardTest(ManagerTestCase):
+    """AI chat's /外号 draws on a member's record, and their card shows what she calls them."""
+
+    async def test_habits_come_from_the_record_and_the_card_shows_the_nickname(self):
+        self.make(FakeGateway())
+        await self.post("A", "大家好，我是新来的，请多关照")
+        self.assertIsNone(self.mgr.habits("ELSEWHERE", "A"))                # a group it doesn't manage
+        self.assertIsNone(self.mgr.habits(GROUP, "NOBODY"))
+        self.assertEqual(self.mgr.habits(GROUP, "A"), {"valid": 1, "night": 0, "morning": 0, "best": 1,
+                                                       "badges": ["初次见面"]})
+        await self.post("A", "/我的状态", command=True)
+        self.assertNotIn("外号", self.gw.texts(GROUP)[-1])
+        self.mgr.pet_name_reader = lambda group, member: {(GROUP, "A"): "小夜猫"}.get((group, member))
+        await self.post("A", "/我的状态", command=True)
+        self.assertEqual(self.gw.texts(GROUP)[-1].split("\n")[:2], ["📋 小A 的活跃卡片", "外号：小夜猫"])
+        await self.post("B", "/我的状态", command=True)
+        self.assertNotIn("外号", self.gw.texts(GROUP)[-1])
+
+
 class AutoModeWithFullAccessTest(ManagerTestCase):
     """Whitelisted bot: sees lurkers through the member list and removes by itself."""
 
